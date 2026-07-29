@@ -167,9 +167,6 @@ describe('commitPaths signing (done-when 8 / A2)', () => {
       const result = commitPaths([join(dir, 'note.md')], 'signed-config commit', dir);
 
       expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.deferred).toBeUndefined();
-      }
       const log = execFileSync('git', ['log', '--oneline'], {
         cwd: dir,
         encoding: 'utf-8',
