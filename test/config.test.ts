@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -28,33 +28,42 @@ describe('loadConfig', () => {
     }
   });
 
-  it('returns full defaults when no config.json exists', () => {
-    const config = loadConfig();
+  it('detects missing config.json and returns full defaults without throwing', () => {
+    const configPath = join(tempDir, 'config.json');
+
+    // Explicitly verify config.json does not exist
+    expect(() => readFileSync(configPath)).toThrow();
+
+    // Call loadConfig() and verify it doesn't throw
+    expect(() => loadConfig()).not.toThrow();
+
+    // Call loadConfig() to get the result
+    const result = loadConfig();
 
     // Check that all top-level keys are present
-    expect(config).toHaveProperty('injection');
-    expect(config).toHaveProperty('decay');
-    expect(config).toHaveProperty('secrets');
-    expect(config).toHaveProperty('hooks');
-    expect(config).toHaveProperty('identity');
-    expect(config).toHaveProperty('lock');
-    expect(config).toHaveProperty('queue');
-    expect(config).toHaveProperty('distill');
-    expect(config).toHaveProperty('log');
-    expect(config).toHaveProperty('warning');
+    expect(result).toHaveProperty('injection');
+    expect(result).toHaveProperty('decay');
+    expect(result).toHaveProperty('secrets');
+    expect(result).toHaveProperty('hooks');
+    expect(result).toHaveProperty('identity');
+    expect(result).toHaveProperty('lock');
+    expect(result).toHaveProperty('queue');
+    expect(result).toHaveProperty('distill');
+    expect(result).toHaveProperty('log');
+    expect(result).toHaveProperty('warning');
 
-    // Check specific defaults
-    expect(config.injection.budget_tokens).toBe(800);
-    expect(config.decay.enabled).toBe(true);
-    expect(config.decay.archive_days).toBe(60);
-    expect(config.decay.purge_days).toBe(90);
-    expect(config.lock.retry_count).toBe(50);
-    expect(config.lock.retry_delay_ms).toBe(100);
-    expect(config.lock.stale_ms).toBe(30000);
-    expect(config.queue.max_claims).toBe(3);
-    expect(config.distill.max_loss_percent).toBe(10);
-    expect(config.log.rotation_size_mb).toBe(5);
-    expect(config.warning.rate_limit_ms).toBe(3600000); // 1 hour
+    // Check specific defaults (verifying that defaults are used, not arbitrary values)
+    expect(result.injection.budget_tokens).toBe(800);
+    expect(result.decay.enabled).toBe(true);
+    expect(result.decay.archive_days).toBe(60);
+    expect(result.decay.purge_days).toBe(90);
+    expect(result.lock.retry_count).toBe(50);
+    expect(result.lock.retry_delay_ms).toBe(100);
+    expect(result.lock.stale_ms).toBe(30000);
+    expect(result.queue.max_claims).toBe(3);
+    expect(result.distill.max_loss_percent).toBe(10);
+    expect(result.log.rotation_size_mb).toBe(5);
+    expect(result.warning.rate_limit_ms).toBe(3600000); // 1 hour
   });
 
   it('deep merges user config over defaults (not replacing)', () => {
