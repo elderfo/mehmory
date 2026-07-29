@@ -118,5 +118,31 @@ describe('redact', () => {
       expect(result).toContain('[REDACTED]');
       expect(result.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('completes in bounded time on pathological input (canary)', () => {
+      // Canary test: guards against future regex changes that might reintroduce catastrophic
+      // backtracking on large unmatched input. Not a regression test for a confirmed bug.
+      const pathological = '-----BEGIN PRIVATE KEY-----\n' + '-'.repeat(100_000);
+      const startTime = performance.now();
+      expect(() => redact(pathological)).not.toThrow();
+      const endTime = performance.now();
+      const duration = endTime - startTime;
+      // Generous time bound (varies with system load); asserts bounded work, not tight deadline
+      expect(duration).toBeLessThan(5000);
+    });
+
+    it('redacts private keys with false -----END inside body', () => {
+      // Regression test: private key whose base64 body contains '-----END' must still match
+      // to the actual terminator. Previously untested edge case.
+      const keyWithFalseTerminator = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADA-----END
+anotherline
+-----END PRIVATE KEY-----`;
+      const result = redact(keyWithFalseTerminator);
+      expect(result).toContain('[REDACTED]');
+      // Entire block redacted, not stopped at false terminator
+      expect(result).not.toContain('MIIEvQIBADA');
+      expect(result).not.toContain('anotherline');
+    });
   });
 });
