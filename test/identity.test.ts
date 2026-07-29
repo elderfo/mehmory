@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { resolveProjectKey, clearProjectKeyCache } from '../src/core/identity.js';
+import { createTempDir, cleanupTempDir } from './helpers.js';
 
 /**
  * Test suite for resolveProjectKey.
@@ -16,12 +17,11 @@ describe('resolveProjectKey', () => {
 
   beforeEach(() => {
     clearProjectKeyCache();
-    tempDir = join(tmpdir(), `identity-test-${randomBytes(8).toString('hex')}`);
-    mkdirSync(tempDir, { recursive: true });
+    tempDir = createTempDir('identity-test');
   });
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+    cleanupTempDir(tempDir);
   });
 
   it('resolves git remote slug for a repo with origin', () => {

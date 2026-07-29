@@ -54,7 +54,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
       }
       const text = extractMessageText(rec);
       if (!text) return false;
-      // ponytail: simple keyword matching; ceiling: misses implicit decisions, catches false positives.
+      // ponytail: simple keyword matching; ceiling: misses implicit decisions, catches false positives. Upgrade: domain-specific classifier or probabilistic model.
       return /\b(decide|decision|chosen|choosing|will|let's)\b/i.test(text);
     },
     extract: (record: Record<string, unknown>) => {
@@ -74,7 +74,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
       }
       const text = extractMessageText(record);
       if (!text) return false;
-      // ponytail: error-related keywords. More specific than correction_pattern.
+      // Error-related keywords; more specific than correction_pattern.
       return /\b(error|failed|broken|issue|problem|bug|crash)\b/i.test(text);
     },
     extract: (record: Record<string, unknown>) => {
@@ -94,7 +94,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
       }
       const text = extractMessageText(record);
       if (!text) return false;
-      // ponytail: pattern match for correction language.
+      // Matches words indicating contradiction or revision (not, wrong, fix, undo, revert, etc.).
       return /\b(not|wrong|incorrect|should|didn't|fix|undo|revert|actually|rather|instead)\b/i.test(
         text
       );

@@ -1,11 +1,10 @@
 /** Test setup: guard against touching real ~/.mehmory (done-when criterion 16). */
 
 import { beforeEach, afterEach } from 'vitest';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createTempDir, cleanupTempDir } from './helpers.js';
 
 const originalHome = process.env.MEHMORY_HOME;
+let setupTempDir: string;
 
 // Git exports these to hook processes. Tests that shell out to git (identity,
 // commitPaths, initStore) would otherwise inherit the *outer* repository's index
@@ -35,12 +34,13 @@ process.env['GIT_CONFIG_VALUE_2'] = 'tests@mehmory.invalid';
 
 beforeEach(() => {
   // Set MEHMORY_HOME to a temp directory for each test
-  const tempDir = join(tmpdir(), `mehmory-test-${randomBytes(8).toString('hex')}`);
-  process.env.MEHMORY_HOME = tempDir;
+  setupTempDir = createTempDir('mehmory-test');
+  process.env.MEHMORY_HOME = setupTempDir;
 });
 
 afterEach(() => {
-  // Restore original or unset
+  // Clean up and restore original or unset
+  cleanupTempDir(setupTempDir);
   if (originalHome) {
     process.env.MEHMORY_HOME = originalHome;
   } else {

@@ -104,6 +104,8 @@ These items resolve findings from the spec-stage and plan-stage design reviews:
 
 11. **FTS5 availability** was measured at intake: Node 22.22.3 / SQLite 3.51.3 builds `fts5` with both `porter unicode61` and `trigram` tokenizers. No spec change; recorded as evidence for run 3.
 
+12. **Queue job-type contract.** `enqueueJob(jobData, jobType?)` stores the type as a reserved `_jobType` key merged into the job payload. `claimJob(jobType?)` claims only jobs whose `_jobType` matches; omitting the argument claims any job, preserving original behavior. Producers must treat `_jobType` as reserved and not use that key for their own data. Alternative (`{ type, data }` envelope) was rejected in favor of the flat key.
+
 ### Amendment: Spec gaps 15 and 16
 
 Two amendments change contracts the spec fixed:

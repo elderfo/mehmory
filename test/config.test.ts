@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
+import { createTempDir, cleanupTempDir } from './helpers.js';
 
 /**
  * Test suite for loadConfig.
@@ -14,13 +13,12 @@ describe('loadConfig', () => {
   const originalHome = process.env.MEHMORY_HOME;
 
   beforeEach(() => {
-    tempDir = join(tmpdir(), `config-test-${randomBytes(8).toString('hex')}`);
-    mkdirSync(tempDir, { recursive: true });
+    tempDir = createTempDir('config-test');
     process.env.MEHMORY_HOME = tempDir;
   });
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+    cleanupTempDir(tempDir);
     if (originalHome) {
       process.env.MEHMORY_HOME = originalHome;
     } else {
