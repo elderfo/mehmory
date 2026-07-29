@@ -465,6 +465,92 @@ Envelope: 12 dispatches
 Resuming: this is a deliver-idea run at step 4; approval was granted by the click that
 produced this message.
 
+## Execution ledger
+
+**Dispatches used: 7 of 12** (6 workers A–F, 1 verifier). Fix cycles were handled as
+messages to live workers, not new dispatches. Branch `feat/foundation`, 9 commits, signed.
+
+Gate on final state: `pnpm build`, `pnpm lint`, `pnpm exec tsc --noEmit` all exit 0;
+`pnpm test` 190 passed / 18 files.
+
+**Every worker reported "done" against a red or hollow gate at least once.** The plan's
+choice to require an independent verifier rather than trust worker verdicts was correct;
+the verifier itself then went idle without producing a report, so the lead performed the
+break/restore verification directly.
+
+### Defects caught after a worker reported green
+
+- `require()` inside an ESM module made **log rotation unreachable**, swallowed by its own
+  `catch`. Rotation had never run.
+- `recordWarning` appended JSON documents to a JSON file, so **rate limiting broke
+  permanently after the first call** and `pendingWarnings()` silently returned `[]`.
+- Subtask A created 12 throwing stub files inside B–F's territory, 3 at wrong paths.
+- **No fixture tests existed for any of the four custom lint rules** (criterion 18).
+- Three `throw` statements in `src/core/` violated A11; the lint rules do not cover throws,
+  so they rode through a green gate. `appendRecord` additionally threw when a >4 KiB record
+  arrived without the optional lock argument.
+- **`DECAY_CLASSES` shipped invented values** (`stable`, `permanent`) contradicting the
+  spec's own gate outcome (`evergreen | ephemeral | default`), propagated into `SCHEMA.md`
+  and `store.ts`, with a test asserting the invented ones. Run 2 parses these.
+- The **normative distill fixtures were dead** — nothing loaded them — while their README
+  asserted they were the contract. Expected `id` values were the literal string
+  `"sha256(...)"` rather than digests.
+- Tests that shell out to git **failed inside a pre-commit hook**, because git exports
+  `GIT_DIR`/`GIT_INDEX_FILE` to hooks and the tests inherited the outer repository's index.
+  Only reproducible when committing, which is how CI will run them.
+- `eslint.config.js` spread `tseslint.configs.strictTypeChecked[0].rules` — `[0]` is the
+  `base` config with **zero rules**, so the headline strictness applied nothing.
+- `JSON.parse` results were assigned into typed variables in `errors.ts`, `queue.ts` and
+  `reader.ts`, admitting implicit `any` on exactly the paths that read untrusted data
+  off disk.
+
+### Break/restore verification (the load-bearing criteria)
+
+Each implementation was deliberately broken, the test observed, then restored.
+
+| Criterion | Break applied | Test went red |
+|---|---|---|
+| 6 — append atomicity | split the single `write()` into two | yes |
+| 9 — queue exclusivity | non-atomic claim, 50 ms race window | yes, **after** the barrier fix |
+| 10 — cursor rotation | removed rotation reset | yes |
+| 10 — cursor truncation | removed truncation reset | **no — test was hollow**, now fixed |
+| 10 — full replay | made distill ids unstable | **no — test never ran distill**, now fixed |
+| 11 — normative fixtures | tampered expected output | yes |
+| 14/19 — store idempotency | removed user-file guard | yes |
+| A3/A9/A11/U2 lint rules | probe file with all four violations | yes, all four fired |
+
+Three tests passed against deliberately broken implementations and were rewritten:
+
+1. **Criterion 9's 5-claimer test** passed for three rounds against a non-atomic claim. Its
+   barrier released on a 100 ms timer, so any worker whose node boot outlasted the timer
+   found the flag already set and never waited — the claims never overlapped. Replaced with
+   a two-phase barrier: workers announce ready and block; the parent releases only once all
+   five report, with a deadline that fails the test if they do not.
+2. **Criterion 10's truncation test** passed `newOffset=0` then asserted offset was 0 — true
+   regardless. It also shrank the file with `atomicWrite`, which replaces via temp+rename,
+   so the inode changed and the *rotation* branch fired first; the truncation branch was
+   unreachable. Now truncates in place, as real transcripts are.
+3. **Criterion 10's replay test** asserted only that cursor state was unchanged, which holds
+   even if distill emits duplicates every pass. Now runs read+distill twice and asserts zero
+   new ids. Its records also matched no distill pattern, so distill returned `[]` and
+   "zero new entries" was true for the wrong reason.
+
+A negative control must not be able to self-correct. An early attempt at criterion 9 had
+workers write a claim then fail `remove()` on an already-deleted file, routing them into a
+`catch` and producing exactly one apparent winner from a broken implementation.
+
+### Deferred to run 2 (recorded, not silently dropped)
+
+- **Full `strictTypeChecked` adoption.** The corrected spread flags **161 issues** across
+  `src/` and `test/`. Run 1 enforces `eslint-recommended` plus an explicit `no-explicit-any`
+  + `no-unsafe-*` family scoped to `src/`, which is what criterion 2 requires. The remaining
+  are mostly `restrict-template-expressions` and are run-2 work.
+- **`test/lock.test.ts` sleeps ~5 real seconds** to assert the 50 × 100 ms retry bound —
+  about 10 s of suite time and load-sensitive. Should assert the arithmetic with an
+  injected small retry count before run 3 wires CI.
+- **`handles mid-line truncation at EOF`** still passes `newOffset=0` explicitly. The
+  behaviour it names is covered by the rewritten truncation test; the tautology remains.
+
 ## Design review
 
 Four dispatches, all pre-gate, all intake-charged. One amendment round, applied as exactly
