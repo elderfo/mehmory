@@ -175,17 +175,27 @@ export function atomicWrite(path: string, contents: string): void {
  * @param path - File to append to
  * @param record - String to append (one logical unit)
  * @param key - Project key for lock path (required for ceiling protection)
- * @param lockPath - Lock function for large records
- * @returns { success: boolean; error?: string }
+ * @param lockPath - Lock function for large records (obtain via `withProjectLock` from `src/core/lock.ts`).
+ *                   This parameter exists to break the fs.ts ↔ lock.ts circular import: lock.ts imports fs.ts,
+ *                   so fs.ts cannot import lock.ts directly.
+ * @returns { ok: true } | { ok: false; error: string }
  */
 export function appendRecord(
   path: string,
   record: string,
   key: string,
   lockPath: (_key: string, _fn: () => void) => void
-): { readonly success: boolean; readonly error?: string } {
+): { ok: true } | { ok: false; error: string } {
   // JSON-escape any embedded newlines to preserve one-line invariant
   const escaped = record.replace(/\n/g, '\\n');
+
+  const createErrorResult = (caught: unknown): MehmoryError => ({
+    code: 'E_APPEND_FAILED',
+    kind: 'actionable',
+    what: caught instanceof Error ? caught.message : String(caught),
+    consequence: 'Record was not appended',
+    fix: 'Check file permissions and disk space',
+  });
 
   // Determine if we need the lock path
   if (escaped.length >= APPEND_ATOMIC_CEILING_BYTES) {
@@ -195,17 +205,11 @@ export function appendRecord(
         mkdir(dirname(path));
         appendFileSync(path, escaped + '\n', 'utf-8');
       });
-      return { success: true };
+      return { ok: true };
     } catch (err) {
-      const error: MehmoryError = {
-        code: 'E_APPEND_FAILED',
-        kind: 'actionable',
-        what: err instanceof Error ? err.message : String(err),
-        consequence: 'Record was not appended',
-        fix: 'Check file permissions and disk space',
-      };
+      const error = createErrorResult(err);
       logError(error);
-      return { success: false, error: 'append_failed_with_lock' };
+      return { ok: false, error: 'append_failed_with_lock' };
     }
   } else {
     // Direct O_APPEND write for atomicity (POSIX guarantee)
@@ -218,17 +222,11 @@ export function appendRecord(
       } finally {
         closeSync(fd);
       }
-      return { success: true };
+      return { ok: true };
     } catch (err) {
-      const error: MehmoryError = {
-        code: 'E_APPEND_FAILED',
-        kind: 'actionable',
-        what: err instanceof Error ? err.message : String(err),
-        consequence: 'Record was not appended',
-        fix: 'Check file permissions and disk space',
-      };
+      const error = createErrorResult(err);
       logError(error);
-      return { success: false, error: 'append_failed' };
+      return { ok: false, error: 'append_failed' };
     }
   }
 }

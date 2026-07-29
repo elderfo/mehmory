@@ -9,8 +9,8 @@ import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS } from './fs.js';
 
 /**
  * Stage specific paths and commit.
- * Returns { committed: true } on success.
- * On index.lock held after one retry, returns { committed: false, deferred: true }
+ * Returns { ok: true } on success.
+ * On index.lock held after one retry, returns { ok: false, deferred: true }
  * with the tree left staged, and emits nothing (normal operation, not an error).
  * Accumulation is explicit: the next call commits both this call's paths and any deferred ones.
  * @param paths - Paths to stage
@@ -21,7 +21,7 @@ export function commitPaths(
   paths: string[],
   message: string,
   cwd?: string
-): { readonly committed: boolean; readonly deferred?: boolean } {
+): { ok: true } | { ok: false; deferred?: true } {
   const opts = cwd ? { cwd } : {};
 
   // Ensure we're in a git repo (will fail with clear error if not)
@@ -35,7 +35,7 @@ export function commitPaths(
       consequence: 'Commit failed; memory was not recorded',
     };
     logError(error);
-    return { committed: false };
+    return { ok: false };
   }
 
   // Stage only the given paths
@@ -51,7 +51,7 @@ export function commitPaths(
       consequence: 'Failed to stage paths; commit aborted',
     };
     logError(error);
-    return { committed: false };
+    return { ok: false };
   }
 
   // Try to commit; retry once if index.lock is held
@@ -69,7 +69,7 @@ export function commitPaths(
         stdio: 'pipe',
       });
       // Success!
-      return { committed: true };
+      return { ok: true };
     } catch (err) {
       const stderr = err instanceof Error ? err.message : String(err);
 
@@ -88,7 +88,7 @@ export function commitPaths(
       // Second failure or not index.lock: leave staged and return deferred
       if (isIndexLock) {
         // Normal deferral, no error logged
-        return { committed: false, deferred: true };
+        return { ok: false, deferred: true };
       }
 
       // Other git error
@@ -99,10 +99,10 @@ export function commitPaths(
         consequence: 'Commit failed; tree left staged for manual recovery',
       };
       logError(error);
-      return { committed: false, deferred: true };
+      return { ok: false, deferred: true };
     }
   }
 
   // Should not reach here
-  return { committed: false };
+  return { ok: false };
 }

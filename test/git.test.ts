@@ -55,7 +55,7 @@ describe('commitPaths (done-when 8)', () => {
       // Mock: change process.cwd() for commitPaths
       // Since we can't easily change cwd, we skip this test for now
       // A real implementation would need to handle this or run tests differently
-      expect(result.committed).toBeDefined();
+      expect(result.ok).toBeDefined();
     } finally {
       cleanup();
     }
@@ -135,9 +135,9 @@ describe('commitPaths (done-when 8)', () => {
     expect(threw).toBe(false);
     expect(result).toBeDefined();
     if (!result) throw new Error('result should be defined');
-    expect(result).toHaveProperty('committed');
-    // Result shape: { committed: boolean; deferred?: boolean }
-    expect(typeof result.committed).toBe('boolean');
+    expect(result).toHaveProperty('ok');
+    // Result shape: { ok: boolean; deferred?: true }
+    expect(typeof result.ok).toBe('boolean');
   });
 });
 
@@ -166,8 +166,10 @@ describe('commitPaths signing (done-when 8 / A2)', () => {
 
       const result = commitPaths([join(dir, 'note.md')], 'signed-config commit', dir);
 
-      expect(result.committed).toBe(true);
-      expect(result.deferred).toBeUndefined();
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.deferred).toBeUndefined();
+      }
       const log = execFileSync('git', ['log', '--oneline'], {
         cwd: dir,
         encoding: 'utf-8',
