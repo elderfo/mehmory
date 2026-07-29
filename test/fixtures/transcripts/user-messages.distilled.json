@@ -1,0 +1,35 @@
+[
+  {
+    "id": "58dad5c884ee03c72f1c71de536075f20dee83618ec425640b8ebc1ac4f55717",
+    "pattern": "user_message",
+    "content": "Can you help me refactor this function?",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "550e8400-e29b-41d4-a716-446655440001",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "9deba1995b70d376a0858fb8a2fb4626e3fc92875eee8a198fec49730839af1a",
+    "pattern": "correction_pattern",
+    "content": "Correction: Actually, I realize we should rewrite it from scratch instead.",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "550e8400-e29b-41d4-a716-446655440003",
+      "recordType": "message",
+      "lineNumber": 2
+    }
+  },
+  {
+    "id": "dff186c08ee698f6a28d8f633f62e889f7d9faa81577e29d54b9efb1099a59f2",
+    "pattern": "decision_marker",
+    "content": "Decision: Let's implement a cache for the API responses.",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "550e8400-e29b-41d4-a716-446655440004",
+      "recordType": "message",
+      "lineNumber": 4
+    }
+  }
+]
