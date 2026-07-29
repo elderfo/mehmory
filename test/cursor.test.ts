@@ -58,23 +58,26 @@ describe('cursor', () => {
     expect(state.file_id).toMatch(/^\d+:\d+$/); // dev:ino format
   });
 
-  it('handles mid-line truncation at EOF', () => {
+  it('detects truncation when offset exceeds file size', () => {
     clearCursor();
     const testFile = getUniqueTestFile();
-    atomicWrite(testFile, '{"uuid":"rec1"}\n{"uuid":"incomplete');
+    atomicWrite(testFile, '{"uuid":"rec1"}\n{"uuid":"rec2"}\n');
 
-    advanceCursor(testFile, 'hash-of-rec1', 16);
+    // Advance to offset 32 (past both records)
+    advanceCursor(testFile, 'hash-of-rec2', 32);
 
     const state = readCursor();
-    expect(state.offset).toBe(16);
+    expect(state.offset).toBe(32);
 
-    // Simulate truncation (file now smaller than offset).
-    // Overwrite with smaller content.
-    atomicWrite(testFile, '{"uuid":"short"}');
+    // Truncate file to 16 bytes (smaller than stored offset).
+    // Using atomicWrite which replaces via temp+rename would change inode,
+    // so use direct truncate to test the in-place truncation path.
+    truncateSync(testFile, 16);
 
-    // In practice, the caller detects truncation and passes newOffset=0.
-    // Let's test the full flow:
-    advanceCursor(testFile, 'hash-of-rec2', 0); // Caller detected truncation, reset offset
+    // Call advanceCursor without passing 0. It must detect that
+    // current.offset (32) > fileSize (16) and reset to 0 itself.
+    advanceCursor(testFile, 'hash-new', 32);
+
     const newState = readCursor();
     expect(newState.offset).toBe(0);
   });
