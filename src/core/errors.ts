@@ -129,6 +129,19 @@ interface WarningRecord {
   count: number;
 }
 
+/** Validate a parsed warnings.json entry. The file is user-writable and survives
+ * across processes, so a hand-edited or half-written entry must be dropped rather
+ * than trusted — this is a fail-open path and must not throw. */
+function isWarningRecord(value: unknown): value is WarningRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v['code'] === 'string' &&
+    typeof v['lastTime'] === 'number' &&
+    typeof v['count'] === 'number'
+  );
+}
+
 const WARN_RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
 
 /** Record a warning (rate-limited to 1 per hour per code). Marks as delivered when read. */
@@ -144,7 +157,8 @@ export function recordWarning(code: ErrorCode): void {
   if (existsSync(warningsPath)) {
     try {
       const data = readFileSync(warningsPath, 'utf-8');
-      warnings = JSON.parse(data);
+      const parsed: unknown = JSON.parse(data);
+      warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
     } catch {
       warnings = [];
     }
@@ -187,7 +201,10 @@ export function pendingWarnings(): readonly string[] {
 
   try {
     const data = readFileSync(warningsPath, 'utf-8');
-    const warnings: WarningRecord[] = JSON.parse(data);
+    const parsed: unknown = JSON.parse(data);
+    const warnings: WarningRecord[] = Array.isArray(parsed)
+      ? parsed.filter(isWarningRecord)
+      : [];
 
     const lines = warnings.map(w => {
       const kind = ERROR_KINDS[w.code as ErrorCode] ?? 'informational';

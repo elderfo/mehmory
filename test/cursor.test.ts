@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
+import { truncateSync } from 'node:fs';
 import {
   readCursor,
   advanceCursor,
@@ -7,6 +8,8 @@ import {
 } from '../src/core/cursor.js';
 import { atomicWrite, stat, pathExists, remove } from '../src/core/fs.js';
 import { statePath } from '../src/core/home.js';
+import { readTranscript } from '../src/transcript/reader.js';
+import { distill } from '../src/distill/distill.js';
 
 describe('cursor', () => {
   let testFileCounter = 0;
@@ -107,11 +110,17 @@ describe('cursor', () => {
     const state1 = readCursor();
     expect(state1.offset).toBe(16);
 
-    // Truncate the file.
-    atomicWrite(testFile, '{"uuid":"short"}'); // ~15 bytes
+    // Truncate IN PLACE. atomicWrite would replace the file via temp+rename, which
+    // changes the inode, so the rotation branch would fire first and the truncation
+    // branch would never be reached — the earlier version of this test passed with
+    // the truncation reset deleted for exactly that reason. Real transcripts are
+    // truncated in place, so this is the path that actually matters.
+    truncateSync(testFile, 8);
+    expect(stat(testFile)?.size).toBe(8);
 
-    // Call advanceCursor with newOffset=0 to indicate truncation was detected.
-    advanceCursor(testFile, 'hash-new', 0);
+    // Advance with an offset past the new EOF; advanceCursor must detect
+    // `current.offset > fileSize` and reset to 0 itself.
+    advanceCursor(testFile, 'hash-new', 16);
 
     const state2 = readCursor();
     expect(state2.offset).toBe(0);
@@ -136,7 +145,17 @@ describe('cursor', () => {
     clearCursor();
     // Setup: advance cursor to end of file.
     const testFile = getUniqueTestFile();
-    atomicWrite(testFile, '{"uuid":"rec1"}\n{"uuid":"rec2"}\n{"uuid":"rec3"}\n');
+    // Records must actually match a distill pattern, otherwise distill returns []
+    // and "zero new entries" is trivially true for the wrong reason.
+    atomicWrite(
+      testFile,
+      [
+        '{"type":"message","role":"user","text":"first","uuid":"rec1"}',
+        '{"type":"message","role":"assistant","text":"reply","uuid":"rec2"}',
+        '{"type":"message","role":"user","text":"second","uuid":"rec3"}',
+        '',
+      ].join('\n')
+    );
     const statsResult = stat(testFile);
     if (!statsResult) throw new Error('stat result should exist');
     const fileSize = Number(statsResult.size);
@@ -146,25 +165,26 @@ describe('cursor', () => {
     const state1 = readCursor();
     expect(state1.offset).toBe(fileSize);
 
-    // "Replay": caller calls readTranscript and distill again.
-    // The distill would normally produce 3 entries.
-    // But because each has stable ID sha256(sessionId + uuid),
-    // and the cursor already tracked up to offset=size,
-    // a consumer that skips already-seen IDs would get zero new entries.
+    // Actually replay: read and distill the whole transcript twice and confirm the
+    // second pass yields nothing a consumer would treat as new. Asserting only that
+    // cursor state is unchanged (which this test used to do) proves nothing about
+    // replay — it would hold even if distill produced duplicate entries every pass.
+    const pass1 = distill(readTranscript(testFile).records, 'session-replay');
+    expect(pass1.length).toBeGreaterThan(0);
 
-    // We verify this by checking that:
-    // 1. The cursor preserves the exact state
-    const state2 = readCursor();
-    expect(state2.offset).toBe(state1.offset);
-    expect(state2.last_hash).toBe(state1.last_hash);
-    expect(state2.file_id).toBe(state1.file_id);
+    const seen = new Set(pass1.map(e => e.id));
+    const pass2 = distill(readTranscript(testFile).records, 'session-replay');
+    const newEntries = pass2.filter(e => !seen.has(e.id));
 
-    // 2. A second call to advanceCursor with the same file at EOF does not change the state
+    expect(pass2).toHaveLength(pass1.length);
+    expect(newEntries).toHaveLength(0);
+
+    // Stable IDs are what make that true: same session + same record uuid = same id.
+    expect(pass2.map(e => e.id)).toEqual(pass1.map(e => e.id));
+
+    // And the cursor itself is unchanged by re-advancing to the same EOF.
     advanceCursor(testFile, 'hash-of-rec3', fileSize);
-    const state3 = readCursor();
-    expect(state3.offset).toBe(state2.offset);
-
-    // The property holds: cursor replay is a no-op, and stable IDs prevent duplicates.
+    expect(readCursor().offset).toBe(state1.offset);
   });
 
   it('preserves last_hash for deduplication', () => {

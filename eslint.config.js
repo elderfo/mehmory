@@ -25,7 +25,11 @@ export default [
       custom: customRules
     },
     rules: {
-      ...tseslint.configs.strictTypeChecked[0].rules,
+      // NOTE: `tseslint.configs.strictTypeChecked` is a 3-element array whose [0] is
+      // the `base` config with zero rules — spreading `[0].rules` applied nothing.
+      // The full set flags 161 issues across src/ and test/; adopting it is run-2 work.
+      // What criterion 2 actually requires is enforced explicitly below.
+      ...tseslint.configs.eslintRecommended.rules,
       // Base rule is superseded by the TS-aware one below; leaving it on double-reports
       // and cannot see parameters inside function *type* annotations.
       'no-unused-vars': 'off',
@@ -42,7 +46,16 @@ export default [
   {
     files: ['src/**/*.ts'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'error'
+      // Criterion 2 requires no `any` in src/, enforced by rule rather than by eye.
+      // no-explicit-any alone only catches annotations; JSON.parse returns `any`
+      // implicitly, and parsing untrusted data off disk is most of what this library
+      // does — so the unsafe-* family is the half that actually matters here.
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error'
     }
   },
   {

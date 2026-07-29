@@ -44,8 +44,14 @@ export function readTranscript(path: string): ReadTranscriptResult {
 
     // Try to parse as JSON.
     try {
-      const record: TranscriptRecord = JSON.parse(line);
-      records.push(record);
+      const parsed: unknown = JSON.parse(line);
+      // A line can be valid JSON without being a record (e.g. a bare number from a
+      // torn write); those count as skipped rather than entering the record stream.
+      if (typeof parsed !== 'object' || parsed === null) {
+        skipped++;
+        continue;
+      }
+      records.push(parsed as TranscriptRecord);
     } catch {
       // Malformed JSON: skip and count.
       skipped++;

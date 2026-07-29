@@ -119,7 +119,11 @@ export function claimJob(): { readonly id: string; readonly data: Record<string,
       rename(jobPath, claimedPath);
       // We won! Read and return the job data.
       const contents = readFile(claimedPath);
-      const data = JSON.parse(contents);
+      // Job files are written by other processes and may be truncated by a crash
+      // mid-write; a non-object parse yields an empty payload rather than a throw.
+      const parsed: unknown = JSON.parse(contents);
+      const data: Record<string, unknown> =
+        typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
       return { id: jobId, data };
     } catch {
       // Rename failed; someone else claimed it or job doesn't exist. Try next job.

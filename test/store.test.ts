@@ -169,7 +169,7 @@ describe('initStore', () => {
   });
 
   it('preserves user-modified SCHEMA.md', () => {
-    let home = mehmoryHome();
+    const home = mehmoryHome();
     initStore();
 
     // User edits SCHEMA.md
@@ -194,7 +194,7 @@ This is my edited version.
   });
 
   it('preserves user-modified global files', () => {
-    let home = mehmoryHome();
+    const home = mehmoryHome();
     initStore();
 
     // User edits identity.md
