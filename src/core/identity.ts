@@ -4,6 +4,12 @@ import { loadConfig } from './config.js';
 import { realpath } from './fs.js';
 
 /**
+ * Module-level cache for resolveProjectKey results, keyed by working directory.
+ * Safe for a hook's lifetime: the resolved key is deterministic per cwd.
+ */
+const projectKeyCache = new Map<string, string>();
+
+/**
  * A project key becomes a directory name under <home>/projects/, so it must not be
  * able to escape that root. A crafted remote such as
  * `https://github.com/owner/../../../../tmp/pwned.git` otherwise yields the key
@@ -52,8 +58,15 @@ function safeRemoteKey(normalizedRemote: string): string {
  *
  * The key is based on git remote if available (making worktrees/clones share memory)
  * or filesystem identity (realpath) if not.
+ *
+ * Results are cached at module level to avoid repeated git subprocess calls.
+ * The cache is keyed by cwd and is safe for a hook's lifetime.
  */
 export function resolveProjectKey(cwd: string = process.cwd()): string {
+  // Check cache first to avoid repeated git subprocess calls
+  if (projectKeyCache.has(cwd)) {
+    return projectKeyCache.get(cwd)!;
+  }
   // Try to find git remote first
   const rawRemoteKey = tryGetGitRemoteKey(cwd);
   if (rawRemoteKey) {
@@ -62,8 +75,11 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
     // user would see in `mehmory status` and copy into config.json.
     const config = loadConfig();
     if (config.identity.aliases && config.identity.aliases[remoteKey]) {
-      return config.identity.aliases[remoteKey];
+      const aliasKey = config.identity.aliases[remoteKey];
+      projectKeyCache.set(cwd, aliasKey);
+      return aliasKey;
     }
+    projectKeyCache.set(cwd, remoteKey);
     return remoteKey;
   }
 
@@ -82,9 +98,12 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
   // Check alias override
   const config = loadConfig();
   if (config.identity.aliases && config.identity.aliases[pathKey]) {
-    return config.identity.aliases[pathKey];
+    const aliasKey = config.identity.aliases[pathKey];
+    projectKeyCache.set(cwd, aliasKey);
+    return aliasKey;
   }
 
+  projectKeyCache.set(cwd, pathKey);
   return pathKey;
 }
 
@@ -172,4 +191,12 @@ function normalizeRemoteUrl(url: string): string {
 
   // Fallback: assume it's already in host/owner/repo format
   return url;
+}
+
+/**
+ * Clear the project key cache. Used for testing to prevent cache poisoning
+ * when tests create temporary repositories.
+ */
+export function clearProjectKeyCache(): void {
+  projectKeyCache.clear();
 }

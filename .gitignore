@@ -1,4 +1,5 @@
 .research
+.scratch/
 node_modules/
 dist/
 /.deliver/SESSION.md

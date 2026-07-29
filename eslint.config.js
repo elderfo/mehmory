@@ -6,7 +6,7 @@ import customRules from './eslint-rules/index.js';
 
 export default [
   {
-    ignores: ['dist', 'node_modules', '.deliver', '**/*.js']
+    ignores: ['dist', 'node_modules', '.deliver', '.scratch', '.swarm', '**/*.js']
   },
   js.configs.recommended,
   eslintConfigPrettier,
