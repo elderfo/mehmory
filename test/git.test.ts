@@ -89,6 +89,55 @@ describe('commitPaths (done-when 8)', () => {
       }
 
       expect(result).toBeDefined();
+      // Assert that result is not a throw
+      expect(result?.ok).toBeDefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('returns { ok: false, deferred: true } when index.lock persists after retry', () => {
+    const { dir, cleanup } = setupTestRepo();
+
+    try {
+      // Create initial commit
+      writeFileSync(join(dir, 'file1.txt'), 'content1');
+      execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'pipe' });
+      execFileSync('git', ['commit', '-m', 'initial'], { cwd: dir, stdio: 'pipe' });
+
+      // Modify the file
+      writeFileSync(join(dir, 'file1.txt'), 'modified');
+
+      const lockPath = join(dir, '.git', 'index.lock');
+
+      // Create a post-index-change hook that creates the lock before commit continues
+      const hooksDir = join(dir, '.git', 'hooks');
+      mkdirSync(hooksDir, { recursive: true });
+      const hookScript = join(hooksDir, 'post-index-change');
+      writeFileSync(
+        hookScript,
+        '#!/bin/sh\n' +
+        'touch "' + lockPath.replace(/"/g, '\\"') + '"\n' +
+        'exit 0\n'
+      );
+      execFileSync('chmod', ['+x', hookScript], { stdio: 'pipe' });
+
+      try {
+        // Call commitPaths: git add succeeds and triggers the hook which creates the lock
+        // Then git commit sees the lock and defers
+        const result = commitPaths([join(dir, 'file1.txt')], 'deferred commit', dir);
+
+        // Assert the discriminated union: ok: false branch with deferred: true
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.deferred).toBe(true);
+        }
+      } finally {
+        // Clean up lock if still there
+        if (existsSync(lockPath)) {
+          rmSync(lockPath);
+        }
+      }
     } finally {
       cleanup();
     }
@@ -121,12 +170,12 @@ describe('commitPaths (done-when 8)', () => {
     }
   });
 
-  it('returns { committed: false, deferred: true } on index.lock without throwing', () => {
-    // Contract test: commitPaths never throws and returns structured result
+  it('never throws on staging error; returns { ok: false } without deferred', () => {
+    // Contract test: commitPaths never throws on invalid paths; returns structured result
     let result;
     let threw = false;
     try {
-      // Even invalid paths should not throw; should return structured result
+      // Invalid paths cause staging to fail, but should not throw
       result = commitPaths(['nonexistent.txt'], 'test');
     } catch {
       threw = true;
@@ -135,9 +184,11 @@ describe('commitPaths (done-when 8)', () => {
     expect(threw).toBe(false);
     expect(result).toBeDefined();
     if (!result) throw new Error('result should be defined');
-    expect(result).toHaveProperty('ok');
-    // Result shape: { ok: boolean; deferred?: true }
-    expect(typeof result.ok).toBe('boolean');
+    expect(result.ok).toBe(false);
+    // Staging error is not a deferral (index.lock is not involved)
+    if (!result.ok) {
+      expect(result.deferred).toBeUndefined();
+    }
   });
 });
 
