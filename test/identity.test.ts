@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { resolveProjectKey } from '../src/core/identity.js';
+import { resolveProjectKey, clearProjectKeyCache } from '../src/core/identity.js';
 
 /**
  * Test suite for resolveProjectKey.
@@ -15,6 +15,7 @@ describe('resolveProjectKey', () => {
   let tempDir: string;
 
   beforeEach(() => {
+    clearProjectKeyCache();
     tempDir = join(tmpdir(), `identity-test-${randomBytes(8).toString('hex')}`);
     mkdirSync(tempDir, { recursive: true });
   });

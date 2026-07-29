@@ -35,6 +35,15 @@ export interface InjectionFrame {
 }
 
 /**
+ * Result from truncateToTokens: truncated text and its token count.
+ * Returned together to avoid re-counting the same text.
+ */
+interface TruncationResult {
+  text: string;
+  tokens: number;
+}
+
+/**
  * Build an injection frame from identity, project, and index parts.
  *
  * Contract:
@@ -90,36 +99,42 @@ export function buildInjection(parts: InjectionPart[]): InjectionFrame {
 
     // Priority 1: Truncate index detail first
     if (indexTokens > INJECTION_INDEX_TOKENS) {
-      indexTruncated = truncateToTokens(indexTruncated, INJECTION_INDEX_TOKENS);
-      indexTokens = estimateTokens(indexTruncated);
+      const result = truncateToTokens(indexTruncated, INJECTION_INDEX_TOKENS);
+      indexTruncated = result.text;
+      indexTokens = result.tokens;
     }
     // Priority 2: Truncate project
     else if (projectTokens > INJECTION_PROJECT_TOKENS) {
-      projectTruncated = truncateToTokens(projectTruncated, INJECTION_PROJECT_TOKENS);
-      projectTokens = estimateTokens(projectTruncated);
+      const result = truncateToTokens(projectTruncated, INJECTION_PROJECT_TOKENS);
+      projectTruncated = result.text;
+      projectTokens = result.tokens;
     }
     // Priority 3: Truncate identity (but keep at least some content)
     else if (identityTokens > INJECTION_IDENTITY_TOKENS) {
-      identityTruncated = truncateToTokens(identityTruncated, INJECTION_IDENTITY_TOKENS);
-      identityTokens = estimateTokens(identityTruncated);
+      const result = truncateToTokens(identityTruncated, INJECTION_IDENTITY_TOKENS);
+      identityTruncated = result.text;
+      identityTokens = result.tokens;
     } else {
       // All parts are within their budgets but combined is over
       // Further truncate identity as a last resort (never drop entirely if original had content)
       if (identityContent && identityTokens > 0) {
-        identityTruncated = truncateToTokens(
+        const result = truncateToTokens(
           identityTruncated,
           Math.max(1, identityTokens - 10)
         );
-        identityTokens = estimateTokens(identityTruncated);
+        identityTruncated = result.text;
+        identityTokens = result.tokens;
       } else if (projectTokens > 0) {
-        projectTruncated = truncateToTokens(
+        const result = truncateToTokens(
           projectTruncated,
           Math.max(1, projectTokens - 10)
         );
-        projectTokens = estimateTokens(projectTruncated);
+        projectTruncated = result.text;
+        projectTokens = result.tokens;
       } else if (indexTokens > 0) {
-        indexTruncated = truncateToTokens(indexTruncated, Math.max(1, indexTokens - 10));
-        indexTokens = estimateTokens(indexTruncated);
+        const result = truncateToTokens(indexTruncated, Math.max(1, indexTokens - 10));
+        indexTruncated = result.text;
+        indexTokens = result.tokens;
       } else {
         break; // all empty, nothing more to truncate
       }
@@ -138,17 +153,24 @@ export function buildInjection(parts: InjectionPart[]): InjectionFrame {
 
 /**
  * Truncate text to approximately the target token count.
- * Truncates at character boundaries to stay under target; returns safe substring.
+ * Truncates at character boundaries to stay under target; returns safe substring
+ * along with its token count to avoid re-counting.
  *
  * @param text — The text to truncate
  * @param targetTokens — Target token count
- * @returns Truncated text
+ * @returns Object with truncated text and its token count
  */
-function truncateToTokens(text: string, targetTokens: number): string {
-  if (!text) return '';
+function truncateToTokens(text: string, targetTokens: number): TruncationResult {
+  if (!text) {
+    return { text: '', tokens: 0 };
+  }
 
   const targetChars = Math.floor(targetTokens / TOKENS_PER_CHAR);
-  if (targetChars <= 0) return '';
+  if (targetChars <= 0) {
+    return { text: '', tokens: 0 };
+  }
 
-  return text.substring(0, Math.max(1, targetChars));
+  const truncated = text.substring(0, Math.max(1, targetChars));
+  const tokens = estimateTokens(truncated);
+  return { text: truncated, tokens };
 }
