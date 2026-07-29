@@ -1,0 +1,5 @@
+{"type":"message","role":"user","text":"Can you help me refactor this function?","uuid":"550e8400-e29b-41d4-a716-446655440001","timestamp":"2026-07-28T10:15:00Z"}
+{"type":"message","role":"assistant","text":"I'd be happy to help. What's the current structure?","uuid":"550e8400-e29b-41d4-a716-446655440002","timestamp":"2026-07-28T10:15:05Z"}
+{"type":"message","role":"user","text":"Actually, I realize we should rewrite it from scratch instead.","uuid":"550e8400-e29b-41d4-a716-446655440003","timestamp":"2026-07-28T10:16:00Z"}
+{"type":"mode","mode":"claude","timestamp":"2026-07-28T10:16:30Z"}
+{"type":"message","role":"user","text":"Let's implement a cache for the API responses.","uuid":"550e8400-e29b-41d4-a716-446655440004","timestamp":"2026-07-28T10:17:00Z"}

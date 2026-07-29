@@ -1,0 +1,6 @@
+{"type":"message","role":"user","text":"Can you help me refactor this?","uuid":"tol-001","timestamp":"2026-07-28T10:00:00Z"}
+{"type":"mode","mode":"claude","timestamp":"2026-07-28T10:01:00Z"}
+{"type":"file-history-snapshot","files":[],"uuid":"snap-001","timestamp":"2026-07-28T10:02:00Z"}
+{"type":"message","role":"user","text":"I decide to use TypeScript instead.","uuid":"tol-002","timestamp":"2026-07-28T10:03:00Z"}
+{"type":"message","role":"assistant","text":"Good choice.","uuid":"tol-003","timestamp":"2026-07-28T10:04:00Z"}
+{"type":"message","role":"user","text":"Actually, the build is still broken. We have this error in production

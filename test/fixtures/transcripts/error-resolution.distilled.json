@@ -1,0 +1,24 @@
+[
+  {
+    "id": "b8a827bc8ab31cbba772b4b67750ac3e64d1de87823c9113c92e709c33022455",
+    "pattern": "error_resolution",
+    "content": "Error resolution: The deployment failed with a timeout error.",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "err-001",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "f8d1ad5b238ec05c8f11806f05fb795d9959acbc2b794e6d04ae4b3ebe16267e",
+    "pattern": "error_resolution",
+    "content": "Error resolution: I found the issue - the database connection was broken. Let me fix that.",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "err-003",
+      "recordType": "message",
+      "lineNumber": 2
+    }
+  }
+]

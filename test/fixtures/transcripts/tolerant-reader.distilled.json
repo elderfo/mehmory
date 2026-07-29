@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ac37aef79b9b31683f2e827e4a717d8ae7772e6336dca585d588431e26809409",
+    "pattern": "user_message",
+    "content": "Can you help me refactor this?",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "tol-001",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "7c86c3041a9fd0502f62f2df094e405937a5e805b483147975a8dc46aa730e17",
+    "pattern": "decision_marker",
+    "content": "Decision: I decide to use TypeScript instead.",
+    "source": {
+      "sessionId": "test-session",
+      "recordUuid": "tol-002",
+      "recordType": "message",
+      "lineNumber": 3
+    }
+  }
+]

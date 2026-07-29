@@ -1,0 +1,49 @@
+/** Test setup: guard against touching real ~/.mehmory (done-when criterion 16). */
+
+import { beforeEach, afterEach } from 'vitest';
+import { createTempDir, cleanupTempDir } from './helpers.js';
+
+const originalHome = process.env.MEHMORY_HOME;
+let setupTempDir: string;
+
+// Git exports these to hook processes. Tests that shell out to git (identity,
+// commitPaths, initStore) would otherwise inherit the *outer* repository's index
+// when the suite runs from a pre-commit hook or a CI step invoked by git, and
+// `git worktree add` fails with "index file open failed: Not a directory".
+// Scrubbed once here rather than at each execSync call site.
+for (const v of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY']) {
+  delete process.env[v];
+}
+
+// Make git hermetic for every child process the suite spawns.
+//
+// Without this the tests inherit the developer's global config. If that sets
+// commit.gpgsign=true, each `git commit` blocks on the GPG/1Password agent for
+// ~56s and then fails with "failed to write commit object" — so the suite passes
+// only while the agent happens to be warm and fails once its cache expires. CI
+// has no agent at all, and may also have no user identity, which fails commits
+// for a second reason. GIT_CONFIG_* applies to every git invocation without
+// touching any repo's own config.
+process.env['GIT_CONFIG_COUNT'] = '3';
+process.env['GIT_CONFIG_KEY_0'] = 'commit.gpgsign';
+process.env['GIT_CONFIG_VALUE_0'] = 'false';
+process.env['GIT_CONFIG_KEY_1'] = 'user.name';
+process.env['GIT_CONFIG_VALUE_1'] = 'mehmory tests';
+process.env['GIT_CONFIG_KEY_2'] = 'user.email';
+process.env['GIT_CONFIG_VALUE_2'] = 'tests@mehmory.invalid';
+
+beforeEach(() => {
+  // Set MEHMORY_HOME to a temp directory for each test
+  setupTempDir = createTempDir('mehmory-test');
+  process.env.MEHMORY_HOME = setupTempDir;
+});
+
+afterEach(() => {
+  // Clean up and restore original or unset
+  cleanupTempDir(setupTempDir);
+  if (originalHome) {
+    process.env.MEHMORY_HOME = originalHome;
+  } else {
+    delete process.env.MEHMORY_HOME;
+  }
+});

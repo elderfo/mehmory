@@ -1,0 +1,45 @@
+{
+  "name": "mehmory",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Memory abstraction layer for Claude Code",
+  "exports": {
+    "./core/home": "./dist/core/home.js",
+    "./core/errors": "./dist/core/errors.js",
+    "./core/fs": "./dist/core/fs.js",
+    "./core/lock": "./dist/core/lock.js",
+    "./core/git": "./dist/core/git.js",
+    "./core/queue": "./dist/core/queue.js",
+    "./core/identity": "./dist/core/identity.js",
+    "./core/config": "./dist/core/config.js",
+    "./core/cursor": "./dist/core/cursor.js",
+    "./core/store": "./dist/core/store.js",
+    "./core/redact": "./dist/core/redact.js",
+    "./core/tokens": "./dist/core/tokens.js",
+    "./core/injection": "./dist/core/injection.js",
+    "./schema/format": "./dist/schema/format.js",
+    "./transcript/reader": "./dist/transcript/reader.js",
+    "./distill/patterns": "./dist/distill/patterns.js",
+    "./distill/distill": "./dist/distill/distill.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.11.1",
+    "@types/node": "^22.9.0",
+    "eslint": "^9.11.1",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.9.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.3.3",
+    "tsup": "^8.1.1",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.6.0",
+    "vitest": "^2.1.5"
+  }
+}
