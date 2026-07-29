@@ -1,3 +1,4 @@
+<!-- /autoplan restore point: /home/cgetsfred/.gstack/projects/elderfo-mehmory/main-autoplan-restore-20260728-232446.md -->
 # mehmory — Design Spec
 
 Date: 2026-07-28
@@ -169,3 +170,202 @@ KPI proof split: mechanical KPIs (injection budget, hook latency, capture surviv
 | MCP | None in v1 | search tool; search+remember |
 | Prompt recall | Pointer injection + topic cache | full snippets; none |
 | V1 scope | onboard, lint, doctor/status, auto git commits all in | — |
+
+---
+
+# /autoplan Review Addendum (2026-07-28)
+
+Reviewed by /autoplan: CEO (Phase 1), Eng (Phase 3), DX (Phase 3.5). UI scope: none — design phase skipped. Codex CEO outside voice: `2026-07-28-mehmory-ceo-review.md` (full text).
+
+## Review-mandated spec changes (auto-approved under blast-radius rule)
+
+1. **Concurrency safety** — two concurrent sessions on one project: inbox/log writes are O_APPEND single-write lines; `git commit` retries once on index.lock then defers to next hook invocation. (S1)
+2. **FTS rebuild off hot path** — UserPromptSubmit never rebuilds the index synchronously; rebuild happens at SessionEnd/background, with page-title grep fallback when index is stale/absent. (S1/S7)
+3. **State-file corruption rescue** — unparseable `.state/<session>.json` → reset to fresh state, log to errors.log, continue. Never crash a hook. (S2)
+4. **Node version guard** — `node:sqlite` needs Node ≥22.5; `doctor` checks, `search` degrades to grep with a warning. (S2)
+5. **Injection framing** — all hook-injected wiki content is wrapped in explicit data-only framing (not instructions); deterministic distill captures user messages/corrections/decision markers only. Persistent-prompt-injection mitigation; load-bearing. (S3)
+6. **Secret filter claim softened** — regex filter is best-effort pattern matching (keys/tokens/.env shapes); it does not reliably catch PII or prose secrets. Documented limitation, not a guarantee. (S3)
+7. **Onboard `--dry-run`** — preview what would be distilled before writing anything; onboarding is the highest-risk data operation and runs before the user has calibrated trust. (S3)
+8. **Capture offsets** — transcript delta tracked by byte offset in the session JSONL (not message count), so compact/resume never double-captures or skips. (S4)
+9. **Token estimation method** — caps enforced with chars/4 heuristic, ±20% tolerance documented; no tokenizer dependency. (S7)
+10. **errors.log rotation** — rotate at ~5 MB, same policy as stats.jsonl. (S8)
+11. **Distribution pipeline** — CI workflow: build, test, npm publish + plugin marketplace release on tag. In v1 scope as P2. (S9)
+12. **Schema versioning** — SCHEMA.md carries `schema_version`; doctor warns when the user's copy drifts behind the plugin's template major version. Co-evolution stays, drift becomes visible. (S10)
+13. **Provenance refs** — inbox entries carry source-session references at runtime capture too (not just onboarding); integrate may carry them into page `refs` frontmatter. Distinguishes observed from inferred. (Codex)
+14. **Measurable KPIs** — KPI table sharpened: time-to-first-useful-recall ≤5 min from init; cold-start recall ≥70% relevant in top-3 pointers on a labeled query set; contradiction count 0 after lint; recall utility tracked as pointers-followed / pointers-offered from stats.jsonl. (Both voices)
+
+## NOT in scope (deferred, with rationale)
+
+- MCP server / API-user reach — settled non-goal; `remember` skill covers the need in-harness. (Claude voice rejected: personal tool, not TAM play.)
+- Team/multi-user schema, sync — non-goal v1; storage format doesn't preclude later.
+- Embeddings/semantic search — premise P5 accepted at gate; recall-precision eval (KPI above) is the falsification instrument. Revisit only if eval fails.
+- Scheduled/background LLM maintenance — violates the token-visibility principle; threshold nudge is the chosen mechanism.
+- Other harnesses — adapter seam later, per spec.
+- Statusline memory indicator, `doctor --fix` — delight items, deferred to TODOS.
+
+## What already exists
+
+- FTS5 porter+trigram schema ← context-mode (spec reuses).
+- Transcript JSONL structure, hook contracts ← Claude Code; studied in `.research/`.
+- Wiki/decay/supersession patterns ← Karpathy LLM-wiki, Sulcus/MemPalace studies.
+- Secret regex patterns ← standard corpora. Nothing is rebuilt that exists.
+
+## Dream state delta
+
+CURRENT (CLAUDE.md-only, amnesia) → THIS PLAN (enforced wiki memory, measurable recall, v1 complete) → 12-MONTH IDEAL (adapter seam to other harnesses, proven KPIs). Plan moves toward ideal; the 5-hook Claude Code coupling is the accepted debt.
+
+## Error & Rescue Registry
+
+| Codepath | Failure | Rescued? | Action | User sees |
+|---|---|---|---|---|
+| Any hook | uncaught error | Y | log errors.log, exit 0 | nothing (fail open) |
+| Hook | corrupt state JSON | Y (added) | reset state, log | nothing |
+| Hook/CLI | git commit index.lock | Y (added) | retry 1x, defer | nothing; doctor flags |
+| CLI search | Node <22.5 no sqlite | Y (added) | grep fallback + warn | warning line |
+| SessionStart | wiki dirs missing | Y | no-op + init hint | one hint line |
+| Integrate | crash mid-run | Y | inbox intact, git dirty | dirty repo, re-run |
+| Onboard | interrupt mid-chunk | Y | state file resume | resume message |
+| Distill | malformed transcript line | Y | skip line, count in stats | nothing |
+| Any write | disk full / perm | Y | temp+rename fails atomically, log | doctor flags |
+
+## Failure Modes Registry
+
+| Codepath | Failure mode | Rescued | Test | User sees | Logged |
+|---|---|---|---|---|---|
+| Hooks (all) | crash | Y | Y (fixture stdin/stdout) | fail-open | Y |
+| Inbox append | concurrent sessions | Y (added) | Y (added) | none | Y |
+| Pointer inject | irrelevant pointers | n/a | Y (eval set, added) | noise | Y (stats) |
+| Capture | secret leak past regex | partial | Y (corpus test) | dry-run preview | N |
+| Identity | worktree/clone fork | OPEN → UC3 | Y (added) | split memory | doctor |
+| Injection | poisoned content persists | Y (framing) | Y | — | N |
+
+No CRITICAL silent gaps remain; identity fork is the one OPEN item, pending UC3 at the approval gate.
+
+## Architecture diagram
+
+```
+Claude Code session                     ~/.mehmory/ (git repo)
+┌──────────────────────┐   inject      ┌───────────────────────────┐
+│ SessionStart hook ───┼──────────────▶│ identity/project/index.md │
+│ UserPromptSubmit ────┼──pointers────▶│ pages/*.md   archive/*.md │
+│ Stop / PreCompact ───┼──distill─────▶│ inbox.md  log.md          │
+│ SessionEnd ──────────┼──commit──────▶│ .state/ (counters, stats) │
+└─────────┬────────────┘               └───────────▲───────────────┘
+          │ shared lib (parse/distill/filter/config)│
+┌─────────▼────────────┐    reads/writes via skills │
+│ CLI: init onboard    ├────────────────────────────┘
+│ search doctor status │      in-session skills: integrate, lint,
+│ stats                │      remember, onboard-session
+└──────────────────────┘
+```
+
+## Decision Audit Trail
+
+| # | Phase | Decision | Class | Principle | Rationale | Rejected |
+|---|---|---|---|---|---|---|
+| 1 | CEO | Mode = SELECTIVE EXPANSION | Mechanical | — | autoplan override | — |
+| 2 | CEO | Approach = plugin+thin CLI (as specced) | Mechanical | P1 | completeness-max of logged alternatives | plugin-only; CLI+installer |
+| 3 | CEO | Reject TAM/team/MCP reframing (Claude voice) | Mechanical | P6/user positioning | deliberately personal meh-tier tool; MCP a settled non-goal | MCP server, team schema |
+| 4 | CEO | Add concurrency safety | Mechanical | P1 | silent data race | ignore |
+| 5 | CEO | FTS rebuild off hot path | Mechanical | P3 | 100ms budget | sync rebuild |
+| 6 | CEO | State-corruption + node:sqlite + git-lock rescues | Mechanical | P1 | close error GAPs | leave gaps |
+| 7 | CEO | Injection data-framing | Mechanical | P1 | persistent prompt injection | trust content |
+| 8 | CEO | Soften PII claim; add onboard --dry-run | Mechanical | P5 | honest limits; preview trust | overclaim |
+| 9 | CEO | Byte-offset capture tracking | Mechanical | P5 | compact-safe | message counts |
+| 10 | CEO | chars/4 token heuristic documented | Mechanical | P5 | explicit over clever | tokenizer dep |
+| 11 | CEO | errors.log rotation | Mechanical | P1 | unbounded file | ignore |
+| 12 | CEO | Distribution CI in scope P2 | Mechanical | P1 | code without distribution unusable | silent defer |
+| 13 | CEO | schema_version + drift warning | Mechanical | P1 | upgrade path | silent drift |
+| 14 | CEO | Provenance refs first-class | Mechanical | P1 | observed vs inferred | none |
+| 15 | CEO | Measurable KPI rewrite | Mechanical | P1 | falsifiability | vibes |
+| 16 | CEO | Purge command? | TASTE → gate | — | codex privacy point vs "never delete" | — |
+| 17 | CEO | remember:-prefix capture? | TASTE → gate | — | delight, in blast radius | — |
+| 18 | CEO | V1 scope narrowing | USER CHALLENGE → gate | — | both voices | — |
+| 19 | CEO | Decay: per-page override | USER CHALLENGE → gate | — | both voices | — |
+| 20 | CEO | Project identity: stable key | USER CHALLENGE → gate | — | both voices | — |
+| 21 | Eng | Integrate = snapshot-clear (late appends survive) | Mechanical | P1 | "inbox never lost" contract was false under concurrency | naive clear |
+| 22 | Eng | Path-scoped git staging + per-op commit ownership | Mechanical | P5 | cross-session commit of half-done transactions | repo-wide add |
+| 23 | Eng | SessionEnd = durable queue entry, claimed idempotently later | Mechanical | P1 | background task not guaranteed to survive shutdown | fire-and-forget |
+| 24 | Eng | Capture cursor = file identity + offset + last-record hash; stable entry IDs | Mechanical | P1 | byte offset alone fails on truncate/rotate; replay must be harmless | offset only |
+| 25 | Eng | Untrusted captures never auto-injected into identity/project.md; explicit promotion only; truncate before framing | Mechanical | P1 | framing is mitigation, not boundary | trust framing alone |
+| 26 | Eng | Deterministic truncation priority: index detail → project → identity last | Mechanical | P5 | undefined truncation order | implementer guess |
+| 27 | Eng | Distill contract = enumerated marker patterns + JSONL fixtures as spec | Mechanical | P5 | "decision markers" undefined | vague prose |
+| 28 | Eng | Pointer matching uses full-text FTS, not titles/headings only | Mechanical | P1 | facts live in bullet bodies | title match |
+| 29 | Eng | Rate-limited stderr warning on repeated hook failures | Mechanical | P1 | fail-open can silently disable memory for weeks | doctor-only |
+| 30 | Eng | Schema split: machine format version (code-owned) vs editorial guidance (user-owned) | Mechanical | P5 | "user copy wins" breaks parsers | single file wins |
+| 31 | Eng | Missing core files → skip + init hint | Mechanical | P1 | unspecified nil path | crash/undefined |
+| 32 | Eng | Reject "Stop-loop unguarded" finding | Mechanical | — | FP: spec line 73 names stop_hook_active guard | — |
+| 33 | Eng | 16 test requirements added (see test plan artifact) | Mechanical | P1 | plan-stage coverage 0/16 | defer tests |
+
+## Eng review additions (auto-approved)
+
+15. **Integrate transactionality** — integrate snapshots the inbox, merges, then removes only snapshotted entries; entries appended concurrently survive. "Inbox is never lost" now holds under concurrency.
+16. **Git transaction ownership** — every operation stages only the paths it touched and commits its own transaction; never `git add -A`. A dirty tree left by a crash is flagged by doctor, not committed by the next session.
+17. **SessionEnd durability** — final distill enqueues a durable job (file in `.state/queue/`); the next foreground hook or CLI invocation claims it idempotently. No orphaned background work.
+18. **Capture cursor hardening** — cursor = transcript file identity + byte offset + last-record hash; advances only past complete validated records; distilled entries carry stable IDs so replay is a no-op.
+19. **Injection trust boundary** — data framing is mitigation, not boundary: captured/untrusted text is never auto-injected into `identity.md`/`project.md`; promotion into core files happens only via explicit in-session integrate approved edits. Truncation runs before frame-wrapping.
+20. **Truncation priority** — deterministic order when over budget: index detail first, project.md second, identity.md last.
+21. **Distill contract** — marker patterns enumerated in spec; JSONL fixtures define the contract (fixtures are normative).
+22. **Full-text pointer matching** — UserPromptSubmit matches FTS over page bodies, returns pointers only. KPI caveat documented: pointers-offered is measurable; fact-actually-used is not observable in v1.
+23. **Failure visibility** — repeated hook failures emit a rate-limited one-line stderr warning; not doctor-only.
+24. **Schema split** — machine-parsed format constants live in code with `format_version`; SCHEMA.md is editorial guidance only, user-owned, drift-warned.
+
+## DX review additions (auto-approved)
+
+25. **Quickstart contract** — "First 5 Minutes" doc: numbered install→init→onboard→session→integrate→search flow with expected output per step; tested on a clean machine; TTHW ≤5 min is a release gate. Magical moment leads: onboard, then the first session already knows the project.
+26. **CLI contract** — exact syntax, defaults, exit codes for every command; `--json` on search/doctor/status with versioned schemas (agent-deterministic output, no decorative prose); search arity documented (`search QUERY [--project|--global|--all] [--limit N] [--json]`); init/onboard and status/doctor boundaries defined; npm package + binary names pinned.
+27. **Error message template** — every surfaced error: `MEHMORY E_<CODE>: <what>. <consequence — Claude Code unaffected>. Fix: <copy-paste command>. Details: errors.log`. doctor prints copy-paste fixes.
+28. **Node check at init** — Node ≥22.5 verified at install/init with upgrade guidance, not discovered at first search.
+29. **Docs deliverables scoped** — README quickstart, command reference w/ examples, troubleshooting indexed by error text, privacy + secret-filter-limits page, upgrade notes. README test: unfamiliar user installs in <2 min using only copied commands.
+30. **Escape hatches** — config.json documented with sample: `injection.budget_tokens`, `decay.{enabled,archive_days,purge_days}`, `secrets.{patterns,whitelist}`, per-hook toggles; `MEHMORY_HOME` env override; `/mehmory:pause` / `resume` capture switch (session/project/global precedence).
+31. **Lifecycle design** — uninstall (plugin gone, data intact) vs data deletion are separate operations; export/restore documented. Purge command itself = UC4 at gate.
+32. **KPI table sync** — main KPI table updated to the measurable targets in this addendum (TTHW ≤5 min, recall ≥70% top-3).
+
+### DX Scorecard (plan stage)
+
+| Dimension | Initial | After fixes above |
+|---|---|---|
+| Getting Started | 4/10 | 9/10 |
+| API/CLI/SDK | 5/10 | 9/10 |
+| Error Messages | 4/10 | 8/10 |
+| Documentation | 2/10 | 8/10 |
+| Upgrade Path | 4/10 | 7/10 (purge pending UC4) |
+| Dev Environment | 6/10 | 8/10 |
+| Community | 5/10 | 5/10 (held light, personal tool) |
+| DX Measurement | 7/10 | 8/10 |
+| **Overall** | **4.6/10** | **7.8/10** |
+| TTHW | 5-15 min (est) | ≤5 min (release-gated) |
+| Product type | CLI tool + Claude Code plugin/skill | Mode: DX POLISH |
+
+### Developer journey map
+
+| Stage | Developer does | Friction | Status |
+|---|---|---|---|
+| Discover | npm / marketplace listing | no listing scoped | fixed (item 29) |
+| Install | plugin + npm -g | two installs, Node req | fixed (28, 25) |
+| Hello world | init → onboard → first session | order undocumented | fixed (25) |
+| Real usage | hooks run silently; integrate on nudge | silent failures | fixed (27, item 23) |
+| Debug | doctor/status/errors.log | no copy-paste fixes | fixed (27) |
+| Upgrade | plugin update + format_version | no migration/uninstall design | partial (31, UC4) |
+
+| # | Phase | Decision | Class | Principle | Rationale | Rejected |
+|---|---|---|---|---|---|---|
+| 34 | DX | Persona = CC power user + AI agent; mode DX POLISH | Mechanical | autoplan override | — | — |
+| 35 | DX | TTHW target = competitive tier ≤5 min, release-gated | Mechanical | P1 | red-flag tier loses to CLAUDE.md's zero-install | champion tier (defer) |
+| 36 | DX | Magical moment = onboard demo ("already knows my project") | Mechanical | P5 | lowest-effort vehicle at tier | playground/video |
+| 37 | DX | Items 25-32 (quickstart, CLI contract, error template, node check, docs, escape hatches, lifecycle, KPI sync) | Mechanical | P1/P5 | both voices converge; all in blast radius | ship undocumented |
+| 38 | Gate | UC1: v1 stays ALL-IN | User decision | — | user kept original direction over both models | staged v1 |
+| 39 | Gate | UC2: per-page decay class accepted | User decision | — | `decay: evergreen\|ephemeral\|default` frontmatter; age rules apply to default only | age-only |
+| 40 | Gate | UC3: stable project identity accepted | User decision | — | git remote slug, fallback toplevel realpath hash; alias map in config | path-hash |
+| 41 | Gate | UC4: `mehmory purge` accepted (safety) | User decision | — | page/session/project scopes, dry-run, typed confirm, history-rewrite warning; separate from uninstall | never-delete |
+| 42 | Gate | T2: `remember:` prompt-prefix capture accepted | User decision | — | prefix check + secret filter + inbox append in UserPromptSubmit | skill-only |
+
+## Gate outcomes (2026-07-28) — spec deltas
+
+- **Scope:** v1 remains all-in (onboard, lint, doctor/status, stats, decay, auto-commit).
+- **Decay:** pages carry `decay: evergreen | ephemeral | default`; mechanical 60/90d rules apply to `default` only; `ephemeral` refreshed-or-deleted each integrate (supersedes age-only decay in Decisions log).
+- **Identity:** project key = git remote slug; fallback = toplevel realpath hash; alias map in `config.json` for merges/splits (supersedes path-hash in Decisions log).
+- **Purge:** `mehmory purge <page|--session <id>|--project|--all>` with `--dry-run`, typed confirmation, optional export, explicit git-history-rewrite warning. "Nothing is deleted, ever" becomes "nothing is deleted *silently*". Separate from uninstall.
+- **Capture:** `remember: <text>` prefix in UserPromptSubmit appends (filtered) text to inbox directly.
+
+**APPROVED** — /autoplan review complete. Restore point: see comment at top of file.
