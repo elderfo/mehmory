@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { statePath } from './home.js';
 
 // ponytail: errors.ts does its own bounded appends because it is the one module
@@ -56,6 +57,10 @@ export function formatUserError(error: MehmoryError): string {
   return result;
 }
 
+/** Module-level tracking of log file size to avoid statting after every append.
+ * Includes the mtime so we can detect if the file was modified outside our tracking. */
+let logFileSizeState: { size: number; mtime: number } | null = null;
+
 /** Log an error to <home>/.state/errors.log with 5 MB rotation (1 generation kept). */
 export function logError(error: MehmoryError): void {
   const logPath = statePath('errors.log');
@@ -68,21 +73,49 @@ export function logError(error: MehmoryError): void {
 
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] ${error.code}: ${error.what}\n`;
+  const maxSize = 5 * 1024 * 1024;
+
+  // Initialize or refresh size state. Check mtime to detect if file was modified
+  // outside our tracking (e.g., in tests). If mtime changed, restat.
+  if (logFileSizeState === null) {
+    try {
+      const stat = statSync(logPath);
+      logFileSizeState = { size: stat.size, mtime: stat.mtime.getTime() };
+    } catch {
+      // File doesn't exist yet, size is 0
+      logFileSizeState = { size: 0, mtime: 0 };
+    }
+  } else {
+    // Check if file was modified externally by comparing mtime
+    try {
+      const stat = statSync(logPath);
+      const currentMtime = stat.mtime.getTime();
+      if (currentMtime !== logFileSizeState.mtime) {
+        // File mtime changed, invalidate cache and restat
+        logFileSizeState = { size: stat.size, mtime: currentMtime };
+      }
+    } catch {
+      // Can't stat, but that's ok—we'll try to append and see what happens
+    }
+  }
 
   // Append the line
   appendFileSync(logPath, line, 'utf-8');
 
+  // Update tracked size by bytes written (encoded as UTF-8)
+  const bytesWritten = Buffer.byteLength(line, 'utf-8');
+  logFileSizeState.size += bytesWritten;
+
   // Rotate if over 5 MB
-  const maxSize = 5 * 1024 * 1024;
-  try {
-    const stat = statSync(logPath);
-    if (stat.size > maxSize) {
-      // Rotate: move current to .1, start fresh
+  if (logFileSizeState.size > maxSize) {
+    try {
       const rotatedPath = statePath('errors.log.1');
       renameSync(logPath, rotatedPath);
+      // After rotation, size resets to 0 and update mtime to reflect the new empty file
+      logFileSizeState = { size: 0, mtime: 0 };
+    } catch {
+      // Rotate failed, ignore (don't create a loop)
     }
-  } catch {
-    // Stat/rotate failed, ignore (don't create a loop)
   }
 
   // Record warning for rate-limited injection (U2)
@@ -144,6 +177,41 @@ function isWarningRecord(value: unknown): value is WarningRecord {
 
 const WARN_RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
 
+/** Module-level cache for warnings state. Stores parsed warnings and a hash of
+ * the file contents. If the hash changes, the file was modified by another process. */
+let warningsCacheState: {
+  warnings: WarningRecord[];
+  contentHash: string;
+} | null = null;
+
+/** Quick hash of file contents to detect modifications from other processes. */
+function hashFileContents(data: string): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+/** Read warnings from cache if file unchanged, otherwise re-read from disk.
+ * This avoids the redundant read-parse on every recordWarning call while
+ * staying correct against concurrent modifications from other processes. */
+function getWarningsFromDisk(warningsPath: string): WarningRecord[] {
+  try {
+    const data = readFileSync(warningsPath, 'utf-8');
+    const contentHash = hashFileContents(data);
+
+    // If cache exists and hash matches, file hasn't changed—use cached version
+    if (warningsCacheState !== null && warningsCacheState.contentHash === contentHash) {
+      return warningsCacheState.warnings;
+    }
+
+    // File changed or no cache yet—parse and update cache
+    const parsed: unknown = JSON.parse(data);
+    const warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
+    warningsCacheState = { warnings, contentHash };
+    return warnings;
+  } catch {
+    return [];
+  }
+}
+
 /** Record a warning (rate-limited to 1 per hour per code). Marks as delivered when read. */
 export function recordWarning(code: ErrorCode): void {
   const warningsPath = statePath('warnings.json');
@@ -155,13 +223,7 @@ export function recordWarning(code: ErrorCode): void {
 
   let warnings: WarningRecord[] = [];
   if (existsSync(warningsPath)) {
-    try {
-      const data = readFileSync(warningsPath, 'utf-8');
-      const parsed: unknown = JSON.parse(data);
-      warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
-    } catch {
-      warnings = [];
-    }
+    warnings = getWarningsFromDisk(warningsPath);
   }
 
   const now = Date.now();
@@ -185,7 +247,11 @@ export function recordWarning(code: ErrorCode): void {
 
   // Write whole file, not append (fixes corruption)
   try {
-    writeFileSync(warningsPath, JSON.stringify(warnings, null, 2), 'utf-8');
+    const jsonStr = JSON.stringify(warnings, null, 2);
+    writeFileSync(warningsPath, jsonStr, 'utf-8');
+    // After writing, update cache with new state and content hash
+    const contentHash = hashFileContents(jsonStr);
+    warningsCacheState = { warnings, contentHash };
   } catch {
     // Silently fail to write warnings
   }
@@ -212,7 +278,11 @@ export function pendingWarnings(): readonly string[] {
     });
 
     // Clear after reading (consume semantics for U2)
-    writeFileSync(warningsPath, JSON.stringify([], null, 2), 'utf-8');
+    const emptyJson = JSON.stringify([], null, 2);
+    writeFileSync(warningsPath, emptyJson, 'utf-8');
+    // Update cache since we just modified the file
+    const contentHash = hashFileContents(emptyJson);
+    warningsCacheState = { warnings: [], contentHash };
 
     return lines;
   } catch {
