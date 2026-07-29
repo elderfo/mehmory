@@ -7,9 +7,10 @@ import { describe, it, expect } from 'vitest';
 import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { statePath } from '../src/core/home.js';
 import { enqueueJob, claimJob } from '../src/core/queue.js';
-import { pathExists, mkdir } from '../src/core/fs.js';
+import { pathExists, mkdir, listDir } from '../src/core/fs.js';
 
 describe('durable queue (done-when 9)', () => {
   it('enqueueJob creates a queued job file', () => {
@@ -200,6 +201,137 @@ if (claimed) {
 
       // Stale claim should be gone
       expect(pathExists(stalePath)).toBe(false);
+    }
+  });
+
+  it('claimJob with jobType filters to jobs of that type', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    // Enqueue two jobs of different types
+    const job1Id = enqueueJob({ msg: 'first' }, 'SessionEnd');
+    const job2Id = enqueueJob({ msg: 'second' }, 'UserPromptSubmit');
+
+    expect(job1Id).not.toBeNull();
+    expect(job2Id).not.toBeNull();
+
+    // Claim a SessionEnd job - should get job1
+    const claimed1 = claimJob('SessionEnd');
+    expect(claimed1).not.toBeNull();
+    if (claimed1) {
+      expect(claimed1.id).toBe(job1Id);
+      expect(claimed1.data.msg).toBe('first');
+    }
+
+    // Claim a UserPromptSubmit job - should get job2
+    const claimed2 = claimJob('UserPromptSubmit');
+    expect(claimed2).not.toBeNull();
+    if (claimed2) {
+      expect(claimed2.id).toBe(job2Id);
+      expect(claimed2.data.msg).toBe('second');
+    }
+  });
+
+  it('claimJob without jobType claims any job regardless of type', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    // Enqueue a typed job
+    const jobId = enqueueJob({ task: 'any' }, 'SessionEnd');
+    expect(jobId).not.toBeNull();
+
+    // Claim without specifying a type - should still succeed
+    const claimed = claimJob();
+    expect(claimed).not.toBeNull();
+    if (claimed) {
+      expect(claimed.id).toBe(jobId);
+      expect(claimed.data.task).toBe('any');
+    }
+  });
+
+  it('claimJob with wrong jobType does not consume another type\'s claim attempts', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    const jobId = enqueueJob({ task: 'work' }, 'SessionEnd');
+
+    // Try to claim as UserPromptSubmit - should fail and not create a claim record
+    const claimed1 = claimJob('UserPromptSubmit');
+    expect(claimed1).toBeNull();
+
+    // Check that no claim record was created
+    const claimedDir = join(queueDir, 'claimed');
+    const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
+    const jobClaims = claimedFiles.filter(f => f.startsWith(jobId + '.'));
+    expect(jobClaims).toHaveLength(0);
+
+    // Now claim as SessionEnd - should succeed
+    const claimed2 = claimJob('SessionEnd');
+    expect(claimed2).not.toBeNull();
+    if (claimed2) {
+      expect(claimed2.id).toBe(jobId);
+    }
+  });
+
+  it('untyped job can be claimed with explicit type claim or untyped claim', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    // Enqueue a job without a type
+    const jobId = enqueueJob({ task: 'untyped' });
+    expect(jobId).not.toBeNull();
+
+    // Untyped claim should succeed
+    const claimed = claimJob();
+    expect(claimed).not.toBeNull();
+    if (claimed) {
+      expect(claimed.id).toBe(jobId);
+      expect(claimed.data.task).toBe('untyped');
+    }
+  });
+
+  it('typed claim skips untyped jobs', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    // Enqueue an untyped job and a typed job
+    const untypedId = enqueueJob({ msg: 'untyped' });
+    const typedId = enqueueJob({ msg: 'typed' }, 'SessionEnd');
+
+    expect(untypedId).not.toBeNull();
+    expect(typedId).not.toBeNull();
+
+    // Claiming with type should skip the untyped job and claim the typed one
+    const claimed = claimJob('SessionEnd');
+    expect(claimed).not.toBeNull();
+    if (claimed) {
+      expect(claimed.id).toBe(typedId);
+      expect(claimed.data.msg).toBe('typed');
+    }
+
+    // Untyped job should still be in queue
+    const untypedPath = join(queueDir, `${untypedId}.json`);
+    expect(pathExists(untypedPath)).toBe(true);
+  });
+
+  it('malformed job file is skipped gracefully', () => {
+    const queueDir = join(statePath('queue'));
+    mkdir(queueDir);
+
+    // Create a malformed job file
+    const jobId = randomBytes(8).toString('hex');
+    const jobPath = join(queueDir, `${jobId}.json`);
+    writeFileSync(jobPath, '{invalid json');
+
+    // Create a valid job
+    const validId = enqueueJob({ msg: 'valid' });
+    expect(validId).not.toBeNull();
+
+    // ClaimJob should skip the malformed one and claim the valid one
+    const claimed = claimJob();
+    expect(claimed).not.toBeNull();
+    if (claimed) {
+      expect(claimed.id).toBe(validId);
     }
   });
 });

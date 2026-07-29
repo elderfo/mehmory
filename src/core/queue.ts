@@ -22,15 +22,21 @@ import {
 } from './fs.js';
 
 /**
- * Enqueue a job with the given data. Returns the job ID, or null on failure.
+ * Enqueue a job with the given data and optional type. Returns the job ID, or null on failure.
+ * The job type is stored in the job payload and can be filtered when claiming.
  */
-export function enqueueJob(jobData: Record<string, unknown>): string | null {
+export function enqueueJob(jobData: Record<string, unknown>, jobType?: string): string | null {
   const jobId = randomBytes(8).toString('hex');
   const queueDir = join(statePath('queue'));
   const jobPath = join(queueDir, `${jobId}.json`);
 
   mkdir(queueDir);
-  const contents = JSON.stringify(jobData, null, 2);
+  // Store the jobType in the payload so it can be filtered during claim
+  const payload = { ...jobData };
+  if (jobType !== undefined) {
+    payload._jobType = jobType;
+  }
+  const contents = JSON.stringify(payload, null, 2);
 
   try {
     // Write atomically
@@ -51,9 +57,10 @@ export function enqueueJob(jobData: Record<string, unknown>): string | null {
  * Claim a job by atomic rename into claimed/ directory.
  * Exactly one process wins (rename is atomic). Stale claims (older than queue.stale_ms)
  * can be reclaimed by other processes. After 3 attempts, moves to failed/.
+ * When jobType is specified, only jobs matching that type are claimed.
  * Returns the claimed job ID and its data, or null if no job was claimed.
  */
-export function claimJob(): { readonly id: string; readonly data: Record<string, unknown> } | null {
+export function claimJob(jobType?: string): { readonly id: string; readonly data: Record<string, unknown> } | null {
   const queueDir = join(statePath('queue'));
   const claimedDir = join(queueDir, 'claimed');
   const failedDir = join(queueDir, 'failed');
@@ -74,13 +81,36 @@ export function claimJob(): { readonly id: string; readonly data: Record<string,
     return null;
   }
 
+  // List claimed files once before the loop (fixing O(n) repeated directory reads)
+  const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
+
   // Try to claim the first available job
   for (const jobFile of jobs) {
     const jobPath = join(queueDir, jobFile);
     const jobId = jobFile.replace('.json', '');
 
+    // Parse the job to check its type before attempting to claim it
+    let jobData: Record<string, unknown>;
+    try {
+      const contents = readFile(jobPath);
+      const parsed: unknown = JSON.parse(contents);
+      jobData =
+        typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      // Job file is malformed/unreadable; skip it
+      continue;
+    }
+
+    // Filter by job type if specified
+    if (jobType !== undefined) {
+      const payloadType = jobData._jobType;
+      if (payloadType !== jobType) {
+        // This job is not the type we're looking for; skip it
+        continue;
+      }
+    }
+
     // Count existing claims for this job in claimed/
-    const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
     const jobClaims = claimedFiles.filter(f => f.startsWith(jobId + '.'));
 
     // Clean up stale claims
@@ -117,14 +147,8 @@ export function claimJob(): { readonly id: string; readonly data: Record<string,
 
     try {
       rename(jobPath, claimedPath);
-      // We won! Read and return the job data.
-      const contents = readFile(claimedPath);
-      // Job files are written by other processes and may be truncated by a crash
-      // mid-write; a non-object parse yields an empty payload rather than a throw.
-      const parsed: unknown = JSON.parse(contents);
-      const data: Record<string, unknown> =
-        typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
-      return { id: jobId, data };
+      // We won! Return the job data.
+      return { id: jobId, data: jobData };
     } catch {
       // Rename failed; someone else claimed it or job doesn't exist. Try next job.
       continue;
