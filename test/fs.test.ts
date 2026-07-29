@@ -48,8 +48,8 @@ describe('fs primitives', () => {
       const result1 = appendRecord(filePath, 'record1', 'test', withProjectLock);
       const result2 = appendRecord(filePath, 'record2', 'test', withProjectLock);
 
-      expect(result1.success).toBe(true);
-      expect(result2.success).toBe(true);
+      expect(result1.ok).toBe(true);
+      expect(result2.ok).toBe(true);
 
       const contents = readFileSync(filePath, 'utf-8');
       const lines = contents.trim().split('\n');
@@ -63,7 +63,7 @@ describe('fs primitives', () => {
       const filePath = join(statePath(), 'test-escape.jsonl');
 
       const result = appendRecord(filePath, 'line1\nline2', 'test', withProjectLock);
-      expect(result.success).toBe(true);
+      expect(result.ok).toBe(true);
 
       const contents = readFileSync(filePath, 'utf-8').trim();
       expect(contents).toBe('line1\\nline2');
@@ -74,7 +74,7 @@ describe('fs primitives', () => {
       const record = JSON.stringify({ msg: 'hello\nworld' });
 
       const result = appendRecord(filePath, record, 'test', withProjectLock);
-      expect(result.success).toBe(true);
+      expect(result.ok).toBe(true);
 
       const contents = readFileSync(filePath, 'utf-8').trim();
       // The entire record should be one line
@@ -160,13 +160,13 @@ for (let i = 0; i < recordCount; i++) {
       // Below ceiling: should use direct append
       const smallRecord = 'x'.repeat(1024);
       const result = appendRecord(filePath, smallRecord, 'test', withProjectLock);
-      expect(result.success).toBe(true);
+      expect(result.ok).toBe(true);
       expect(readFileSync(filePath, 'utf-8')).toContain(smallRecord);
 
       // At/above ceiling: should still succeed (uses lock path)
       const largeRecord = 'y'.repeat(APPEND_ATOMIC_CEILING_BYTES + 1);
       const resultLarge = appendRecord(filePath, largeRecord, 'test', withProjectLock);
-      expect(resultLarge.success).toBe(true);
+      expect(resultLarge.ok).toBe(true);
       expect(readFileSync(filePath, 'utf-8')).toContain('y');
     });
 
@@ -176,7 +176,7 @@ for (let i = 0; i < recordCount; i++) {
       const largeRecord = 'z'.repeat(APPEND_ATOMIC_CEILING_BYTES + 100);
 
       const result = appendRecord(filePath, largeRecord, 'test-key', withProjectLock);
-      expect(result.success).toBe(true);
+      expect(result.ok).toBe(true);
 
       const contents = readFileSync(filePath, 'utf-8');
       expect(contents).toContain('z');
