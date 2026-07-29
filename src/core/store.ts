@@ -234,7 +234,7 @@ Token estimation uses chars/4 with ±20% tolerance.
 
 ## Secret Filter Limitation
 
-The secret filter is best-effort pattern matching. It catches common forms — AWS keys, GitHub tokens, bearer tokens, private-key blocks, .env-shaped secrets, URL-embedded credentials — but it does **not** reliably catch PII or secrets written in prose. Do not rely on it as your only safeguard against writing sensitive material into memory.
+The secret filter is best-effort pattern matching. It catches common forms — AWS keys, GitHub tokens, bearer tokens, private-key blocks, \`.env\`-shaped secrets, URL-embedded credentials — but it does **not** reliably catch PII or secrets written in prose. Do not rely on it as your only safeguard against writing sensitive material into memory.
 
 ## Frontmatter
 

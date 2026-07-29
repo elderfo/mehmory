@@ -7,7 +7,7 @@
  * whether to log a warning based on the skip ratio.
  */
 
-import { readFile } from '../core/fs.js';
+import { readFileFrom } from '../core/fs.js';
 
 /** A single record from the transcript JSONL file. */
 export type TranscriptRecord = Record<string, unknown> & { uuid?: string; type?: string };
@@ -43,12 +43,12 @@ export interface ReadTranscriptResult {
  * @returns Records, skipped count, and the offset to persist
  */
 export function readTranscript(path: string, startOffset = 0): ReadTranscriptResult {
-  const whole = readFile(path);
-  // Offsets are byte-based (that is what stat().size reports and what the cursor
-  // stores), so slice in the byte domain rather than the UTF-16 string domain.
-  const buf = Buffer.from(whole, 'utf-8');
-  const begin = startOffset > 0 && startOffset <= buf.length ? startOffset : 0;
-  const contents = buf.subarray(begin).toString('utf-8');
+  // Read only from the offset forward. Offsets are byte-based (that is what
+  // stat().size reports and what the cursor stores), and readFileFrom seeks rather
+  // than reading-then-slicing, so resuming near the end of a 50 MB transcript costs
+  // the size of the tail rather than the size of the file.
+  const begin = startOffset > 0 ? startOffset : 0;
+  const contents = readFileFrom(path, begin);
 
   // Only whole lines are consumable. If the tail has no trailing newline it is a
   // partial write; leave it for the next pass rather than parsing half a record.

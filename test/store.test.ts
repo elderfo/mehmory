@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { initStore } from '../src/core/store.js';
 import { mehmoryHome } from '../src/core/home.js';
@@ -266,5 +267,26 @@ Custom user preferences go here.
     expect(index).toContain('---');
     expect(log).toContain('---');
     expect(inbox).toContain('---');
+  });
+});
+
+describe('SCHEMA.md / SCHEMA_TEMPLATE drift', () => {
+  it('ships the same schema text in assets/ and in the initializer', () => {
+    // store.ts embeds the schema as a template literal so a bundled hook has no
+    // runtime asset dependency, but criterion 14 also requires assets/SCHEMA.md
+    // to exist as editorial content. Nothing reads the asset at runtime, so the
+    // two copies can drift silently — and already did once (the decay class names
+    // had to be corrected in both files by hand). This pins them together, so
+    // drift fails at commit time instead of shipping.
+    const home = mehmoryHome();
+    initStore();
+
+    const written = readFileSync(join(home, 'SCHEMA.md'), 'utf-8');
+    const asset = readFileSync(
+      join(process.cwd(), 'assets', 'SCHEMA.md'),
+      'utf-8'
+    );
+
+    expect(written).toBe(asset);
   });
 });

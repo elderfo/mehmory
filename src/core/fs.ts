@@ -10,6 +10,8 @@ import {
   openSync,
   closeSync,
   writeSync,
+  readSync,
+  fstatSync,
   existsSync,
   statSync,
   renameSync,
@@ -59,6 +61,33 @@ export function stat(path: string): ReturnType<typeof statSync> {
 /** Read file as UTF-8 string. */
 export function readFile(path: string): string {
   return readFileSync(path, 'utf-8');
+}
+
+/**
+ * Read a file from a byte offset to EOF, without materializing the bytes before it.
+ *
+ * Transcripts reach tens of MB and the capture cursor exists precisely so each pass
+ * only reads what was appended since the last one. Reading the whole file and then
+ * slicing would defeat that — it costs the full file every pass no matter how small
+ * the tail is. Lives here because A3 confines node:fs to this module.
+ *
+ * Returns '' if the offset is at or past EOF. An offset past EOF is treated as EOF
+ * rather than an error: a truncated file is a normal condition the cursor recovers
+ * from, not a failure.
+ */
+export function readFileFrom(path: string, offset: number): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const start = offset > 0 ? Math.min(offset, size) : 0;
+    const length = size - start;
+    if (length <= 0) return '';
+    const buf = Buffer.allocUnsafe(length);
+    const read = readSync(fd, buf, 0, length, start);
+    return buf.subarray(0, read).toString('utf-8');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Create directory recursively. */
