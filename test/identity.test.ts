@@ -201,4 +201,74 @@ describe('resolveProjectKey', () => {
       }
     }
   });
+
+  it('resolves the same key from a subdirectory of a repo with no remote', () => {
+    // Regression: the fallback hashed cwd rather than the git toplevel, so every
+    // subdirectory a session started in produced a different key and silently
+    // split one project's memory across separate stores.
+    const repoDir = join(tmpdir(), `identity-sub-${randomBytes(8).toString('hex')}`);
+    const deep = join(repoDir, 'src', 'nested');
+    mkdirSync(deep, { recursive: true });
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+
+    try {
+      const atRoot = resolveProjectKey(repoDir);
+      const atDepth = resolveProjectKey(deep);
+
+      expect(atRoot).toMatch(/^local\/[0-9a-f]{12}$/);
+      expect(atDepth).toBe(atRoot);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a traversal-carrying remote instead of using it as a directory name', () => {
+    // Regression: the key is joined into <home>/projects/<key>, so a remote
+    // containing ../ escaped the store root and gave an attacker who could get a
+    // repo cloned an arbitrary write. Falls back to the safe hash key.
+    const repoDir = join(tmpdir(), `identity-trav-${randomBytes(8).toString('hex')}`);
+    mkdirSync(repoDir, { recursive: true });
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git remote add origin https://github.com/owner/../../../../tmp/pwned.git', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
+
+    try {
+      const key = resolveProjectKey(repoDir);
+
+      expect(key).not.toContain('..');
+      // The load-bearing assertion: whatever the key is, joining it under the
+      // store root must stay under the store root.
+      expect(join('/store/projects', key).startsWith('/store/projects/')).toBe(true);
+      // Sanitized to a hash of the remote rather than rejected, so two worktrees
+      // of even a hostile-looking remote still share one memory.
+      expect(key).toMatch(/^remote\/[0-9a-f]{12}$/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it('gives the same sanitized key to two clones of one unsafe-shaped remote', () => {
+    // Sanitizing must preserve identity, not just safety: same remote, same key.
+    const mk = (): string => {
+      const d = join(tmpdir(), `identity-san-${randomBytes(8).toString('hex')}`);
+      mkdirSync(d, { recursive: true });
+      execSync('git init', { cwd: d, stdio: 'pipe' });
+      execSync('git remote add origin file:///srv/git/shared/deep/path/repo.git', {
+        cwd: d,
+        stdio: 'pipe',
+      });
+      return d;
+    };
+    const a = mk();
+    const b = mk();
+    try {
+      expect(resolveProjectKey(a)).toBe(resolveProjectKey(b));
+      expect(resolveProjectKey(a)).toMatch(/^remote\/[0-9a-f]{12}$/);
+    } finally {
+      rmSync(a, { recursive: true, force: true });
+      rmSync(b, { recursive: true, force: true });
+    }
+  });
 });

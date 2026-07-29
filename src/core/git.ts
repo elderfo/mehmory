@@ -40,7 +40,9 @@ export function commitPaths(
 
   // Stage only the given paths
   try {
-    execFileSync('git', ['add', ...paths], opts);
+    // `--` terminates option parsing: without it a path beginning with `-`
+    // (legal on disk, and page titles feed these paths) is read as a flag.
+    execFileSync('git', ['add', '--', ...paths], opts);
   } catch (err) {
     const error: MehmoryError = {
       code: 'E_GIT_COMMIT',
@@ -55,7 +57,17 @@ export function commitPaths(
   // Try to commit; retry once if index.lock is held
   for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
     try {
-      execFileSync('git', ['commit', '-m', message], { ...opts, stdio: 'pipe' });
+      // --no-gpg-sign is not optional. These are machine-generated bookkeeping
+      // commits in the user's memory store, and they inherit the user's global
+      // `commit.gpgsign`. With signing on, git blocks on the GPG/1Password agent:
+      // measured ~56s per commit before failing with "failed to write commit
+      // object". Inside a hook that freezes the session on a prompt the user
+      // never sees, which breaks the invariant that memory never blocks the
+      // harness (A2). Signing someone's memory bookkeeping buys nothing anyway.
+      execFileSync('git', ['commit', '--no-gpg-sign', '-m', message], {
+        ...opts,
+        stdio: 'pipe',
+      });
       // Success!
       return { committed: true };
     } catch (err) {

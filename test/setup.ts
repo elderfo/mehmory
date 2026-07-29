@@ -16,6 +16,23 @@ for (const v of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_OBJECT_DIREC
   delete process.env[v];
 }
 
+// Make git hermetic for every child process the suite spawns.
+//
+// Without this the tests inherit the developer's global config. If that sets
+// commit.gpgsign=true, each `git commit` blocks on the GPG/1Password agent for
+// ~56s and then fails with "failed to write commit object" — so the suite passes
+// only while the agent happens to be warm and fails once its cache expires. CI
+// has no agent at all, and may also have no user identity, which fails commits
+// for a second reason. GIT_CONFIG_* applies to every git invocation without
+// touching any repo's own config.
+process.env['GIT_CONFIG_COUNT'] = '3';
+process.env['GIT_CONFIG_KEY_0'] = 'commit.gpgsign';
+process.env['GIT_CONFIG_VALUE_0'] = 'false';
+process.env['GIT_CONFIG_KEY_1'] = 'user.name';
+process.env['GIT_CONFIG_VALUE_1'] = 'mehmory tests';
+process.env['GIT_CONFIG_KEY_2'] = 'user.email';
+process.env['GIT_CONFIG_VALUE_2'] = 'tests@mehmory.invalid';
+
 beforeEach(() => {
   // Set MEHMORY_HOME to a temp directory for each test
   const tempDir = join(tmpdir(), `mehmory-test-${randomBytes(8).toString('hex')}`);

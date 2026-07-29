@@ -74,3 +74,41 @@ describe('transcript reader', () => {
     expect(result.records[2]?.type).toBe('file-history-snapshot');
   });
 });
+
+describe('readTranscript offset (cursor consumer)', () => {
+  it('resumes from a byte offset instead of re-reading the file', () => {
+    // Regression: readTranscript(path) took no offset, so the cursor's stored
+    // offset had no consumer and every pass re-parsed the whole transcript.
+    const f = join(statePath('test-fixtures'), 'offset-resume.jsonl');
+    const line1 = JSON.stringify({ type: 'message', role: 'user', text: 'one', uuid: 'a' });
+    const line2 = JSON.stringify({ type: 'message', role: 'user', text: 'two', uuid: 'b' });
+    atomicWrite(f, `${line1}\n${line2}\n`);
+
+    const first = readTranscript(f);
+    expect(first.records).toHaveLength(2);
+    expect(first.endOffset).toBe(Buffer.byteLength(`${line1}\n${line2}\n`, 'utf-8'));
+
+    // Resuming at the recorded offset yields nothing new — the property the
+    // cursor exists to provide.
+    const resumed = readTranscript(f, first.endOffset);
+    expect(resumed.records).toHaveLength(0);
+
+    // Resuming mid-file yields only the tail.
+    const afterFirst = Buffer.byteLength(`${line1}\n`, 'utf-8');
+    const tail = readTranscript(f, afterFirst);
+    expect(tail.records).toHaveLength(1);
+    expect(tail.records[0]?.uuid).toBe('b');
+  });
+
+  it('does not consume a trailing partial line', () => {
+    const f = join(statePath('test-fixtures'), 'offset-partial.jsonl');
+    const complete = JSON.stringify({ type: 'message', role: 'user', text: 'done', uuid: 'c' });
+    atomicWrite(f, `${complete}\n{"uuid":"half`);
+
+    const r = readTranscript(f);
+    expect(r.records).toHaveLength(1);
+    // Offset stops at the end of the last COMPLETE line, so the half-written
+    // record is picked up whole on the next pass rather than parsed in two halves.
+    expect(r.endOffset).toBe(Buffer.byteLength(`${complete}\n`, 'utf-8'));
+  });
+});

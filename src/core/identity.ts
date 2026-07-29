@@ -1,6 +1,45 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { loadConfig } from './config.js';
+import { realpath } from './fs.js';
+
+/**
+ * A project key becomes a directory name under <home>/projects/, so it must not be
+ * able to escape that root. A crafted remote such as
+ * `https://github.com/owner/../../../../tmp/pwned.git` otherwise yields the key
+ * `github.com/owner/../../../../tmp/pwned`, which path.join() normalizes to a
+ * location outside the store — an arbitrary write triggered by cloning a hostile repo.
+ *
+ * Accepts only host/owner/repo shapes built from safe characters. Anything else is
+ * rejected so the caller can fall back to the hash-based key.
+ */
+const SAFE_KEY = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){1,4}$/;
+
+function isSafeProjectKey(key: string): boolean {
+  if (!SAFE_KEY.test(key)) return false;
+  // Belt and braces: no segment may be a traversal token, and `.`-only segments
+  // would collapse the path even though they pass the character class above.
+  return key.split('/').every(seg => seg !== '.' && seg !== '..' && seg.length > 0);
+}
+
+/**
+ * Make a remote-derived key safe to use as a directory name WITHOUT discarding the
+ * identity it carries.
+ *
+ * Rejecting an unsafe key and falling back to a path hash would be a silent
+ * regression of A5: `file://` remotes and deep group paths are perfectly
+ * legitimate, and path-hashing them gives every worktree of one repo a different
+ * key — the exact fragmentation the remote-slug scheme exists to prevent.
+ *
+ * So: readable shapes pass through unchanged, and anything else collapses to a
+ * hash of the normalized remote. Same remote still means same key, so worktrees
+ * and clones continue to share one memory, and the result cannot escape the store.
+ */
+function safeRemoteKey(normalizedRemote: string): string {
+  if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
+  const hash = createHash('sha256').update(normalizedRemote).digest('hex').slice(0, 12);
+  return `remote/${hash}`;
+}
 
 /**
  * Resolve a stable, deterministic project key for a given working directory.
@@ -16,9 +55,11 @@ import { loadConfig } from './config.js';
  */
 export function resolveProjectKey(cwd: string = process.cwd()): string {
   // Try to find git remote first
-  const remoteKey = tryGetGitRemoteKey(cwd);
-  if (remoteKey) {
-    // Check alias override
+  const rawRemoteKey = tryGetGitRemoteKey(cwd);
+  if (rawRemoteKey) {
+    const remoteKey = safeRemoteKey(rawRemoteKey);
+    // Alias lookup uses the sanitized key, which is what lands on disk and what a
+    // user would see in `mehmory status` and copy into config.json.
     const config = loadConfig();
     if (config.identity.aliases && config.identity.aliases[remoteKey]) {
       return config.identity.aliases[remoteKey];
@@ -26,16 +67,14 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
     return remoteKey;
   }
 
-  // Fall back to realpath-based key (using realpath command for A3 compliance)
-  let resolvedPath: string;
-  try {
-    resolvedPath = execFileSync('realpath', [cwd], {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    }).trim();
-  } catch {
-    resolvedPath = cwd;
-  }
+  // No remote at all. Hash filesystem identity.
+  //
+  // Inside a repo this MUST be the toplevel, not the cwd: hashing the cwd gives a
+  // different key for every subdirectory a session happens to start in, silently
+  // splitting one project's memory across many stores. Criterion 3 specifies the
+  // toplevel for exactly this reason.
+  const base = tryGetGitToplevel(cwd) ?? cwd;
+  const resolvedPath = realpath(base);
 
   const hash = createHash('sha256').update(resolvedPath).digest('hex').slice(0, 12);
   const pathKey = `local/${hash}`;
@@ -47,6 +86,23 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
   }
 
   return pathKey;
+}
+
+/**
+ * Absolute path of the repository root, or undefined outside a repo.
+ * Used so every directory inside one repo resolves to a single project key.
+ */
+function tryGetGitToplevel(cwd: string): string | undefined {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    }).trim();
+    return top || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

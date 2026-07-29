@@ -18,21 +18,45 @@ export interface ReadTranscriptResult {
   records: TranscriptRecord[];
   /** Number of lines skipped (malformed JSON or truncation at EOF). */
   skipped: number;
+  /**
+   * Byte offset just past the last COMPLETE line consumed. Feed this to
+   * advanceCursor so the next pass resumes here instead of re-reading. A trailing
+   * partial line (a record still being written) is excluded, so no half record is
+   * ever consumed and the offset never advances past one.
+   */
+  endOffset: number;
 }
 
 /**
- * Read and parse a transcript JSONL file.
+ * Read and parse a transcript JSONL file, optionally resuming from a byte offset.
  *
  * Parses each line as JSON. Malformed lines (JSON parse errors) are skipped silently
  * and counted. The caller is responsible for checking the skip ratio and logging
  * E_DISTILL_LOSSY if skipped > 10% of total lines.
  *
+ * `startOffset` is what makes the cursor worth storing. Claude transcripts reach
+ * tens of MB; without it every invocation re-reads and re-parses the whole file,
+ * and the cursor's offset field has no consumer at all.
+ *
  * @param path - Path to the transcript.jsonl file
- * @returns Records and skipped count
+ * @param startOffset - Byte offset to resume from (default 0 = whole file)
+ * @returns Records, skipped count, and the offset to persist
  */
-export function readTranscript(path: string): ReadTranscriptResult {
-  const contents = readFile(path);
-  const lines = contents.split('\n');
+export function readTranscript(path: string, startOffset = 0): ReadTranscriptResult {
+  const whole = readFile(path);
+  // Offsets are byte-based (that is what stat().size reports and what the cursor
+  // stores), so slice in the byte domain rather than the UTF-16 string domain.
+  const buf = Buffer.from(whole, 'utf-8');
+  const begin = startOffset > 0 && startOffset <= buf.length ? startOffset : 0;
+  const contents = buf.subarray(begin).toString('utf-8');
+
+  // Only whole lines are consumable. If the tail has no trailing newline it is a
+  // partial write; leave it for the next pass rather than parsing half a record.
+  const lastNewline = contents.lastIndexOf('\n');
+  const consumable = lastNewline >= 0 ? contents.slice(0, lastNewline + 1) : '';
+  const endOffset = begin + Buffer.byteLength(consumable, 'utf-8');
+
+  const lines = consumable.split('\n');
   const records: TranscriptRecord[] = [];
   let skipped = 0;
 
@@ -58,5 +82,5 @@ export function readTranscript(path: string): ReadTranscriptResult {
     }
   }
 
-  return { records, skipped };
+  return { records, skipped, endOffset };
 }

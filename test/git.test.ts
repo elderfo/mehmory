@@ -140,3 +140,42 @@ describe('commitPaths (done-when 8)', () => {
     expect(typeof result.committed).toBe('boolean');
   });
 });
+
+describe('commitPaths signing (done-when 8 / A2)', () => {
+  it('commits even when ambient git config demands signing', () => {
+    // Regression: commitPaths inherited the user's global commit.gpgsign. With
+    // signing on, git blocks on the signing agent (~56s measured) and then fails
+    // with "failed to write commit object", so memory never commits and, inside a
+    // hook, the session freezes on a prompt the user never sees.
+    //
+    // The suite forces signing OFF globally for hermeticity, which would hide a
+    // regression here — so this test turns it back ON for its own child processes
+    // and points gpg at a program that always fails. Without --no-gpg-sign the
+    // commit fails; with it, git never invokes the signer at all.
+    const dir = join(statePath(), 'gpg-repo-' + Math.random().toString(36).slice(2, 8));
+    mkdirSync(dir, { recursive: true });
+    execFileSync('git', ['init', dir], { stdio: 'pipe' });
+    writeFileSync(join(dir, 'note.md'), 'content');
+
+    const saved = { ...process.env };
+    try {
+      process.env['GIT_CONFIG_COUNT'] = '4';
+      process.env['GIT_CONFIG_KEY_3'] = 'gpg.program';
+      process.env['GIT_CONFIG_VALUE_3'] = '/bin/false';
+      process.env['GIT_CONFIG_VALUE_0'] = 'true'; // commit.gpgsign back on
+
+      const result = commitPaths([join(dir, 'note.md')], 'signed-config commit', dir);
+
+      expect(result.committed).toBe(true);
+      expect(result.deferred).toBeUndefined();
+      const log = execFileSync('git', ['log', '--oneline'], {
+        cwd: dir,
+        encoding: 'utf-8',
+      });
+      expect(log).toContain('signed-config commit');
+    } finally {
+      process.env = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

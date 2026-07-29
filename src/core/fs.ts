@@ -17,6 +17,7 @@ import {
   readdirSync,
   rmSync,
   unlinkSync,
+  realpathSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
@@ -78,6 +79,24 @@ export function remove(path: string): void {
 /** Remove a directory recursively. */
 export function removeDir(path: string): void {
   rmSync(path, { recursive: true, force: true });
+}
+
+/**
+ * Resolve a path to its canonical form, following symlinks.
+ *
+ * Exists here because A3 confines node:fs to this module. identity.ts previously
+ * shelled out to the `realpath(1)` binary to stay inside that rule, which is not
+ * present on every macOS install and silently fell back to the unresolved path —
+ * producing a different project key for a symlinked checkout.
+ *
+ * Returns the input unchanged if the path cannot be resolved (e.g. does not exist).
+ */
+export function realpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 /** List files in a directory. */

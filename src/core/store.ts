@@ -71,6 +71,15 @@ export function initStore(): InitStoreResult {
           stdio: 'pipe',
           encoding: 'utf-8',
         });
+        // Disable commit signing for the store itself, so it holds even for git
+        // invocations that don't route through commitPaths (a user running
+        // `git -C ~/.mehmory commit` by hand, or a future caller). Without this
+        // the user's global commit.gpgsign makes every store commit block on the
+        // signing agent. Set per-repo, so the user's own repos are untouched.
+        execFileSync('git', ['-C', home, 'config', 'commit.gpgsign', 'false'], {
+          stdio: 'pipe',
+          encoding: 'utf-8',
+        });
       } catch (err) {
         const error: MehmoryError = {
           code: 'E_STORE_INIT',

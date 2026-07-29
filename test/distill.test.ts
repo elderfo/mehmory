@@ -239,3 +239,37 @@ describe('distill', () => {
     expect(result[0]?.content).toContain('Second part');
   });
 });
+
+describe('distill redaction (write path)', () => {
+  it('redacts secrets before they enter a distilled entry', () => {
+    // Regression: redact() was applied only in injection.ts, on the way OUT of the
+    // store. By then the secret is already written to a markdown page and committed
+    // to the store's git history, where a filtered read cannot remove it.
+    const records = [
+      {
+        type: 'message',
+        role: 'user',
+        text: 'deploy with AKIAIOSFODNN7EXAMPLE please',
+        uuid: 'sec-1',
+      },
+    ];
+
+    const entries = distill(records, 'session-redact');
+
+    expect(entries).toHaveLength(1);
+    const [entry] = entries;
+    if (!entry) throw new Error('expected one entry');
+    expect(entry.content).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(entry.content).toContain('[REDACTED]');
+  });
+
+  it('leaves ordinary prose untouched', () => {
+    const records = [
+      { type: 'message', role: 'user', text: 'refactor the parser', uuid: 'plain-1' },
+    ];
+    const entries = distill(records, 'session-redact');
+    const [entry] = entries;
+    if (!entry) throw new Error('expected one entry');
+    expect(entry.content).toBe('refactor the parser');
+  });
+});

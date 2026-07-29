@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 import { DISTILL_PATTERNS, type DistilledEntry } from './patterns.js';
 import type { TranscriptRecord } from '../transcript/reader.js';
+import { redact } from '../core/redact.js';
 
 /**
  * Distill a list of transcript records into inbox entries.
@@ -47,7 +48,12 @@ export function distill(
           entries.push({
             id: hash,
             pattern: pattern.name,
-            content,
+            // Redact on the way IN. Applying the filter only at injection time
+            // (as injection.ts does) is too late: by then the secret has already
+            // been written to a markdown page under ~/.mehmory and committed to
+            // that repo's history, where redacting a later read cannot remove it.
+            // A user who pastes a key into a prompt must not have it persisted.
+            content: redact(content),
             source: {
               sessionId,
               recordUuid: record.uuid,
