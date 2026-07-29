@@ -1,0 +1,73 @@
+import js from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+import eslintConfigPrettier from 'eslint-config-prettier';
+import customRules from './eslint-rules/index.js';
+
+export default [
+  {
+    ignores: ['dist', 'node_modules', '.deliver', '.scratch', '.swarm', '**/*.js']
+  },
+  js.configs.recommended,
+  eslintConfigPrettier,
+  {
+    files: ['src/**/*.ts', 'test/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+      parser: tseslint.parser,
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: process.cwd()
+      }
+    },
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+      custom: customRules
+    },
+    rules: {
+      // NOTE: `tseslint.configs.strictTypeChecked` is a 3-element array whose [0] is
+      // the `base` config with zero rules — spreading `[0].rules` applied nothing.
+      // The full set flags 161 issues across src/ and test/; adopting it is run-2 work.
+      // What criterion 2 actually requires is enforced explicitly below.
+      ...tseslint.configs.eslintRecommended.rules,
+      // Base rule is superseded by the TS-aware one below; leaving it on double-reports
+      // and cannot see parameters inside function *type* annotations.
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' }
+      ],
+      'custom/no-fs-imports': 'error',
+      'custom/no-process-exit': 'error',
+      'custom/no-exported-promise': 'error',
+      'custom/no-stderr': 'error'
+    }
+  },
+  {
+    files: ['src/**/*.ts'],
+    rules: {
+      // Criterion 2 requires no `any` in src/, enforced by rule rather than by eye.
+      // no-explicit-any alone only catches annotations; JSON.parse returns `any`
+      // implicitly, and parsing untrusted data off disk is most of what this library
+      // does — so the unsafe-* family is the half that actually matters here.
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error'
+    }
+  },
+  {
+    files: ['test/**/*.ts'],
+    languageOptions: {
+      globals: {
+        describe: 'readonly',
+        it: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly'
+      }
+    }
+  }
+];

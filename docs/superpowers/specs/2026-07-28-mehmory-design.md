@@ -369,3 +369,68 @@ Claude Code session                     ~/.mehmory/ (git repo)
 - **Capture:** `remember: <text>` prefix in UserPromptSubmit appends (filtered) text to inbox directly.
 
 **APPROVED** — /autoplan review complete. Restore point: see comment at top of file.
+
+## Run-1 amendments (2026-07-29)
+
+Applied when run 1 (foundation library) landed. Items 1–8 resolve blocker/major defects
+found by the spec-stage adversarial review; 9–14 are decisions this spec never made that
+runs 2–3 cannot add later without breaking run 1's contracts. **Items 15 and 16 change
+contracts this spec had fixed** and were raised explicitly at the approval gate.
+
+1. **Injection allocation** (resolves BLOCKER: 200+200+500 = 900 against an 800 budget).
+   Authoring caps and injection allocations are different things. Authoring caps stand;
+   *injection* allocates identity 200 / project 200 / index 400 = 800, truncating index
+   detail first, then project, then identity. Identity is never dropped entirely. The
+   data-only frame is applied **after** truncation so framing cannot re-exceed the budget.
+2. **Record atomicity** (resolves MAJOR: `O_APPEND` interleave). Every inbox/log/stats
+   record is exactly one `\n`-terminated line written in a single `write()`; embedded
+   newlines are JSON-escaped. Documented ceiling **4 KiB**, above which the lockfile path
+   is used.
+3. **`index.lock` defer bound** (resolves BLOCKER: unbounded defer). Retry once after
+   100 ms, then leave staged and return `deferred: true`. The next `commitPaths` commits
+   whatever the index holds — not merely its own `paths` argument — so a deferred
+   transaction cannot be orphaned by a later caller passing a narrower list. Deferral is
+   normal operation and emits no error.
+4. **Queue claim protocol** (resolves BLOCKER: undefined durability). Claim by atomic
+   `rename()` into `queue/claimed/`; stale claims reclaimable by mtime; 3 failed claims
+   move the job to `queue/failed/`.
+5. **Concurrent-session decay race** (resolves BLOCKER). Index rewrites and decay run
+   under `withProjectLock`; lock acquisition is itself fail-open after a bounded wait
+   (50 × 100 ms, then proceed without the lock and log `E_LOCK_TIMEOUT`).
+6. **Cursor rotation/truncation** (resolves MAJOR). The cursor carries `dev:ino` and
+   `size`; rotation or truncation resets the offset, and stable entry IDs
+   (`sha256(sessionId + record.uuid)`) make replay a no-op.
+7. **Worktree/clone identity fork** (resolves BLOCKER: left OPEN). Clones and worktrees of
+   one remote deliberately share one memory; the alias map overrides. This is irreversible
+   once user directories exist on disk — see ADR A5 in `docs/WORLD_MODEL.md`.
+8. **`pointers-followed` KPI** (resolves MAJOR: self-contradiction). Removed from the v1
+   KPI table; `pointers_offered` remains as the measurable proxy. Addendum item 14 is
+   amended to match item 22.
+9. **Toolchain** (unspecified here): pnpm, vitest, tsup, eslint + prettier, husky.
+10. **`ephemeral` staleness threshold** is deferred to run 2 with the integrate skill that
+    owns it. Run 1 defines only the `decay` frontmatter constants.
+11. **FTS5 availability** — measured, not inferred: `node:sqlite` on Node 22.22.3 /
+    SQLite 3.51.3 builds `fts5` with both `porter unicode61` and `trigram` tokenizers.
+    No spec change; recorded as evidence for run 3.
+12. **Sync/async boundary** (ADR A9): the core library is synchronous at its boundary. No
+    exported function returns a Promise, lint-enforced.
+13. **Module format** (ADR A10): ESM only.
+14. **Process-exit ban** (ADR A11): core never calls `process.exit`/`process.abort` and
+    never throws across its boundary. Lint-enforced, which is what makes the "hooks fail
+    open" promise true rather than hoped-for.
+15. **Warning channel — amends addendum item 23.** That item specified "a rate-limited
+    one-line stderr warning". A hook exiting 0 has its stderr effectively swallowed, and
+    agents never see stderr at all, so that channel fails both audiences. Repeated failures
+    instead travel `errors.log` → `pendingWarnings()` → a one-line `SessionStart`
+    injection (wired in run 2). Rate-limit state lives in `.state/warnings.json`, keyed by
+    error code, default 1 per hour.
+16. **Conditional `Fix:` clause — amends addendum item 27.** That item mandated a `Fix:`
+    clause on every surfaced error. Errors now declare a kind; `informational` errors
+    (`E_LOCK_TIMEOUT`, `E_DISTILL_LOSSY`) omit the clause rather than inventing advice for
+    failures with no correct user action. Rendered form:
+    `MEHMORY E_<CODE>: <what>. <consequence>. [Fix: <command>. ]Details: <errors.log path>`
+
+**Decay class names.** Run 1's `src/schema/format.ts` uses the three names fixed by the
+2026-07-28 gate outcome above — `evergreen | ephemeral | default` — which supersede the
+Decisions log. Recorded here because these are parsed from page frontmatter by run 2, so
+drift between this spec and the code breaks integrate silently.

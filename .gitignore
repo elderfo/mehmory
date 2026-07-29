@@ -1,1 +1,13 @@
 .research
+.scratch/
+.work/
+.swarm/
+node_modules/
+dist/
+/.deliver/SESSION.md
+.DS_Store
+*.swp
+*.swo
+*~
+.env.local
+coverage/
