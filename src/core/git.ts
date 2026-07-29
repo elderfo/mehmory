@@ -13,14 +13,20 @@ import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS } from './fs.js';
  * On index.lock held after one retry, returns { committed: false, deferred: true }
  * with the tree left staged, and emits nothing (normal operation, not an error).
  * Accumulation is explicit: the next call commits both this call's paths and any deferred ones.
+ * @param paths - Paths to stage
+ * @param message - Commit message
+ * @param cwd - Optional working directory (for tests)
  */
 export function commitPaths(
   paths: string[],
-  message: string
+  message: string,
+  cwd?: string
 ): { readonly committed: boolean; readonly deferred?: boolean } {
+  const opts = cwd ? { cwd } : {};
+
   // Ensure we're in a git repo (will fail with clear error if not)
   try {
-    execFileSync('git', ['rev-parse', '--git-dir']);
+    execFileSync('git', ['rev-parse', '--git-dir'], opts);
   } catch {
     const error: MehmoryError = {
       code: 'E_GIT_COMMIT',
@@ -34,7 +40,7 @@ export function commitPaths(
 
   // Stage only the given paths
   try {
-    execFileSync('git', ['add', ...paths]);
+    execFileSync('git', ['add', ...paths], opts);
   } catch (err) {
     const error: MehmoryError = {
       code: 'E_GIT_COMMIT',
@@ -49,7 +55,7 @@ export function commitPaths(
   // Try to commit; retry once if index.lock is held
   for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
     try {
-      execFileSync('git', ['commit', '-m', message], { stdio: 'pipe' });
+      execFileSync('git', ['commit', '-m', message], { ...opts, stdio: 'pipe' });
       // Success!
       return { committed: true };
     } catch (err) {

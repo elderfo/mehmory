@@ -116,11 +116,7 @@ export function claimJob(): { readonly id: string; readonly data: Record<string,
     const claimedPath = join(claimedDir, `${jobId}.${process.pid}.json`);
 
     try {
-      const _raw = readFile(jobPath);
-      const _u = Date.now() + 50;
-      while (Date.now() < _u) {}
-      atomicWrite(claimedPath, _raw);
-      remove(jobPath);
+      rename(jobPath, claimedPath);
       // We won! Read and return the job data.
       const contents = readFile(claimedPath);
       const data = JSON.parse(contents);

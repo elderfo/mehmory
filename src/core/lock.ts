@@ -26,12 +26,18 @@ function lockFilePath(key: string): string {
  * Acquire exclusive access to a project, execute fn, then release.
  * Lock is acquired via open(..., 'wx'), which is atomic across processes.
  * Stale locks (mtime > lock.stale_ms) are reclaimed.
- * Retries at most 50 × 100 ms, then proceeds without lock and logs E_LOCK_TIMEOUT.
+ * Retries at most retryCount × retryIntervalMs, then proceeds without lock and logs E_LOCK_TIMEOUT.
  * Release on both success and throw.
+ * @param key - Project key
+ * @param fn - Function to execute with lock
+ * @param retryCount - Max retry attempts (default: 50)
+ * @param retryIntervalMs - Interval between retries in ms (default: 100)
  */
 export function withProjectLock<T>(
   key: string,
-  fn: () => T
+  fn: () => T,
+  retryCount: number = LOCK_RETRY_COUNT,
+  retryIntervalMs: number = LOCK_RETRY_INTERVAL_MS
 ): T {
   const lockPath = lockFilePath(key);
   mkdir(join(mehmoryHome(), '.state', 'locks'));
@@ -40,7 +46,7 @@ export function withProjectLock<T>(
 
   try {
     // Try to acquire lock with retries
-    for (let attempt = 0; attempt <= LOCK_RETRY_COUNT; attempt++) {
+    for (let attempt = 0; attempt <= retryCount; attempt++) {
       // Try to create lock file exclusively
       if (createLockExclusive(lockPath)) {
         acquired = true;
@@ -53,8 +59,8 @@ export function withProjectLock<T>(
           const lockStat = stat(lockPath);
           if (!lockStat) {
             // Retry after backoff
-            if (attempt < LOCK_RETRY_COUNT) {
-              const end = Date.now() + LOCK_RETRY_INTERVAL_MS;
+            if (attempt < retryCount) {
+              const end = Date.now() + retryIntervalMs;
               while (Date.now() < end) {
                 // Busy-wait
               }
@@ -82,9 +88,9 @@ export function withProjectLock<T>(
       }
 
       // Not stale (or couldn't determine). Retry with backoff.
-      if (attempt < LOCK_RETRY_COUNT) {
+      if (attempt < retryCount) {
         // Sleep before retry
-        const end = Date.now() + LOCK_RETRY_INTERVAL_MS;
+        const end = Date.now() + retryIntervalMs;
         while (Date.now() < end) {
           // Busy-wait (sync, no setImmediate available)
         }
@@ -96,7 +102,7 @@ export function withProjectLock<T>(
       const error: MehmoryError = {
         code: 'E_LOCK_TIMEOUT',
         kind: 'informational',
-        what: `project lock held for over ${(LOCK_RETRY_COUNT * LOCK_RETRY_INTERVAL_MS) / 1000}s; proceeded without it`,
+        what: `project lock held for over ${(retryCount * retryIntervalMs) / 1000}s; proceeded without it`,
         consequence: 'A concurrent session may have overwritten an index rewrite',
       };
       logError(error);

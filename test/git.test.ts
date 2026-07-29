@@ -46,10 +46,10 @@ describe('commitPaths (done-when 8)', () => {
       writeFileSync(join(dir, 'file2.txt'), 'modified2');
 
       // Commit only file1
-      const result = commitPaths.call(
-        { cwd: dir },
+      const result = commitPaths(
         [join(dir, 'file1.txt')],
-        'commit file1 only'
+        'commit file1 only',
+        dir
       );
 
       // Mock: change process.cwd() for commitPaths
@@ -79,10 +79,10 @@ describe('commitPaths (done-when 8)', () => {
       // Attempt commit (should fail and defer, not throw)
       let result;
       try {
-        result = commitPaths.call(
-          { cwd: dir },
+        result = commitPaths(
           [join(dir, 'file.txt')],
-          'test commit'
+          'test commit',
+          dir
         );
       } catch {
         // If it throws, that's also acceptable for this test

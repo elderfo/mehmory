@@ -55,15 +55,20 @@ describe('withProjectLock (done-when 7)', () => {
     writeFileSync(lockFile, '');
 
     let callCount = 0;
-    const result = withProjectLock(lockKey, () => {
-      callCount++;
-      return 'proceeded-without-lock';
-    });
+    // Use small retry count/interval to keep test fast
+    const result = withProjectLock(
+      lockKey,
+      () => {
+        callCount++;
+        return 'proceeded-without-lock';
+      },
+      2, // retries
+      1 // 1 ms interval (fast test)
+    );
 
     expect(result).toBe('proceeded-without-lock');
     expect(callCount).toBe(1);
-    // Bounds are: 50 retries × 100 ms = 5000 ms max (enforced by code constants, not wall-clock test)
-    // Test verifies that lock timeout results in fail-open behavior, not that wall-clock timing holds under load
+    // Verifies that lock timeout results in fail-open behavior after retry bound exhausted
   });
 
   it('reclaims stale locks (older than lock.stale_ms)', () => {
