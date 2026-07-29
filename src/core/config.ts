@@ -124,6 +124,14 @@ export function loadConfig(): MehmoryConfig {
     return deepClone(DEFAULTS) as MehmoryConfig;
   }
 
+  const createConfigParseError = (what: string): MehmoryError => ({
+    code: 'E_CONFIG_PARSE',
+    kind: 'actionable',
+    what,
+    consequence: 'Memory is running on defaults, so your settings are not applied.',
+    fix: `$EDITOR ${configPath}`,
+  });
+
   // Try to read and parse config.json
   let userConfig: unknown;
   try {
@@ -132,27 +140,13 @@ export function loadConfig(): MehmoryConfig {
   } catch (err) {
     // Log E_CONFIG_PARSE and return defaults (never throw)
     const message = err instanceof Error ? err.message : String(err);
-    const error: MehmoryError = {
-      code: 'E_CONFIG_PARSE',
-      kind: 'actionable',
-      what: `config.json is not valid JSON (${message}).`,
-      consequence: 'Memory is running on defaults, so your settings are not applied.',
-      fix: `$EDITOR ${configPath}`,
-    };
-    logError(error);
+    logError(createConfigParseError(`config.json is not valid JSON (${message}).`));
     return deepClone(DEFAULTS) as MehmoryConfig;
   }
 
   // Ensure userConfig is an object
   if (typeof userConfig !== 'object' || userConfig === null) {
-    const error: MehmoryError = {
-      code: 'E_CONFIG_PARSE',
-      kind: 'actionable',
-      what: 'config.json root is not an object.',
-      consequence: 'Memory is running on defaults, so your settings are not applied.',
-      fix: `$EDITOR ${configPath}`,
-    };
-    logError(error);
+    logError(createConfigParseError('config.json root is not an object.'));
     return deepClone(DEFAULTS) as MehmoryConfig;
   }
 

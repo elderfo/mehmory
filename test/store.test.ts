@@ -4,13 +4,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
 import { initStore } from '../src/core/store.js';
 import { mehmoryHome } from '../src/core/home.js';
-import { pathExists, readFile, mkdir, atomicWrite, listDir, removeDir } from '../src/core/fs.js';
+import { pathExists, readFile, mkdir, atomicWrite, listDir } from '../src/core/fs.js';
+import { createTempDir, cleanupTempDir } from './helpers.js';
 
 // Note: test/setup.ts already guards MEHMORY_HOME to prevent touching ~/.mehmory
 
@@ -19,15 +18,13 @@ describe('initStore', () => {
 
   beforeEach(() => {
     // Create a fresh temp directory for each test
-    testHome = join(tmpdir(), `mehmory-store-test-${randomBytes(8).toString('hex')}`);
+    testHome = createTempDir('mehmory-store-test');
     process.env.MEHMORY_HOME = testHome;
   });
 
   afterEach(() => {
     // Clean up
-    if (pathExists(testHome)) {
-      removeDir(testHome);
-    }
+    cleanupTempDir(testHome);
   });
 
   it('creates directory structure on first run', () => {

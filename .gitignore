@@ -1,5 +1,7 @@
 .research
 .scratch/
+.work/
+.swarm/
 node_modules/
 dist/
 /.deliver/SESSION.md
