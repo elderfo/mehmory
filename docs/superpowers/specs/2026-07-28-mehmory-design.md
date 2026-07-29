@@ -119,8 +119,9 @@ Chunked + resumable via state file. Onboarding is just a big first inbox — sam
 - `init` — create `~/.mehmory`, git init, copy schema, verify plugin hooks (prints install command if missing)
 - `onboard` — as above
 - `search <q>` — FTS5 via `node:sqlite` (porter + trigram tables, context-mode schema) over pages + archive + log; index rebuilt lazily from file mtimes; used by humans and by the model via Bash
-- `doctor` — hooks wired, dirs/git healthy, inbox size, last integrate/commit, page counts, state sanity, error log tail
+- `doctor` — hooks wired, dirs/git healthy, inbox size, last integrate/commit, page counts, state sanity, error log tail, KPI budget violations
 - `status` — one-screen wiki summary
+- `stats [--project]` — aggregates from `stats.jsonl`: hook latency p50/p95, injection tokens per SessionStart, capture volume, integrate cadence, inbox age; per-project split via path-hash
 
 Shared library between CLI and hooks: transcript parsing, distill rules, config, secret filter. Strict TS, no `any`, explicit return types.
 
@@ -131,6 +132,12 @@ Shared library between CLI and hooks: transcript parsing, distill rules, config,
 - Injection caps enforced by code (truncate + doctor warning), not by trusting the model.
 - Secret filter applied at every write boundary — both deterministic distill output and the block-with-reason instructions.
 - `git commit` failure is non-fatal (uncommitted repo still functions; doctor flags it).
+
+## Instrumentation
+
+Every hook invocation appends one JSONL line to `~/.mehmory/.state/stats.jsonl`: `{ts, project: <path-hash>, hook, ms, injected_tokens?, pointers_offered?, inbox_bytes?, captured_entries?}`. Integrate/lint/onboard append their own line (`entries_integrated`, `pages_touched`) as part of the log-entry step they already perform. File rotates at ~5 MB. `mehmory stats` aggregates; `doctor` flags budget violations.
+
+KPI proof split: mechanical KPIs (injection budget, hook latency, capture survival, integrate cadence) are proven per-project from `stats.jsonl`; judgment KPIs (recall correctness, contradiction rate) come from the dogfood eval harness and lint reports — runtime stats cannot prove them and don't pretend to.
 
 ## Testing
 
