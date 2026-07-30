@@ -61,6 +61,14 @@ export default [
     }
   },
   {
+    // `inbox-tx` is not a hook (hooks.json never registers it) — it is the CLI-shaped
+    // transactional helper skills invoke via Bash, and reporting a failed transaction on
+    // stderr with a non-zero exit is its contract (A15). Scoped to this one file so the
+    // U2 silence rule keeps binding every real hook entrypoint.
+    files: ['src/hooks/inbox-tx.ts'],
+    rules: { 'custom/no-stderr': 'off' }
+  },
+  {
     files: ['test/**/*.ts'],
     languageOptions: {
       globals: {
