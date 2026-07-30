@@ -89,7 +89,19 @@ export function runHook(
   try {
     const input = parseHookInput(readStdin());
     project = resolveProjectKey(input.cwd ?? process.cwd());
-    result = body(input, project);
+    // Every hook body reaches for session state, and `.state/<id>.json` with an empty
+    // id is `.state/.json` — one shared file every malformed invocation would pollute.
+    // No session id, no session: log it and stay silent (A2).
+    if (input.session_id.trim() === '') {
+      logError({
+        code: 'E_SESSION_STATE',
+        kind: 'informational',
+        what: `${event} hook received no session_id`,
+        consequence: 'The invocation was skipped; no session state was read or written',
+      });
+    } else {
+      result = body(input, project);
+    }
   } catch (err) {
     try {
       logError({

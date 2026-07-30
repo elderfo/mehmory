@@ -1,7 +1,7 @@
 /** Fail-open fixtures for all five hooks (criterion 15). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir } from './helpers.js';
 import {
@@ -88,6 +88,20 @@ describe('hooks fail open', () => {
       expect(run.status).toBe(0);
       expect(run.stderr).toBe('');
       expect(errorsLog()).not.toBe('');
+    });
+
+    it(`${hook}: stdin without a session_id is a logged no-op`, () => {
+      seedStore(key);
+      const input = inputFor(hook, transcript);
+      delete input['session_id'];
+
+      const run = runHook(hook, input, { cwd });
+
+      expect(run.status).toBe(0);
+      expect(run.stderr).toBe('');
+      expect(run.stdout).toBe('');
+      expect(existsSync(join(mehmoryHome(), '.state', '.json'))).toBe(false);
+      expect(errorsLog()).toContain('E_SESSION_STATE');
     });
 
     it(`${hook}: a corrupt store .git is survivable`, () => {
