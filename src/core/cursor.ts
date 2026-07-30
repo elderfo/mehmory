@@ -89,7 +89,7 @@ export function advanceCursor(
     // dev and ino may be BigInt on some platforms; convert to number safely.
     const devNum = Number(s.dev);
     const inoNum = Number(s.ino);
-    fileId = `${devNum}:${inoNum}`;
+    fileId = `${String(devNum)}:${String(inoNum)}`;
     fileSize = s.size;
   } catch {
     // File doesn't exist or can't stat: leave fileId/size as-is.

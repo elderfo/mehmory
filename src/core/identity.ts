@@ -64,8 +64,9 @@ function safeRemoteKey(normalizedRemote: string): string {
  */
 export function resolveProjectKey(cwd: string = process.cwd()): string {
   // Check cache first to avoid repeated git subprocess calls
-  if (projectKeyCache.has(cwd)) {
-    return projectKeyCache.get(cwd)!;
+  const cached = projectKeyCache.get(cwd);
+  if (cached !== undefined) {
+    return cached;
   }
   // Try to find git remote first
   const rawRemoteKey = tryGetGitRemoteKey(cwd);
@@ -74,7 +75,7 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
     // Alias lookup uses the sanitized key, which is what lands on disk and what a
     // user would see in `mehmory status` and copy into config.json.
     const config = loadConfig();
-    if (config.identity.aliases && config.identity.aliases[remoteKey]) {
+    if (config.identity.aliases[remoteKey]) {
       const aliasKey = config.identity.aliases[remoteKey];
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;
@@ -97,7 +98,7 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
 
   // Check alias override
   const config = loadConfig();
-  if (config.identity.aliases && config.identity.aliases[pathKey]) {
+  if (config.identity.aliases[pathKey]) {
     const aliasKey = config.identity.aliases[pathKey];
     projectKeyCache.set(cwd, aliasKey);
     return aliasKey;
@@ -174,19 +175,24 @@ function normalizeRemoteUrl(url: string): string {
   // SSH format: git@host:owner/repo
   const sshMatch = url.match(/^git@([^:]+):(.+)$/);
   if (sshMatch) {
-    return `${sshMatch[1]}/${sshMatch[2]}`;
+    // Capture groups are always present when the match succeeds; the `?? ''`
+    // fallback only exists to satisfy noUncheckedIndexedAccess and is never hit.
+    const [, host, path] = sshMatch;
+    return `${host ?? ''}/${path ?? ''}`;
   }
 
   // SSH protocol: ssh://git@host/owner/repo
   const sshProtoMatch = url.match(/^ssh:\/\/git@([^/]+)\/(.+)$/u);
   if (sshProtoMatch) {
-    return `${sshProtoMatch[1]}/${sshProtoMatch[2]}`;
+    const [, host, path] = sshProtoMatch;
+    return `${host ?? ''}/${path ?? ''}`;
   }
 
   // HTTPS/HTTP: https://host/owner/repo
   const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+)$/u);
   if (httpsMatch) {
-    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+    const [, host, path] = httpsMatch;
+    return `${host ?? ''}/${path ?? ''}`;
   }
 
   // Fallback: assume it's already in host/owner/repo format

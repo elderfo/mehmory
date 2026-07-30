@@ -143,7 +143,7 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
 
     // Try to claim this job with atomic rename
     mkdir(claimedDir);
-    const claimedPath = join(claimedDir, `${jobId}.${process.pid}.json`);
+    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.json`);
 
     try {
       rename(jobPath, claimedPath);

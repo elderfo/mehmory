@@ -213,7 +213,9 @@ describe('buildInjection', () => {
 
     it('handles null content gracefully', () => {
       const parts: InjectionPart[] = [
-        { label: 'identity', content: null as any },
+        // Deliberately smuggle a null past the `content: string` type to exercise
+        // the runtime fail-open guard — `unknown` avoids `any` while doing it.
+        { label: 'identity', content: null as unknown as string },
       ];
       expect(() => buildInjection(parts)).not.toThrow();
     });

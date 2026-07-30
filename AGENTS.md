@@ -15,14 +15,31 @@ mehmory/
 │   │   ├── identity.ts        # Project key resolution (B)
 │   │   ├── config.ts          # Config loader, defaults (B)
 │   │   ├── cursor.ts          # Transcript cursor tracking (D)
-│   │   └── store.ts           # Store layout init (F)
+│   │   ├── store.ts           # Store layout init (F)
+│   │   ├── inbox.ts           # run 2 (in progress): inbox entry read/write, snapshot-clear (A)
+│   │   ├── session.ts         # run 2 (in progress): per-session capture state, cursor scoping (A)
+│   │   ├── decay.ts           # run 2 (in progress): recency decay/archive file ops (A)
+│   │   ├── stats.ts           # run 2 (in progress): stats.jsonl writer (A)
+│   │   └── match.ts           # run 2 (in progress): grep-based full-text matcher (A)
+│   ├── hooks/                 # run 2 (in progress): thin hook adapters, bundled to hooks/*.mjs (B)
+│   │   ├── session-start.ts
+│   │   ├── user-prompt-submit.ts
+│   │   ├── stop.ts
+│   │   ├── pre-compact.ts
+│   │   ├── session-end.ts
+│   │   └── inbox-tx.ts        # bundled transactional helper for skills (C)
 │   ├── schema/
-│   │   └── format.ts          # Format constants, versioned template (A, F)
+│   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A)
 │   ├── transcript/
 │   │   └── distill.ts         # JSONL reader, parsing (D)
 │   ├── redact.ts              # Secret filter (E)
 │   ├── tokens.ts              # Token estimation (E)
 │   └── injection.ts           # Context builder, cap enforcement (E)
+├── hooks/                     # run 2 (in progress): built output (gitignored) — bundled *.mjs from
+│                               # src/hooks/*.ts + hooks.json, produced by `pnpm build` (B)
+├── skills/                    # run 2 (in progress): plugin skills — integrate, lint, onboard-session,
+│                               # remember, pause, resume (C)
+├── .claude-plugin/            # run 2 (in progress): plugin.json manifest (C)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
@@ -34,13 +51,22 @@ mehmory/
 ├── tsconfig.json              # strict: true, no any (A)
 ├── tsup.config.ts             # ESM-only output (A10)
 ├── vitest.config.ts           # Test runner config (A)
-├── eslint.config.js           # Flat config + custom rules (A)
+├── eslint.config.js           # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
-├── .husky/                     # Pre-commit hooks (A)
-├── .gitignore                  # node_modules, dist, .deliver/SESSION.md
+├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
+├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, hooks/ (D)
 └── docs/
-    └── WORLD_MODEL.md         # Architectural decisions A1–A11
+    └── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16 (C)
 ```
+
+## Working directories
+
+Gitignored directories that hold run evidence and process lessons — not shipped, but a
+fresh session should know they exist before assuming there's no history to check:
+
+- `.work/` — in-progress worker scratch state for the current run
+- `.research/` — investigation notes gathered while planning or debugging
+- `.swarm/reports/` — per-unit swarm run reports (what each unit did, gate evidence, defects)
 
 ## Subtask Ownership
 
@@ -55,6 +81,30 @@ mehmory/
 - **E**: `src/redact.ts`, `src/tokens.ts`, `src/injection.ts` — secret filter, token estimation, context builder.
 
 - **F**: `src/schema/format.ts` (shared with A), `src/core/store.ts`, `assets/SCHEMA.md` — store init, schema versioning.
+
+### Run 2 (in progress) — hooks, skills, plugin packaging
+
+Letters below are run-2 subtask units, distinct from the run-1 letters above (both runs
+reuse A–F; check the run's plan doc for which is which).
+
+- **D — debt + gates**: `eslint.config.js`, `.husky/`, `.gitignore`, `AGENTS.md` — full
+  `strictTypeChecked`, `pnpm typecheck` in the pre-commit gate, `hooks/` ignored, test debt
+  cleanup. Unlocks A.
+
+- **A — library extensions**: inbox entry format + `src/core/inbox.ts`, `src/core/session.ts`
+  (session-scoped cursor/counter/topic cache, removes global-cursor API), `src/core/decay.ts`,
+  `src/core/stats.ts`, `src/core/match.ts`, new config keys, `package.json`/`tsup.config.ts`
+  (hook bundle glob entry), `vitest.config.ts`, `test/setup.ts` subprocess-env guard. Unlocks
+  B and C.
+
+- **B — hooks**: `src/hooks/{session-start,user-prompt-submit,stop,pre-compact,session-end}.ts`,
+  `hooks/hooks.json`, `test/hooks-*.test.ts`, `test/plugin-hooks-layout.test.ts`.
+
+- **C — skills + packaging + amendments**: `skills/*/SKILL.md`, `.claude-plugin/plugin.json`,
+  `src/hooks/inbox-tx.ts`, `test/inbox-tx.test.ts`, `test/plugin-skills-layout.test.ts`,
+  `assets/SCHEMA.md` additions, spec `## Run-2 amendments`, `docs/WORLD_MODEL.md` A12–A16.
+
+Unlock order: D → A → (B, C in parallel).
 
 ## Project Commands
 

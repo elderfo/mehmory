@@ -102,7 +102,7 @@ export function withProjectLock<T>(
       const error: MehmoryError = {
         code: 'E_LOCK_TIMEOUT',
         kind: 'informational',
-        what: `project lock held for over ${(retryCount * retryIntervalMs) / 1000}s; proceeded without it`,
+        what: `project lock held for over ${String((retryCount * retryIntervalMs) / 1000)}s; proceeded without it`,
         consequence: 'A concurrent session may have overwritten an index rewrite',
       };
       logError(error);
