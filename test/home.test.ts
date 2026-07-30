@@ -2,15 +2,20 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 
 describe('mehmoryHome', () => {
-  const originalEnv = process.env.MEHMORY_HOME;
+  // Captured per test, not at module load: the setup file points MEHMORY_HOME at a
+  // fresh temp dir before each test, and the hermetic guard requires it to be put back.
+  let originalEnv: string | undefined;
 
   beforeEach(() => {
+    originalEnv = process.env.MEHMORY_HOME;
     delete process.env.MEHMORY_HOME;
   });
 
   afterEach(() => {
     if (originalEnv) {
       process.env.MEHMORY_HOME = originalEnv;
+    } else {
+      delete process.env.MEHMORY_HOME;
     }
   });
 

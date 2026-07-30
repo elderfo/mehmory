@@ -15,14 +15,36 @@ mehmory/
 │   │   ├── identity.ts        # Project key resolution (B)
 │   │   ├── config.ts          # Config loader, defaults (B)
 │   │   ├── cursor.ts          # Transcript cursor tracking (D)
-│   │   └── store.ts           # Store layout init (F)
+│   │   ├── store.ts           # Store layout init (F)
+│   │   ├── redact.ts          # Secret filter (E)
+│   │   ├── tokens.ts          # Token estimation (E)
+│   │   ├── injection.ts       # Context builder, cap enforcement (E)
+│   │   ├── inbox.ts           # run 2: inbox entry read/write, snapshot-clear (A)
+│   │   ├── session.ts         # run 2: per-session capture state, cursor scoping (A)
+│   │   ├── decay.ts           # run 2: recency decay/archive file ops (A)
+│   │   ├── stats.ts           # run 2: stats.jsonl writer (A)
+│   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
+│   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
+│   │   └── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
+│   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
+│   │   ├── session-start.ts
+│   │   ├── user-prompt-submit.ts
+│   │   ├── stop.ts
+│   │   ├── pre-compact.ts
+│   │   ├── session-end.ts
+│   │   └── inbox-tx.ts        # bundled transactional helper for skills (C)
 │   ├── schema/
-│   │   └── format.ts          # Format constants, versioned template (A, F)
+│   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A)
 │   ├── transcript/
-│   │   └── distill.ts         # JSONL reader, parsing (D)
-│   ├── redact.ts              # Secret filter (E)
-│   ├── tokens.ts              # Token estimation (E)
-│   └── injection.ts           # Context builder, cap enforcement (E)
+│   │   └── reader.ts          # JSONL transcript reader, incremental parsing (D)
+│   └── distill/
+│       ├── patterns.ts        # Normative distill patterns (D, A7)
+│       └── distill.ts         # Record → inbox entry distillation (D)
+├── hooks/                     # run 2: plugin hook dir — committed hooks.json plus
+│                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
+├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
+│                               # remember, pause, resume (C)
+├── .claude-plugin/            # run 2: plugin.json manifest (C)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
@@ -34,13 +56,22 @@ mehmory/
 ├── tsconfig.json              # strict: true, no any (A)
 ├── tsup.config.ts             # ESM-only output (A10)
 ├── vitest.config.ts           # Test runner config (A)
-├── eslint.config.js           # Flat config + custom rules (A)
+├── eslint.config.js           # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
-├── .husky/                     # Pre-commit hooks (A)
-├── .gitignore                  # node_modules, dist, .deliver/SESSION.md
+├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
+├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, /hooks/*.mjs (D)
 └── docs/
-    └── WORLD_MODEL.md         # Architectural decisions A1–A11
+    └── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16 (C)
 ```
+
+## Working directories
+
+Gitignored directories that hold run evidence and process lessons — not shipped, but a
+fresh session should know they exist before assuming there's no history to check:
+
+- `.work/` — in-progress worker scratch state for the current run
+- `.research/` — investigation notes gathered while planning or debugging
+- `.swarm/reports/` — per-unit swarm run reports (what each unit did, gate evidence, defects)
 
 ## Subtask Ownership
 
@@ -50,11 +81,35 @@ mehmory/
 
 - **C**: `src/core/fs.ts`, `src/core/lock.ts`, `src/core/git.ts`, `src/core/queue.ts` — atomic writes, locking, git, job queue.
 
-- **D**: `src/transcript/distill.ts`, `src/core/cursor.ts` — JSONL reader, distill patterns, cursor.
+- **D**: `src/transcript/reader.ts`, `src/distill/`, `src/core/cursor.ts` — JSONL reader, distill patterns, cursor.
 
-- **E**: `src/redact.ts`, `src/tokens.ts`, `src/injection.ts` — secret filter, token estimation, context builder.
+- **E**: `src/core/redact.ts`, `src/core/tokens.ts`, `src/core/injection.ts` — secret filter, token estimation, context builder.
 
 - **F**: `src/schema/format.ts` (shared with A), `src/core/store.ts`, `assets/SCHEMA.md` — store init, schema versioning.
+
+### Run 2 — hooks, skills, plugin packaging
+
+Letters below are run-2 subtask units, distinct from the run-1 letters above (both runs
+reuse A–F; check the run's plan doc for which is which).
+
+- **D — debt + gates**: `eslint.config.js`, `.husky/`, `.gitignore`, `AGENTS.md` — full
+  `strictTypeChecked`, `pnpm typecheck` in the pre-commit gate, `hooks/` ignored, test debt
+  cleanup. Unlocks A.
+
+- **A — library extensions**: inbox entry format + `src/core/inbox.ts`, `src/core/session.ts`
+  (session-scoped cursor/counter/topic cache, removes global-cursor API), `src/core/decay.ts`,
+  `src/core/stats.ts`, `src/core/match.ts`, new config keys, `package.json`/`tsup.config.ts`
+  (hook bundle glob entry), `vitest.config.ts`, `test/setup.ts` subprocess-env guard. Unlocks
+  B and C.
+
+- **B — hooks**: `src/hooks/{session-start,user-prompt-submit,stop,pre-compact,session-end}.ts`,
+  `hooks/hooks.json`, `test/hooks-*.test.ts`, `test/plugin-hooks-layout.test.ts`.
+
+- **C — skills + packaging + amendments**: `skills/*/SKILL.md`, `.claude-plugin/plugin.json`,
+  `src/hooks/inbox-tx.ts`, `test/inbox-tx.test.ts`, `test/plugin-skills-layout.test.ts`,
+  `assets/SCHEMA.md` additions, spec `## Run-2 amendments`, `docs/WORLD_MODEL.md` A12–A16.
+
+Unlock order: D → A → (B, C in parallel).
 
 ## Project Commands
 
@@ -77,7 +132,7 @@ mehmory/
 ### Pull Requests
 
 - One logical unit of work per PR (per subtask boundary)
-- Branches off `feat/foundation`, never directly to `main`
+- Branches off `feat/runtime`, never directly to `main`
 - Wait for Copilot review before merging
 - Resolve PR comments one at a time with commits
 - Never merge with failing CI or unresolved comments
@@ -93,7 +148,7 @@ mehmory/
 
 - All architectural decisions are in `docs/WORLD_MODEL.md` § Architectural Decisions
 - Design spec is at `docs/superpowers/specs/2026-07-28-mehmory-design.md` (read-only for this run)
-- Run plan is at `.deliver/runs/2026-07-29-mehmory-foundation.md` (read-only)
+- Run plan is at `.deliver/runs/2026-07-29-mehmory-runtime.md` (read-only)
 
 ## Architecture Summary
 

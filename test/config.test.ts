@@ -10,9 +10,11 @@ import { createTempDir, cleanupTempDir } from './helpers.js';
  */
 describe('loadConfig', () => {
   let tempDir: string;
-  const originalHome = process.env.MEHMORY_HOME;
+  // Captured per test: the setup file re-points MEHMORY_HOME before each one.
+  let originalHome: string | undefined;
 
   beforeEach(() => {
+    originalHome = process.env.MEHMORY_HOME;
     tempDir = createTempDir('config-test');
     process.env.MEHMORY_HOME = tempDir;
   });
@@ -116,14 +118,42 @@ describe('loadConfig', () => {
     expect(config.injection.budget_tokens).toBe(800);
   });
 
+  it('defaults the run-2 keys (criterion 19)', () => {
+    const config = loadConfig();
+
+    expect(config.inbox.nudge_entries).toBe(10);
+    expect(config.inbox.nudge_bytes).toBe(8192);
+    expect(config.session_state.max_age_days).toBe(14);
+    expect(config.match.jaccard).toBe(0.7);
+    expect(config.match.cache_ttl_ms).toBe(300000);
+    expect(config.queue.claims_per_start).toBe(1);
+    expect(config.hooks.session_start.enabled).toBe(true);
+    expect(config.hooks.user_prompt_submit.enabled).toBe(true);
+    expect(config.hooks.stop.enabled).toBe(true);
+    expect(config.hooks.pre_compact.enabled).toBe(true);
+    expect(config.hooks.session_end.enabled).toBe(true);
+  });
+
+  it('deep-merges a run-2 key without dropping its siblings', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({ match: { jaccard: 0.9 } }),
+      'utf-8'
+    );
+
+    const config = loadConfig();
+    expect(config.match.jaccard).toBe(0.9);
+    expect(config.match.cache_ttl_ms).toBe(300000);
+  });
+
   it('allows overriding nested keys without losing siblings', () => {
     const configPath = join(tempDir, 'config.json');
     writeFileSync(
       configPath,
       JSON.stringify({
         hooks: {
-          SessionStart: false,
-          // UserPromptSubmit and others not specified
+          session_start: { enabled: false },
+          // user_prompt_submit and others not specified
         },
       }),
       'utf-8'
@@ -132,13 +162,13 @@ describe('loadConfig', () => {
     const config = loadConfig();
 
     // User-provided value overrides
-    expect(config.hooks.SessionStart).toBe(false);
+    expect(config.hooks.session_start.enabled).toBe(false);
 
     // Siblings remain as defaults
-    expect(config.hooks.UserPromptSubmit).toBe(true);
-    expect(config.hooks.Stop).toBe(true);
-    expect(config.hooks.PreCompact).toBe(true);
-    expect(config.hooks.SessionEnd).toBe(true);
+    expect(config.hooks.user_prompt_submit.enabled).toBe(true);
+    expect(config.hooks.stop.enabled).toBe(true);
+    expect(config.hooks.pre_compact.enabled).toBe(true);
+    expect(config.hooks.session_end.enabled).toBe(true);
   });
 
   it('allows setting identity.aliases', () => {
@@ -230,6 +260,9 @@ describe('loadConfig', () => {
       'distill',
       'log',
       'warning',
+      'inbox',
+      'session_state',
+      'match',
     ];
 
     for (const key of requiredKeys) {

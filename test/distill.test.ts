@@ -273,3 +273,68 @@ describe('distill redaction (write path)', () => {
     expect(entry.content).toBe('refactor the parser');
   });
 });
+
+/**
+ * Criterion 6: ids key on the RECORD-embedded sessionId. On resume Claude Code hands a
+ * new session id a transcript that still contains the previous session's records; if
+ * ids keyed on the invoking session, every resume would re-append the whole history.
+ */
+describe('distill stable ids across resume', () => {
+  const priorRecords: TranscriptRecord[] = [
+    {
+      type: 'message',
+      role: 'user',
+      text: 'we will use postgres',
+      uuid: 'msg-001',
+      sessionId: 'session-original',
+    },
+    {
+      type: 'message',
+      role: 'user',
+      text: 'decision: shard by tenant',
+      uuid: 'msg-002',
+      sessionId: 'session-original',
+    },
+  ];
+
+  it('keys ids on the record sessionId, not the invoking session', () => {
+    const entries = distill(priorRecords, 'session-original');
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe(computeId('session-original', 'msg-001'));
+    expect(entries[0]?.source.sessionId).toBe('session-original');
+  });
+
+  it('produces zero duplicate entries when replayed under a new session id', () => {
+    const beforeResume = distill(priorRecords, 'session-original');
+
+    // Resume: new invoking session, same records (plus a new one from the new session).
+    const afterResume = distill(
+      [
+        ...priorRecords,
+        {
+          type: 'message',
+          role: 'user',
+          text: 'decision: ttl is five minutes',
+          uuid: 'msg-003',
+          sessionId: 'session-resumed',
+        },
+      ],
+      'session-resumed'
+    );
+
+    const seen = new Set(beforeResume.map(e => e.id));
+    const fresh = afterResume.filter(e => !seen.has(e.id));
+
+    expect(afterResume).toHaveLength(3);
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]?.id).toBe(computeId('session-resumed', 'msg-003'));
+  });
+
+  it('falls back to the invoking session id for records with no sessionId', () => {
+    const entries = distill(
+      [{ type: 'message', role: 'user', text: 'legacy record', uuid: 'msg-legacy' }],
+      'session-invoking'
+    );
+    expect(entries[0]?.id).toBe(computeId('session-invoking', 'msg-legacy'));
+  });
+});

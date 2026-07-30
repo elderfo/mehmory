@@ -66,6 +66,10 @@ const SECRET_PATTERNS = [
  */
 export function redact(text: string): string {
   if (!text || typeof text !== 'string') {
+    // text is typed `string`, but this function is a defensive fail-open boundary
+    // that must survive untyped/JS callers passing null or undefined at runtime;
+    // `?? ''` guards that case even though the TS signature says it can't happen.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     return text ?? '';
   }
 

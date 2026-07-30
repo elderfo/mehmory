@@ -60,8 +60,10 @@ describe('estimateTokens', () => {
   });
 
   it('returns 0 for non-string input', () => {
-    expect(estimateTokens(null as any)).toBe(0);
-    expect(estimateTokens(undefined as any)).toBe(0);
+    // Deliberately smuggle null/undefined past the `text: string` type to
+    // exercise the runtime guard — `unknown` avoids `any` while doing it.
+    expect(estimateTokens(null as unknown as string)).toBe(0);
+    expect(estimateTokens(undefined as unknown as string)).toBe(0);
   });
 
   it('never throws on any input', () => {

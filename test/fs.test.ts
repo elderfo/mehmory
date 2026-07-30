@@ -118,7 +118,7 @@ for (let i = 0; i < recordCount; i++) {
         processes.forEach(proc => {
           proc.on('exit', (code: number | null) => {
             if (code !== 0 && code !== null) {
-              reject(new Error(`Worker exited with code ${code}`));
+              reject(new Error(`Worker exited with code ${String(code)}`));
             }
             completed++;
             if (completed === processCount) {
@@ -132,7 +132,7 @@ for (let i = 0; i < recordCount; i++) {
                 // Verify each line is parseable
                 lines.forEach((line: string) => {
                   if (line) {
-                    const obj = JSON.parse(line);
+                    const obj: unknown = JSON.parse(line);
                     expect(obj).toHaveProperty('pid');
                     expect(obj).toHaveProperty('idx');
                   }
@@ -145,7 +145,7 @@ for (let i = 0; i < recordCount; i++) {
 
                 resolve();
               } catch (err) {
-                reject(err);
+                reject(err instanceof Error ? err : new Error(String(err)));
               }
             }
           });

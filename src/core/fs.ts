@@ -48,6 +48,24 @@ export const APPEND_ATOMIC_CEILING_BYTES = 4 * 1024;
 
 // ─── Helper functions for lock.ts, git.ts, queue.ts ───
 
+/**
+ * Read all of stdin synchronously (A9), as UTF-8.
+ *
+ * Hook entrypoints and the inbox-tx helper receive their whole input as one JSON
+ * document on stdin. This lives here because A3 makes fs.ts the only module allowed
+ * to touch node:fs, and fd 0 is the portable synchronous stdin handle.
+ *
+ * Returns '' when stdin is closed or unreadable — the caller treats that as an empty
+ * payload and fails open rather than throwing on a hook the harness invoked oddly.
+ */
+export function readStdin(): string {
+  try {
+    return readFileSync(0, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
 /** Check if a path exists. */
 export function pathExists(path: string): boolean {
   return existsSync(path);

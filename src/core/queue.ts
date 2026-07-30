@@ -143,7 +143,7 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
 
     // Try to claim this job with atomic rename
     mkdir(claimedDir);
-    const claimedPath = join(claimedDir, `${jobId}.${process.pid}.json`);
+    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.json`);
 
     try {
       rename(jobPath, claimedPath);
@@ -156,4 +156,24 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
   }
 
   return null;
+}
+
+/**
+ * Drop a claimed job's marker file once its work has been applied.
+ *
+ * `claimJob` moves the job into `claimed/`; without this the marker sits there until
+ * the staleness bound reclaims it and the job is applied a second time. Idempotent.
+ */
+export function completeJob(jobId: string): void {
+  const claimedDir = join(statePath('queue'), 'claimed');
+  if (!pathExists(claimedDir)) return;
+
+  for (const file of listDir(claimedDir)) {
+    if (!file.startsWith(jobId + '.')) continue;
+    try {
+      remove(join(claimedDir, file));
+    } catch {
+      // Ignore: the marker is stale-reclaimed if it survives.
+    }
+  }
 }

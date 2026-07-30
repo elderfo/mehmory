@@ -4,6 +4,11 @@
  * Extracts user messages, decision markers, correction patterns, and error resolutions
  * from a transcript using the enumerated pattern list. Each entry carries a stable ID
  * based on sha256(sessionId + record.uuid), enabling idempotent cursor replay.
+ *
+ * The sessionId is read from the RECORD, not from the invoking hook: on resume, Claude
+ * Code hands the new session a transcript containing the previous session's records,
+ * and keying on the invoking session id would mint a fresh id for every one of them —
+ * every resumed session would re-append its whole history to the inbox.
  */
 
 import { createHash } from 'node:crypto';
@@ -19,12 +24,12 @@ import { redact } from '../core/redact.js';
  * (cannot produce stable IDs).
  *
  * @param records - Parsed transcript records
- * @param sessionId - Session identifier for stable ID generation
+ * @param fallbackSessionId - Used only for records that carry no `sessionId` field
  * @returns Distilled entries
  */
 export function distill(
   records: TranscriptRecord[],
-  sessionId: string
+  fallbackSessionId = ''
 ): DistilledEntry[] {
   const entries: DistilledEntry[] = [];
 
@@ -33,6 +38,12 @@ export function distill(
     if (!record.uuid || typeof record.uuid !== 'string') {
       continue;
     }
+
+    // Record-embedded session id keeps ids stable across resume (spec gap 7).
+    const sessionId =
+      typeof record.sessionId === 'string' && record.sessionId
+        ? record.sessionId
+        : fallbackSessionId;
 
     // Match against patterns in order (first match wins).
     for (const pattern of DISTILL_PATTERNS) {
@@ -57,7 +68,7 @@ export function distill(
             source: {
               sessionId,
               recordUuid: record.uuid,
-              recordType: record.type as string | undefined,
+              recordType: record.type,
               lineNumber: i,
             },
           });

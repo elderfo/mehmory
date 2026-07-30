@@ -4,6 +4,7 @@ import {
   existsSync,
   statSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -25,6 +26,7 @@ const ERROR_KINDS = {
   E_GIT_COMMIT: 'informational',
   E_QUEUE_CLAIM: 'informational',
   E_CURSOR_RESET: 'informational',
+  E_SESSION_STATE: 'informational',
   E_TRANSCRIPT_PARSE: 'informational',
   E_APPEND_FAILED: 'actionable',
   E_ATOMIC_WRITE: 'actionable',
@@ -110,6 +112,9 @@ export function logError(error: MehmoryError): void {
   if (logFileSizeState.size > maxSize) {
     try {
       const rotatedPath = statePath('errors.log.1');
+      // Windows renameSync throws when the target exists; without this the second
+      // rotation would fail silently and errors.log would grow unbounded.
+      if (existsSync(rotatedPath)) unlinkSync(rotatedPath);
       renameSync(logPath, rotatedPath);
       // After rotation, size resets to 0 and update mtime to reflect the new empty file
       logFileSizeState = { size: 0, mtime: 0 };
@@ -273,8 +278,15 @@ export function pendingWarnings(): readonly string[] {
       : [];
 
     const lines = warnings.map(w => {
-      const kind = ERROR_KINDS[w.code as ErrorCode] ?? 'informational';
-      return `${w.code} (${kind}, ${w.count} occurrences): see ~/.mehmory/.state/errors.log`;
+      // w.code comes off disk as a bare string (see isWarningRecord) and is not
+      // guaranteed to be a known ErrorCode; look it up as a partial map so an
+      // unrecognized code still falls back to 'informational' instead of throwing
+      // away that fallback (an `as ErrorCode` cast would tell TS it can never miss,
+      // which isn't true and would silently drop this behavior).
+      const kind =
+        (ERROR_KINDS as Record<string, 'actionable' | 'informational'>)[w.code] ??
+        'informational';
+      return `${w.code} (${kind}, ${String(w.count)} occurrences): see ~/.mehmory/.state/errors.log`;
     });
 
     // Clear after reading (consume semantics for U2)

@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { join, dirname } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, utimesSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { statePath } from '../src/core/home.js';
@@ -21,12 +21,13 @@ describe('durable queue (done-when 9)', () => {
 
     expect(jobId).toBeTruthy();
     expect(jobId).toHaveLength(16); // 8 bytes hex = 16 chars
+    if (!jobId) throw new Error('Failed to enqueue');
 
     const jobPath = join(queueDir, `${jobId}.json`);
     expect(pathExists(jobPath)).toBe(true);
 
     const contents = readFileSync(jobPath, 'utf-8');
-    const data = JSON.parse(contents);
+    const data = JSON.parse(contents) as { msg?: string };
     expect(data.msg).toBe('test');
   });
 
@@ -46,7 +47,7 @@ describe('durable queue (done-when 9)', () => {
       expect(claimed.data.task).toBe('work');
 
       // Job should be in claimed/ directory
-      const claimedPath = join(queueDir, 'claimed', `${jobId}.${process.pid}.json`);
+      const claimedPath = join(queueDir, 'claimed', `${jobId}.${String(process.pid)}.json`);
       expect(pathExists(claimedPath)).toBe(true);
     }
   });
@@ -101,7 +102,7 @@ if (claimed) {
           writeFileSync(goPath, 'go');
         } else if (Date.now() > barrierDeadline) {
           clearInterval(barrierPoll);
-          reject(new Error(`barrier timeout: only ${ready}/${processCount} workers ready`));
+          reject(new Error(`barrier timeout: only ${String(ready)}/${String(processCount)} workers ready`));
         }
       }, 10);
 
@@ -113,7 +114,7 @@ if (claimed) {
 
         let stdout = '';
 
-        proc.stdout?.on('data', (data: Buffer | string) => {
+        proc.stdout.on('data', (data: Buffer | string) => {
           stdout += data.toString();
         });
 
@@ -122,7 +123,7 @@ if (claimed) {
 
           try {
             if (stdout) {
-              const result = JSON.parse(stdout);
+              const result = JSON.parse(stdout) as { success: boolean; id?: string; pid: number };
               results.push(result);
             }
           } catch {
@@ -138,15 +139,17 @@ if (claimed) {
               if (!winner) throw new Error('No winner');
               expect(winner.id).toBe(jobId);
               expect(pathExists(join(queueDir, `${jobId}.json`))).toBe(false);
-              expect(pathExists(join(queueDir, 'claimed', `${jobId}.${winner.pid}.json`))).toBe(true);
+              expect(pathExists(join(queueDir, 'claimed', `${jobId}.${String(winner.pid)}.json`))).toBe(true);
               resolve();
             } catch (err) {
-              reject(err);
+              reject(err instanceof Error ? err : new Error(String(err)));
             }
           }
         });
 
-        proc.on('error', () => reject(new Error('Worker failed')));
+        proc.on('error', () => {
+          reject(new Error('Worker failed'));
+        });
       }
     });
   });
@@ -156,6 +159,7 @@ if (claimed) {
     mkdir(queueDir);
 
     const jobId = enqueueJob({ task: 'will-fail' });
+    if (!jobId) throw new Error('Failed to enqueue');
 
     // Simulate multiple failed claims by creating fake claim records
     const claimedDir = join(queueDir, 'claimed');
@@ -163,7 +167,7 @@ if (claimed) {
 
     // Create 3 claim records for this job
     for (let i = 0; i < 3; i++) {
-      const claimPath = join(claimedDir, `${jobId}.${1000 + i}.json`);
+      const claimPath = join(claimedDir, `${jobId}.${String(1000 + i)}.json`);
       writeFileSync(claimPath, JSON.stringify({ attempt: i }));
     }
 
@@ -182,6 +186,7 @@ if (claimed) {
     mkdir(queueDir);
 
     const jobId = enqueueJob({ task: 'reclaimable' });
+    if (!jobId) throw new Error('Failed to enqueue');
 
     // Create a stale claim (mtime > 30s ago)
     const claimedDir = join(queueDir, 'claimed');
@@ -191,7 +196,7 @@ if (claimed) {
 
     // Set mtime to past
     const oldTime = Date.now() - 40000; // 40s ago
-    require('node:fs').utimesSync(stalePath, oldTime / 1000, oldTime / 1000);
+    utimesSync(stalePath, oldTime / 1000, oldTime / 1000);
 
     // ClaimJob should reclaim it
     const claimed = claimJob();
@@ -254,6 +259,7 @@ if (claimed) {
     mkdir(queueDir);
 
     const jobId = enqueueJob({ task: 'work' }, 'SessionEnd');
+    if (!jobId) throw new Error('Failed to enqueue');
 
     // Try to claim as UserPromptSubmit - should fail and not create a claim record
     const claimed1 = claimJob('UserPromptSubmit');
@@ -300,6 +306,7 @@ if (claimed) {
 
     expect(untypedId).not.toBeNull();
     expect(typedId).not.toBeNull();
+    if (!untypedId) throw new Error('Failed to enqueue');
 
     // Claiming with type should skip the untyped job and claim the typed one
     const claimed = claimJob('SessionEnd');

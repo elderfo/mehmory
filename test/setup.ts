@@ -1,7 +1,7 @@
 /** Test setup: guard against touching real ~/.mehmory (done-when criterion 16). */
 
 import { beforeEach, afterEach } from 'vitest';
-import { createTempDir, cleanupTempDir } from './helpers.js';
+import { createTempDir, cleanupTempDir, isHermeticHome } from './helpers.js';
 
 const originalHome = process.env.MEHMORY_HOME;
 let setupTempDir: string;
@@ -12,7 +12,9 @@ let setupTempDir: string;
 // `git worktree add` fails with "index file open failed: Not a directory".
 // Scrubbed once here rather than at each execSync call site.
 for (const v of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY']) {
-  delete process.env[v];
+  // Reflect.deleteProperty behaves exactly like `delete process.env[v]` here;
+  // the plain `delete` operator on a dynamic key is what no-dynamic-delete flags.
+  Reflect.deleteProperty(process.env, v);
 }
 
 // Make git hermetic for every child process the suite spawns.
@@ -39,11 +41,23 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Clean up and restore original or unset
+  // A test that unsets MEHMORY_HOME, or repoints it at the real store, would have
+  // every subsequent test in the file touching ~/.mehmory. Checked before cleanup so
+  // the failure names the offending test (criterion 21). Subprocess tests must build
+  // their child env with `hermeticEnv()` — this process's guard cannot see a child.
+  const current = process.env.MEHMORY_HOME;
+
   cleanupTempDir(setupTempDir);
   if (originalHome) {
     process.env.MEHMORY_HOME = originalHome;
   } else {
     delete process.env.MEHMORY_HOME;
+  }
+
+  if (!isHermeticHome(current)) {
+    throw new Error(
+      `MEHMORY_HOME left as ${current ?? '(unset)'} — tests must not touch the real store. ` +
+        'Restore it before the test ends.'
+    );
   }
 });
