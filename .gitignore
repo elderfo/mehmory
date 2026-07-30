@@ -16,3 +16,6 @@ dist/
 *~
 .env.local
 coverage/
+
+# Skill-owned local state (auto-land ledger etc.)
+.elderfo/
