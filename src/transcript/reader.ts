@@ -10,7 +10,12 @@
 import { readFileFrom } from '../core/fs.js';
 
 /** A single record from the transcript JSONL file. */
-export type TranscriptRecord = Record<string, unknown> & { uuid?: string; type?: string };
+export type TranscriptRecord = Record<string, unknown> & {
+  uuid?: string;
+  type?: string;
+  /** Session that produced the record; survives resume, unlike the invoking session id. */
+  sessionId?: string;
+};
 
 /** Result from reading a transcript. */
 export interface ReadTranscriptResult {

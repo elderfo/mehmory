@@ -25,6 +25,7 @@ const ERROR_KINDS = {
   E_GIT_COMMIT: 'informational',
   E_QUEUE_CLAIM: 'informational',
   E_CURSOR_RESET: 'informational',
+  E_SESSION_STATE: 'informational',
   E_TRANSCRIPT_PARSE: 'informational',
   E_APPEND_FAILED: 'actionable',
   E_ATOMIC_WRITE: 'actionable',

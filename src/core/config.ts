@@ -3,6 +3,12 @@ import { mehmoryHome } from './home.js';
 import { logError, type MehmoryError } from './errors.js';
 import { readFile, pathExists } from './fs.js';
 
+/** Per-hook switch. An object rather than a bare boolean so run 3 can add per-hook
+ * bounds (timeouts, budgets) without another config shape change. */
+export interface HookToggle {
+  readonly enabled: boolean;
+}
+
 /** Full configuration schema for mehmory. All keys are required (no partial config). */
 export interface MehmoryConfig {
   readonly injection: {
@@ -17,12 +23,29 @@ export interface MehmoryConfig {
     readonly patterns: readonly string[];
     readonly whitelist: readonly string[];
   };
+  /** Per-hook enable switches (criterion 19). Snake-case keys match the hook filenames. */
   readonly hooks: {
-    readonly SessionStart: boolean;
-    readonly UserPromptSubmit: boolean;
-    readonly Stop: boolean;
-    readonly PreCompact: boolean;
-    readonly SessionEnd: boolean;
+    readonly session_start: HookToggle;
+    readonly user_prompt_submit: HookToggle;
+    readonly stop: HookToggle;
+    readonly pre_compact: HookToggle;
+    readonly session_end: HookToggle;
+  };
+  readonly inbox: {
+    /** Entries in inbox.md at or above which SessionStart nudges to integrate. */
+    readonly nudge_entries: number;
+    /** inbox.md byte size at or above which SessionStart nudges to integrate. */
+    readonly nudge_bytes: number;
+  };
+  readonly session_state: {
+    /** Age at which `.state/<session-id>.json` files are swept. */
+    readonly max_age_days: number;
+  };
+  readonly match: {
+    /** Jaccard similarity at or above which the topic cache skips a page lookup. */
+    readonly jaccard: number;
+    /** Topic cache TTL in ms. */
+    readonly cache_ttl_ms: number;
   };
   readonly identity: {
     readonly aliases: Record<string, string>;
@@ -35,6 +58,8 @@ export interface MehmoryConfig {
   readonly queue: {
     readonly max_claims: number;
     readonly stale_ms: number;
+    /** Queued jobs claimed per SessionStart (A16 maintenance lane bound). */
+    readonly claims_per_start: number;
   };
   readonly distill: {
     readonly max_loss_percent: number;
@@ -76,11 +101,22 @@ const DEFAULTS: MehmoryConfig = {
     whitelist: [],
   },
   hooks: {
-    SessionStart: true,
-    UserPromptSubmit: true,
-    Stop: true,
-    PreCompact: true,
-    SessionEnd: true,
+    session_start: { enabled: true },
+    user_prompt_submit: { enabled: true },
+    stop: { enabled: true },
+    pre_compact: { enabled: true },
+    session_end: { enabled: true },
+  },
+  inbox: {
+    nudge_entries: 10,
+    nudge_bytes: 8192,
+  },
+  session_state: {
+    max_age_days: 14,
+  },
+  match: {
+    jaccard: 0.7,
+    cache_ttl_ms: 300000,
   },
   identity: {
     aliases: {},
@@ -93,6 +129,7 @@ const DEFAULTS: MehmoryConfig = {
   queue: {
     max_claims: 3,
     stale_ms: 30000,
+    claims_per_start: 1,
   },
   distill: {
     max_loss_percent: 10,
