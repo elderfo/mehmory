@@ -16,6 +16,9 @@ mehmory/
 │   │   ├── config.ts          # Config loader, defaults (B)
 │   │   ├── cursor.ts          # Transcript cursor tracking (D)
 │   │   ├── store.ts           # Store layout init (F)
+│   │   ├── redact.ts          # Secret filter (E)
+│   │   ├── tokens.ts          # Token estimation (E)
+│   │   ├── injection.ts       # Context builder, cap enforcement (E)
 │   │   ├── inbox.ts           # run 2 (in progress): inbox entry read/write, snapshot-clear (A)
 │   │   ├── session.ts         # run 2 (in progress): per-session capture state, cursor scoping (A)
 │   │   ├── decay.ts           # run 2 (in progress): recency decay/archive file ops (A)
@@ -31,10 +34,10 @@ mehmory/
 │   ├── schema/
 │   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A)
 │   ├── transcript/
-│   │   └── distill.ts         # JSONL reader, parsing (D)
-│   ├── redact.ts              # Secret filter (E)
-│   ├── tokens.ts              # Token estimation (E)
-│   └── injection.ts           # Context builder, cap enforcement (E)
+│   │   └── reader.ts          # JSONL transcript reader, incremental parsing (D)
+│   └── distill/
+│       ├── patterns.ts        # Normative distill patterns (D, A7)
+│       └── distill.ts         # Record → inbox entry distillation (D)
 ├── hooks/                     # run 2 (in progress): built output (gitignored) — bundled *.mjs from
 │                               # src/hooks/*.ts + hooks.json, produced by `pnpm build` (B)
 ├── skills/                    # run 2 (in progress): plugin skills — integrate, lint, onboard-session,
@@ -76,9 +79,9 @@ fresh session should know they exist before assuming there's no history to check
 
 - **C**: `src/core/fs.ts`, `src/core/lock.ts`, `src/core/git.ts`, `src/core/queue.ts` — atomic writes, locking, git, job queue.
 
-- **D**: `src/transcript/distill.ts`, `src/core/cursor.ts` — JSONL reader, distill patterns, cursor.
+- **D**: `src/transcript/reader.ts`, `src/distill/`, `src/core/cursor.ts` — JSONL reader, distill patterns, cursor.
 
-- **E**: `src/redact.ts`, `src/tokens.ts`, `src/injection.ts` — secret filter, token estimation, context builder.
+- **E**: `src/core/redact.ts`, `src/core/tokens.ts`, `src/core/injection.ts` — secret filter, token estimation, context builder.
 
 - **F**: `src/schema/format.ts` (shared with A), `src/core/store.ts`, `assets/SCHEMA.md` — store init, schema versioning.
 
@@ -127,7 +130,7 @@ Unlock order: D → A → (B, C in parallel).
 ### Pull Requests
 
 - One logical unit of work per PR (per subtask boundary)
-- Branches off `feat/foundation`, never directly to `main`
+- Branches off `feat/runtime`, never directly to `main`
 - Wait for Copilot review before merging
 - Resolve PR comments one at a time with commits
 - Never merge with failing CI or unresolved comments
@@ -143,7 +146,7 @@ Unlock order: D → A → (B, C in parallel).
 
 - All architectural decisions are in `docs/WORLD_MODEL.md` § Architectural Decisions
 - Design spec is at `docs/superpowers/specs/2026-07-28-mehmory-design.md` (read-only for this run)
-- Run plan is at `.deliver/runs/2026-07-29-mehmory-foundation.md` (read-only)
+- Run plan is at `.deliver/runs/2026-07-29-mehmory-runtime.md` (read-only)
 
 ## Architecture Summary
 
