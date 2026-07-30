@@ -1,7 +1,8 @@
 /** Stop fixture tests (criteria 11, 14, 16, 19). */
 
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTempDir } from './helpers.js';
+import { createTempDir, hermeticEnv } from './helpers.js';
 import {
   keyFor,
   outputJson,
@@ -72,6 +73,27 @@ describe('Stop hook', () => {
     expect(inbox).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(readSessionState('s1').stop_count).toBe(0);
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop' });
+  });
+
+  it('embeds an inbox-tx invocation that actually runs', () => {
+    primeCounter('s1');
+    const reason = String(
+      outputJson(runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd }))[
+        'reason'
+      ]
+    );
+
+    // Pull the literal command out of the reason and run it, placeholder filled in.
+    const match = /echo '\{.*?\}' \| node \S+inbox-tx\.mjs append/.exec(reason);
+    expect(match).not.toBeNull();
+    const command = String(match?.[0]).replace('<the learning>', 'deploys need the VPN');
+
+    const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
+
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
+    expect(readIfPresent(paths(key).inbox)).toContain('deploys need the VPN');
   });
 
   it('does not re-block on the next stop after a capture', () => {

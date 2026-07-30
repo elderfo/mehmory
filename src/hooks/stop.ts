@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta, STOP_CAPTURE_THRESHOLD } from '../core/capture.js';
+import { captureDelta, scopePaths, STOP_CAPTURE_THRESHOLD } from '../core/capture.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
 const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
@@ -22,12 +22,17 @@ const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
  * save it. Never the raw entry serialization — ids are sha256, and A15 reserves inbox
  * writes for the helper.
  */
-function blockReason(): string {
+function blockReason(key: string, sessionId: string): string {
+  const payload = JSON.stringify({
+    inbox: scopePaths(key).inboxFile,
+    key,
+    entries: [{ text: '<the learning>', src: sessionId }],
+  });
   return [
     'mehmory: save this stretch of the session before stopping.',
     'Append anything durable — decisions made, corrections received, gotchas found since the last capture —',
     'as one short line each. Use /mehmory:remember, or run:',
-    `echo '{"text":"<the learning>"}' | node ${HOOK_DIR}/inbox-tx.mjs append`,
+    `echo '${payload}' | node ${HOOK_DIR}/inbox-tx.mjs append`,
     'Nothing durable to save? Say so and stop. This fires once per threshold; normal stopping resumes after this pass.',
   ].join(' ');
 }
@@ -45,7 +50,7 @@ runHook('Stop', (input, project) => {
   resetStopCount(input.session_id);
 
   return {
-    json: { decision: 'block', reason: blockReason() },
+    json: { decision: 'block', reason: blockReason(project, input.session_id) },
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });
