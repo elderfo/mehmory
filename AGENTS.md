@@ -19,12 +19,14 @@ mehmory/
 │   │   ├── redact.ts          # Secret filter (E)
 │   │   ├── tokens.ts          # Token estimation (E)
 │   │   ├── injection.ts       # Context builder, cap enforcement (E)
-│   │   ├── inbox.ts           # run 2 (in progress): inbox entry read/write, snapshot-clear (A)
-│   │   ├── session.ts         # run 2 (in progress): per-session capture state, cursor scoping (A)
-│   │   ├── decay.ts           # run 2 (in progress): recency decay/archive file ops (A)
-│   │   ├── stats.ts           # run 2 (in progress): stats.jsonl writer (A)
-│   │   └── match.ts           # run 2 (in progress): grep-based full-text matcher (A)
-│   ├── hooks/                 # run 2 (in progress): thin hook adapters, bundled to hooks/*.mjs (B)
+│   │   ├── inbox.ts           # run 2: inbox entry read/write, snapshot-clear (A)
+│   │   ├── session.ts         # run 2: per-session capture state, cursor scoping (A)
+│   │   ├── decay.ts           # run 2: recency decay/archive file ops (A)
+│   │   ├── stats.ts           # run 2: stats.jsonl writer (A)
+│   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
+│   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
+│   │   └── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
+│   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
 │   │   ├── session-start.ts
 │   │   ├── user-prompt-submit.ts
 │   │   ├── stop.ts
@@ -38,11 +40,11 @@ mehmory/
 │   └── distill/
 │       ├── patterns.ts        # Normative distill patterns (D, A7)
 │       └── distill.ts         # Record → inbox entry distillation (D)
-├── hooks/                     # run 2 (in progress): plugin hook dir — committed hooks.json plus
+├── hooks/                     # run 2: plugin hook dir — committed hooks.json plus
 │                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
-├── skills/                    # run 2 (in progress): plugin skills — integrate, lint, onboard-session,
+├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
-├── .claude-plugin/            # run 2 (in progress): plugin.json manifest (C)
+├── .claude-plugin/            # run 2: plugin.json manifest (C)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
@@ -85,7 +87,7 @@ fresh session should know they exist before assuming there's no history to check
 
 - **F**: `src/schema/format.ts` (shared with A), `src/core/store.ts`, `assets/SCHEMA.md` — store init, schema versioning.
 
-### Run 2 (in progress) — hooks, skills, plugin packaging
+### Run 2 — hooks, skills, plugin packaging
 
 Letters below are run-2 subtask units, distinct from the run-1 letters above (both runs
 reuse A–F; check the run's plan doc for which is which).
