@@ -39,7 +39,10 @@ runHook('UserPromptSubmit', (input, project) => {
   }
 
   const tokens = tokenize(prompt);
-  if (topicCacheHit(readSessionState(input.session_id), tokens)) {
+  // Thresholds come from the config this hook already loaded — topicCacheHit would
+  // otherwise re-read and re-parse it on the hot path.
+  const thresholds = { jaccard: config.match.jaccard, ttlMs: config.match.cache_ttl_ms };
+  if (topicCacheHit(readSessionState(input.session_id), tokens, Date.now(), thresholds)) {
     return { stats: { pointers_offered: 0, topic_cache_hit: true } };
   }
 
