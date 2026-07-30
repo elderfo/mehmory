@@ -22,7 +22,10 @@ export function commitPaths(
   message: string,
   cwd?: string
 ): { ok: true } | { ok: false; deferred?: true } {
-  const opts = cwd ? { cwd } : {};
+  // `stdio: 'pipe'` is part of the U2 contract, not a tidiness choice: without it the
+  // child git inherits the caller's stderr, and a hook running inside Claude Code
+  // leaks `fatal: …` straight past the fail-open boundary.
+  const opts: { stdio: 'pipe'; cwd?: string } = cwd ? { stdio: 'pipe', cwd } : { stdio: 'pipe' };
 
   // Ensure we're in a git repo (will fail with clear error if not)
   try {
