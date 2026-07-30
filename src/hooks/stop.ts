@@ -32,7 +32,10 @@ function blockReason(key: string, sessionId: string): string {
     'mehmory: save this stretch of the session before stopping.',
     'Append anything durable — decisions made, corrections received, gotchas found since the last capture —',
     'as one short line each. Use /mehmory:remember, or run:',
-    `echo '${payload}' | node ${HOOK_DIR}/inbox-tx.mjs append`,
+    // Heredoc, not `echo '<json>' |`: the learning is model-written prose and a single
+    // quote in it would end the shell quote and break the command. A quoted heredoc
+    // delimiter passes the body through to stdin literally.
+    `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'\n${payload}\nJSON\n`,
     'Nothing durable to save? Say so and stop. This fires once per threshold; normal stopping resumes after this pass.',
   ].join(' ');
 }

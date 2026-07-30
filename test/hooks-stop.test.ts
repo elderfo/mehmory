@@ -84,16 +84,19 @@ describe('Stop hook', () => {
     );
 
     // Pull the literal command out of the reason and run it, placeholder filled in.
-    const match = /echo '\{.*?\}' \| node \S+inbox-tx\.mjs append/.exec(reason);
+    // The learning carries an apostrophe: the embedded form must survive model prose
+    // that contains a single quote, which the old `echo '<json>' |` form did not.
+    const match = /node \S+inbox-tx\.mjs append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
     expect(match).not.toBeNull();
-    const command = String(match?.[0]).replace('<the learning>', 'deploys need the VPN');
+    const learning = "deploys need the VPN, don't repeat this";
+    const command = String(match?.[0]).replace('<the learning>', learning);
 
     const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
 
     expect(run.stderr).toBe('');
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
-    expect(readIfPresent(paths(key).inbox)).toContain('deploys need the VPN');
+    expect(readIfPresent(paths(key).inbox)).toContain(learning);
   });
 
   it('does not re-block on the next stop after a capture', () => {
