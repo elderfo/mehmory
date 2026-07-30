@@ -434,3 +434,123 @@ contracts this spec had fixed** and were raised explicitly at the approval gate.
 2026-07-28 gate outcome above — `evergreen | ephemeral | default` — which supersede the
 Decisions log. Recorded here because these are parsed from page frontmatter by run 2, so
 drift between this spec and the code breaks integrate silently.
+
+---
+
+## Run-2 amendments (2026-07-29)
+
+Landed with run 2 (hooks, skills, plugin packaging). Items 1–24 are the run-2 plan's
+triaged design-review findings, condensed to their decisions and keeping the plan's
+numbering. Items 2, 10 and 14 change contracts or fixed KPI-table numbers this spec had
+already settled; they were **raised explicitly at the run-2 gate and approved as contract
+changes**. Items 25–28 are amendments discovered during implementation. All are binding
+on run 3.
+
+1. **PreCompact cannot block.** The real PreCompact hook has no decision control and no
+   `additionalContext`. PreCompact is deterministic distill only; the model-facing
+   "compaction happened, state captured" notice moves to SessionStart's `compact`
+   matcher, which does support injection.
+2. **Session-scoped capture state — APPROVED CONTRACT CHANGE.** Run 1's global
+   `cursor.json` contradicted line 78 (per-session offsets). The cursor, Stop counter,
+   topic cache, cached project key and pause flag live in `.state/<session-id>.json`; the
+   run-1 global-cursor API is **removed**, not kept alongside. Nothing shipped consumed
+   it.
+3. **Normative inbox entry serialization.** One line per entry with a machine-readable
+   trailer, owned by `src/schema/format.ts` per A4:
+   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> ts=<iso8601>-->`. The "~10
+   entries" nudge threshold becomes countable.
+4. **`remember:` is pass-through plus acknowledgement.** UserPromptSubmit cannot rewrite
+   a prompt and blocking it would kill the user's turn; the prompt passes through
+   unchanged and the capture is acknowledged in one `additionalContext` line.
+5. **SessionEnd has no background.** "Background final distill … returns instantly" is
+   amended to: enqueue a durable `distill-final` job, claimed by the next hook invocation
+   (run 2) or the CLI (run 3). SessionStart claims at most `queue.claims_per_start`
+   (default 1) job per invocation, on the maintenance lane.
+6. **`onboard-session` defined.** In-session onboarding: survey the current project
+   (README, manifest, git log, docs), seed `project.md` plus initial pages and the index
+   per SCHEMA.md, commit. Distinct from the run-3 CLI `onboard`, which mines transcripts.
+7. **Stable IDs key on the record-embedded `sessionId`,** not the invoking hook's
+   `session_id`, so resuming a session mints no duplicate inbox entries.
+8. **Stop counter semantics.** The counter is Stop invocations since the last capture; it
+   resets on every capture (Stop-threshold or PreCompact); the block fires once per
+   threshold crossing; `stop_hook_active: true` exits immediately without incrementing.
+9. **SessionStart budget split.** The <1 s budget applies to the injection path.
+   Maintenance (decay, session-state sweep, ≤1 queue claim) is best-effort and is skipped
+   when the project lock is not free on the first attempt. See A16.
+10. **UserPromptSubmit budget restated — APPROVED CONTRACT CHANGE (amends the KPI table,
+    line 156).** <100 ms of in-hook work, <300 ms end-to-end target including node
+    process spawn; both measured from `stats.jsonl`. The original <100 ms end-to-end
+    figure is unmeetable given process startup alone. The project key is cached in
+    session state to keep the hook off the git path.
+11. **Integrate's transactional surface.** A bundled `hooks/inbox-tx.mjs` helper exposes
+    `append`, `snapshot` and `clear`; skills never raw-Edit the clear step. Run 3's CLI
+    reuses the same underlying primitives.
+12. **Permission-prompt reality.** Model-driven writes to `~/.mehmory` are subject to
+    Claude Code permission prompts. When denied, layer (b) capture degrades to
+    deterministic layer (a); nothing is lost, entries simply wait in the inbox. Every
+    skill's `description` says where it writes, and `allowed-tools` narrows what it asks
+    for. Documented, not hidden.
+13. **First-run auto-init.** SessionStart calls the idempotent `initStore()` when the
+    store is missing and injects a one-line notice naming the store path *and the next
+    step*. No hook hints at the `mehmory init` CLI, which does not ship until run 3.
+14. **Maintenance token allowance — APPROVED CONTRACT CHANGE (amends the KPI table,
+    line 155).** At most 2 maintenance lines per SessionStart, priority
+    warning > compact notice > integrate nudge > init notice, with a 150-token allowance
+    (one run-1 U1 warning line alone is ~57 tokens, so the original "~50" was
+    arithmetically broken once lines stacked). Wiki injection stays capped at 800; the
+    combined output is **asserted** ≤950 estimated tokens in the worst-case fixture.
+15. **stats `project` field is the resolved project key slug,** not the pre-UC3
+    path-hash.
+16. **Session-state sweep.** SessionEnd deletes its own state file; the SessionStart
+    maintenance pass sweeps files older than `session_state.max_age_days` (default 14).
+17. **Pause flag storage and precedence.** The session flag lives in session state;
+    `hooks.<name>.enabled` config keys disable per-hook at project or global level.
+    `pause`/`resume` ship as skills this run. Precedence is **subtractive only**: the
+    session flag can only ever disable, and `resume` never re-enables a hook that config
+    turned off. Known gap, named not hidden: a persistent
+    `hooks.<name>.enabled = false` is silent until run 3's `doctor` — there is no
+    resurfacing surface this run.
+18. **Jaccard threshold named.** Similarity ≥ 0.7 against the cached prompt token set
+    (within a 5-minute TTL) skips the UserPromptSubmit lookup. Config key
+    `match.jaccard`.
+19. **`ephemeral` staleness (closes run-1 amendment 10).** No age threshold and no config
+    key: **every** integrate pass refreshes or deletes ephemeral-marked content, per line
+    98. The deferred question is closed, not re-deferred.
+20. **Positive-path fixtures are mandatory.** Every hook has at least one positive
+    fixture in its done-when criterion — an all-no-op hook set cannot pass the run.
+21. **Dedup window weakening.** Inbox dedup is by id-in-file, so after an integrate
+    clears the inbox a cursor reset can re-introduce already-integrated entries. "Replay
+    is a no-op" holds *until the next integrate*, whose editorial merge absorbs the
+    duplicates. Recorded as an amendment rather than left as a silent inference.
+22. **Warning-drain fallback.** The pending-warning channel's only outlet was
+    SessionStart — the failure and its reporting channel were the same process.
+    UserPromptSubmit drains one pending warning when SessionStart's last stats entry for
+    the project is stale or absent.
+23. **Maintenance lock mode added to A8.** The hook-maintenance lane's lock mode is 1
+    attempt, then skip and defer to the next session — a *new named bound* in A8's
+    protocol family, not an uphold of the existing 50 × 100 ms bound. Recorded in
+    `docs/WORLD_MODEL.md`.
+24. **Stop's block reason embeds an executable action** — the `inbox-tx.mjs append`
+    invocation or `/mehmory:remember` — and **never** the raw entry serialization, which
+    a model cannot produce (the id is a sha256) and which A15 forbids it hand-writing.
+
+### Discovered during run-2 implementation
+
+25. **Per-hook config shape.** Run 1's `hooks.SessionStart: boolean` is replaced by
+    `hooks.<name>.enabled` objects with snake_case names — `session_start`,
+    `user_prompt_submit`, `stop`, `pre_compact`, `session_end` — each defaulting to
+    `{ "enabled": true }`. The object form leaves room for per-hook keys without another
+    shape change.
+26. **Index line format mandated:** `- [[slug]] — one-line summary`, one line per page,
+    with the wikilink matching the page filename. The decay pass associates index lines
+    to pages through that link. Run 2 matches it heuristically; run 3 promotes the format
+    to a `format.ts` constant so index parsing stops being a regex in two places.
+27. **Archival drops the index line.** Moving a page into `archive/` removes its line
+    from `index.md` entirely — archived pages stay greppable but leave the catalog.
+    (Demotion below the `## Archive` divider, by contrast, keeps the line.)
+28. **`inbox-tx` is stateful; the library is not.** Snapshot-id → id-list mappings are
+    persisted by the helper as `.state/inbox-snapshot.<id>.json`, so `snapshot` and
+    `clear` can be two separate process invocations minutes apart. `src/core/inbox.ts`
+    stays stateless: it takes an explicit id list. `clear` consumes and deletes the
+    mapping file, so a replayed clear fails loudly instead of removing entries captured
+    since.
