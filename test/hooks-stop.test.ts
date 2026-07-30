@@ -1,0 +1,110 @@
+/** Stop fixture tests (criteria 11, 14, 16, 19). */
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createTempDir } from './helpers.js';
+import {
+  keyFor,
+  outputJson,
+  paths,
+  readIfPresent,
+  runHook,
+  seedStore,
+  statsLines,
+  writeTranscript,
+} from './hook-fixture.js';
+import { readSessionState, updateSessionState } from '../src/core/session.js';
+import { STOP_CAPTURE_THRESHOLD } from '../src/core/capture.js';
+
+const TRANSCRIPT = [
+  { text: 'We decided to use fly.io for deploys.' },
+  { text: 'Actually the rollback step was wrong; redeploy the previous release instead.' },
+  { text: 'The staging key AKIAIOSFODNN7EXAMPLE is in the env file.' },
+];
+
+/** Put the session one Stop away from the capture threshold. */
+function primeCounter(sessionId: string): void {
+  updateSessionState(sessionId, state => ({
+    ...state,
+    stop_count: STOP_CAPTURE_THRESHOLD - 1,
+  }));
+}
+
+describe('Stop hook', () => {
+  let cwd: string;
+  let key: string;
+  let transcript: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = keyFor(cwd);
+    seedStore(key);
+    transcript = writeTranscript(TRANSCRIPT);
+  });
+
+  it('stays silent below the threshold but counts the stop', () => {
+    const run = runHook(
+      'stop',
+      { session_id: 's1', transcript_path: transcript },
+      { cwd }
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(readSessionState('s1').stop_count).toBe(1);
+  });
+
+  it('captures and blocks once at the threshold', () => {
+    primeCounter('s1');
+
+    const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    const output = outputJson(run);
+
+    expect(run.status).toBe(0);
+    expect(output['decision']).toBe('block');
+    const reason = String(output['reason']);
+    expect(reason).toContain('inbox-tx.mjs append');
+    expect(reason).toContain('/mehmory:remember');
+    // The model must never be told to hand-write the entry serialization (A15, U6).
+    expect(reason).not.toContain('<!--mehmory');
+
+    const inbox = readIfPresent(paths(key).inbox);
+    expect(inbox).toContain('fly.io');
+    expect(inbox).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop' });
+  });
+
+  it('does not re-block on the next stop after a capture', () => {
+    primeCounter('s1');
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+
+    const next = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+
+    expect(next.stdout).toBe('');
+    expect(readSessionState('s1').stop_count).toBe(1);
+  });
+
+  it('is a no-op when stop_hook_active is set', () => {
+    primeCounter('s1');
+
+    const run = runHook(
+      'stop',
+      { session_id: 's1', transcript_path: transcript, stop_hook_active: true },
+      { cwd }
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(readSessionState('s1').stop_count).toBe(STOP_CAPTURE_THRESHOLD - 1);
+  });
+
+  it('stays silent when PreCompact already reset the counter', () => {
+    primeCounter('s1');
+    runHook('pre-compact', { session_id: 's1', transcript_path: transcript }, { cwd });
+
+    const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+
+    expect(run.stdout).toBe('');
+    expect(readSessionState('s1').stop_count).toBe(1);
+  });
+});

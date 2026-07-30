@@ -35,8 +35,8 @@ mehmory/
 │   ├── redact.ts              # Secret filter (E)
 │   ├── tokens.ts              # Token estimation (E)
 │   └── injection.ts           # Context builder, cap enforcement (E)
-├── hooks/                     # run 2 (in progress): built output (gitignored) — bundled *.mjs from
-│                               # src/hooks/*.ts + hooks.json, produced by `pnpm build` (B)
+├── hooks/                     # run 2 (in progress): plugin hook dir — committed hooks.json plus
+│                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
 ├── skills/                    # run 2 (in progress): plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
 ├── .claude-plugin/            # run 2 (in progress): plugin.json manifest (C)
@@ -54,7 +54,7 @@ mehmory/
 ├── eslint.config.js           # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
 ├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
-├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, hooks/ (D)
+├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, /hooks/*.mjs (D)
 └── docs/
     └── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16 (C)
 ```

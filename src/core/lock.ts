@@ -121,3 +121,32 @@ export function withProjectLock<T>(
     }
   }
 }
+
+/**
+ * Maintenance-lane lock (A16): acquire on the first attempt or give up.
+ *
+ * `withProjectLock` fails open — after its retry bound it runs `fn` *without* the lock.
+ * That is right on the capture path and wrong on the maintenance path, where the
+ * contract is "skip and let the next session retry" rather than "run unprotected". This
+ * is the A8 bound family's hook-maintenance mode: 1 attempt, no retry, no timeout log.
+ *
+ * @returns the result of `fn`, or `undefined` when the lock was not free
+ */
+export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
+  const lockPath = lockFilePath(key);
+  mkdir(join(mehmoryHome(), '.state', 'locks'));
+
+  if (!createLockExclusive(lockPath)) return undefined;
+
+  try {
+    return fn();
+  } finally {
+    if (pathExists(lockPath)) {
+      try {
+        remove(lockPath);
+      } catch {
+        // Ignore cleanup errors; a stale lock is reclaimed by the staleness bound.
+      }
+    }
+  }
+}
