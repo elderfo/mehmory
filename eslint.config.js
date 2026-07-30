@@ -27,10 +27,10 @@ export default [
       custom: customRules
     },
     rules: {
-      // NOTE: `tseslint.configs.strictTypeChecked` is a 3-element array whose [0] is
-      // the `base` config with zero rules — spreading `[0].rules` applied nothing.
-      // The full set flags 161 issues across src/ and test/; adopting it is run-2 work.
-      // What criterion 2 actually requires is enforced explicitly below.
+      // `tseslint.configs.strictTypeChecked` is an array of config objects (base +
+      // per-plugin overrides); merge every element's `rules`, not just `[0]` (which
+      // is the zero-rule base config) — spreading `[0].rules` applied nothing.
+      ...Object.assign({}, ...tseslint.configs.strictTypeChecked.map(c => c.rules)),
       ...tseslint.configs.eslintRecommended.rules,
       // Base rule is superseded by the TS-aware one below; leaving it on double-reports
       // and cannot see parameters inside function *type* annotations.

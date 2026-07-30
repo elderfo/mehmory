@@ -1,4 +1,3 @@
-// @ts-nocheck - ESLint rule testing uses untyped rule objects
 import { describe, it, expect } from 'vitest';
 import customRules from '../eslint-rules/index.js';
 
@@ -13,12 +12,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           throw new Error('Should not report');
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ImportDeclaration({
+      listeners.ImportDeclaration?.({
         source: { value: 'node:fs' },
-      } as any);
+      });
       // No error thrown = pass
     });
 
@@ -28,12 +27,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           throw new Error('Should not report');
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ImportDeclaration({
+      listeners.ImportDeclaration?.({
         source: { value: 'node:fs' },
-      } as any);
+      });
     });
 
     it('allows fs imports in test/ files', () => {
@@ -42,12 +41,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           throw new Error('Should not report');
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ImportDeclaration({
+      listeners.ImportDeclaration?.({
         source: { value: 'node:fs' },
-      } as any);
+      });
     });
 
     it('forbids fs imports in other modules', () => {
@@ -57,12 +56,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ImportDeclaration({
+      listeners.ImportDeclaration?.({
         source: { value: 'node:fs' },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -73,12 +72,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ImportDeclaration({
+      listeners.ImportDeclaration?.({
         source: { value: 'fs' },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
   });
@@ -93,13 +92,13 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.MemberExpression({
+      listeners.MemberExpression?.({
         object: { name: 'process' },
         property: { name: 'exit' },
-      } as any);
+      });
       expect(reported).toBe(false);
     });
 
@@ -110,13 +109,13 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.MemberExpression({
+      listeners.MemberExpression?.({
         object: { name: 'process' },
         property: { name: 'exit' },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -127,13 +126,13 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.MemberExpression({
+      listeners.MemberExpression?.({
         object: { name: 'process' },
         property: { name: 'abort' },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
   });
@@ -148,12 +147,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ExportNamedDeclaration({
+      listeners.ExportNamedDeclaration?.({
         declaration: { async: true },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -164,12 +163,12 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ExportNamedDeclaration({
+      listeners.ExportNamedDeclaration?.({
         declaration: { async: true },
-      } as any);
+      });
       expect(reported).toBe(false);
     });
 
@@ -183,14 +182,14 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.ExportNamedDeclaration({
+      listeners.ExportNamedDeclaration?.({
         declaration: {
           returnType: {},
         },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
   });
@@ -205,16 +204,16 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.CallExpression({
+      listeners.CallExpression?.({
         callee: {
           type: 'MemberExpression',
           object: { name: 'console' },
           property: { name: 'error' },
         },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -225,16 +224,16 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.CallExpression({
+      listeners.CallExpression?.({
         callee: {
           type: 'MemberExpression',
           object: { name: 'console' },
           property: { name: 'warn' },
         },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -245,10 +244,10 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.CallExpression({
+      listeners.CallExpression?.({
         callee: {
           type: 'MemberExpression',
           object: {
@@ -258,7 +257,7 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
           },
           property: { name: 'write' },
         },
-      } as any);
+      });
       expect(reported).toBe(true);
     });
 
@@ -269,16 +268,16 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         report: function() {
           reported = true;
         },
-      } as any;
+      };
 
       const listeners = rule.create(context);
-      listeners.CallExpression({
+      listeners.CallExpression?.({
         callee: {
           type: 'MemberExpression',
           object: { name: 'console' },
           property: { name: 'error' },
         },
-      } as any);
+      });
       expect(reported).toBe(false);
     });
   });

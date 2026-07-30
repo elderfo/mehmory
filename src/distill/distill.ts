@@ -57,7 +57,7 @@ export function distill(
             source: {
               sessionId,
               recordUuid: record.uuid,
-              recordType: record.type as string | undefined,
+              recordType: record.type,
               lineNumber: i,
             },
           });

@@ -273,8 +273,15 @@ export function pendingWarnings(): readonly string[] {
       : [];
 
     const lines = warnings.map(w => {
-      const kind = ERROR_KINDS[w.code as ErrorCode] ?? 'informational';
-      return `${w.code} (${kind}, ${w.count} occurrences): see ~/.mehmory/.state/errors.log`;
+      // w.code comes off disk as a bare string (see isWarningRecord) and is not
+      // guaranteed to be a known ErrorCode; look it up as a partial map so an
+      // unrecognized code still falls back to 'informational' instead of throwing
+      // away that fallback (an `as ErrorCode` cast would tell TS it can never miss,
+      // which isn't true and would silently drop this behavior).
+      const kind =
+        (ERROR_KINDS as Record<string, 'actionable' | 'informational'>)[w.code] ??
+        'informational';
+      return `${w.code} (${kind}, ${String(w.count)} occurrences): see ~/.mehmory/.state/errors.log`;
     });
 
     // Clear after reading (consume semantics for U2)

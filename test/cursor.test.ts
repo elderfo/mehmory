@@ -17,7 +17,7 @@ describe('cursor', () => {
   // Create unique test file paths to avoid inode reuse issues between tests
   function getUniqueTestFile(): string {
     testFileCounter++;
-    return join(statePath('test-fixtures'), `cursor-test-${testFileCounter}.jsonl`);
+    return join(statePath('test-fixtures'), `cursor-test-${String(testFileCounter)}.jsonl`);
   }
 
   function clearCursor(): void {

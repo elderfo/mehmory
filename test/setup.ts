@@ -12,7 +12,9 @@ let setupTempDir: string;
 // `git worktree add` fails with "index file open failed: Not a directory".
 // Scrubbed once here rather than at each execSync call site.
 for (const v of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY']) {
-  delete process.env[v];
+  // Reflect.deleteProperty behaves exactly like `delete process.env[v]` here;
+  // the plain `delete` operator on a dynamic key is what no-dynamic-delete flags.
+  Reflect.deleteProperty(process.env, v);
 }
 
 // Make git hermetic for every child process the suite spawns.

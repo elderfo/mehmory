@@ -34,7 +34,7 @@ const falsePosatives = readFileSync(join(fixturesDir, 'false-positives.txt'), 'u
 describe('redact', () => {
   describe('hits: AWS keys', () => {
     hitsAWS.forEach((line, i) => {
-      it(`redacts AWS key fixture ${i + 1}`, () => {
+      it(`redacts AWS key fixture ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toContain('[REDACTED]');
         expect(result).not.toContain(line.substring(0, 10)); // at least partial should be gone
@@ -44,7 +44,7 @@ describe('redact', () => {
 
   describe('hits: GitHub tokens', () => {
     hitsGitHub.forEach((line, i) => {
-      it(`redacts GitHub token fixture ${i + 1}`, () => {
+      it(`redacts GitHub token fixture ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toContain('[REDACTED]');
       });
@@ -53,7 +53,7 @@ describe('redact', () => {
 
   describe('hits: Bearer tokens', () => {
     hitsBearer.forEach((line, i) => {
-      it(`redacts bearer token fixture ${i + 1}`, () => {
+      it(`redacts bearer token fixture ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toContain('[REDACTED]');
       });
@@ -71,7 +71,7 @@ describe('redact', () => {
 
   describe('hits: .env secrets', () => {
     hitsEnvSecrets.forEach((line, i) => {
-      it(`redacts .env secret fixture ${i + 1}`, () => {
+      it(`redacts .env secret fixture ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toContain('[REDACTED]');
       });
@@ -80,7 +80,7 @@ describe('redact', () => {
 
   describe('hits: URL embedded credentials', () => {
     hitsURLCredentials.forEach((line, i) => {
-      it(`redacts URL credential fixture ${i + 1}`, () => {
+      it(`redacts URL credential fixture ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toContain('[REDACTED]');
       });
@@ -89,7 +89,7 @@ describe('redact', () => {
 
   describe('non-hits: false positives', () => {
     falsePosatives.forEach((line, i) => {
-      it(`does NOT redact false positive ${i + 1}`, () => {
+      it(`does NOT redact false positive ${String(i + 1)}`, () => {
         const result = redact(line);
         expect(result).toBe(line);
       });
@@ -108,8 +108,10 @@ describe('redact', () => {
     });
 
     it('handles non-string input gracefully', () => {
-      expect(() => redact(null as any)).not.toThrow();
-      expect(redact(undefined as any)).toBe('');
+      // Deliberately smuggle null/undefined past the `text: string` type to
+      // exercise the runtime guard — `unknown` avoids `any` while doing it.
+      expect(() => redact(null as unknown as string)).not.toThrow();
+      expect(redact(undefined as unknown as string)).toBe('');
     });
 
     it('handles multiple secrets in one line', () => {
