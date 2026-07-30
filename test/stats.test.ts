@@ -42,6 +42,23 @@ describe('recordStat', () => {
     expect(lines).toHaveLength(1);
   });
 
+  it('rotates again when a previous generation is already on disk', () => {
+    const oversized = (): void => {
+      atomicWrite(statsPath(), 'x'.repeat(6 * 1024 * 1024));
+    };
+
+    oversized();
+    recordStat({ project: 'p', hook: 'Stop', ms: 1 });
+    oversized();
+    recordStat({ project: 'p', hook: 'Stop', ms: 2 });
+
+    // The second rotation must have happened: the live file holds only the new line,
+    // and the single kept generation is the one that was just moved aside.
+    expect(readFile(statsPath()).trim().split('\n')).toHaveLength(1);
+    expect(pathExists(`${statsPath()}.1`)).toBe(true);
+    expect(lastStatFor('p', 'Stop')?.ms).toBe(2);
+  });
+
   it('never throws when the stats path is unwritable', () => {
     expect(() => {
       recordStat({ project: 'p', hook: 'Stop', ms: 1 });

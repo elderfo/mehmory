@@ -147,6 +147,36 @@ describe('logError', () => {
       expect(newLogSize).toBeLessThan(1000); // Just the new entry
     }
   });
+
+  it('rotates again when errors.log.1 already exists', () => {
+    const logPath = statePath('errors.log');
+    const rotatedPath = statePath('errors.log.1');
+    const stateDir = join(mehmoryHome(), '.state');
+    if (!existsSync(stateDir)) {
+      mkdirSync(stateDir, { recursive: true });
+    }
+
+    const overflow = (marker: string): void => {
+      writeFileSync(logPath, marker + 'x'.repeat(5 * 1024 * 1024 + 1000), 'utf-8');
+      logError({
+        code: 'E_CONFIG_PARSE',
+        kind: 'actionable',
+        what: 'test',
+        consequence: 'test',
+        fix: 'fix',
+      });
+    };
+
+    overflow('first-');
+    overflow('second-');
+
+    // The second rotation must have replaced the first generation, not been skipped.
+    expect(existsSync(rotatedPath)).toBe(true);
+    expect(readFileSync(rotatedPath, 'utf-8').slice(0, 7)).toBe('second-');
+    if (existsSync(logPath)) {
+      expect(readFileSync(logPath, 'utf-8').length).toBeLessThan(1000);
+    }
+  });
 });
 
 describe('failOpen', () => {

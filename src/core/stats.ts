@@ -7,7 +7,14 @@
  */
 
 import { statePath } from './home.js';
-import { appendRecord, pathExists, readFileFrom, rename, stat as statFile } from './fs.js';
+import {
+  appendRecord,
+  pathExists,
+  readFileFrom,
+  remove,
+  rename,
+  stat as statFile,
+} from './fs.js';
 import { withProjectLock } from './lock.js';
 import { failOpen } from './errors.js';
 import { loadConfig } from './config.js';
@@ -40,7 +47,11 @@ function rotateIfNeeded(path: string): void {
   if (!pathExists(path)) return;
   const size = Number(statFile(path)?.size ?? 0);
   if (size <= maxBytes) return;
-  rename(path, `${path}.1`);
+  // renameSync onto an existing target throws on Windows, which would silently end
+  // rotation after the first generation and let stats.jsonl grow unbounded.
+  const rotated = `${path}.1`;
+  if (pathExists(rotated)) remove(rotated);
+  rename(path, rotated);
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   existsSync,
   statSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -111,6 +112,9 @@ export function logError(error: MehmoryError): void {
   if (logFileSizeState.size > maxSize) {
     try {
       const rotatedPath = statePath('errors.log.1');
+      // Windows renameSync throws when the target exists; without this the second
+      // rotation would fail silently and errors.log would grow unbounded.
+      if (existsSync(rotatedPath)) unlinkSync(rotatedPath);
       renameSync(logPath, rotatedPath);
       // After rotation, size resets to 0 and update mtime to reflect the new empty file
       logFileSizeState = { size: 0, mtime: 0 };
