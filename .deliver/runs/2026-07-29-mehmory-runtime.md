@@ -2,6 +2,7 @@
 
 mode: single
 approved: 2026-07-29 (rev 1, incl. gate-raised contract changes: spec gaps 2, 10, 14)
+landed: 2026-07-30T12:03:42Z (PR #2 squash-merged as 63b3f17; source: gh pr view 2)
 retroed: 2026-07-31T15:10:00Z
 case_studied: 2026-07-30T12:35:00Z
 session: 953569ee-46a4-486c-ace4-5d53104f635b

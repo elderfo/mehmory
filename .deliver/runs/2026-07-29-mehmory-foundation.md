@@ -2,7 +2,9 @@
 
 mode: single
 approved: 2026-07-29 (rev 1, plan + spec amendments 15 & 16)
-retroed: false
+landed: 2026-07-29T19:06:38Z (PR #1 squash-merged as 65cd8a0; source: gh pr view 1)
+retroed: 2026-07-29 (retro at .deliver/PRIORS-retro-2026-07-29.md)
+case_studied: 2026-07-29 (package at .deliver/case-studies/2026-07-29-mehmory-foundation/)
 session: 855328e6-ef7f-453d-a517-dcc59e391f42
 model: claude-opus-5
 context_at_approval: fresh session, plan re-read from run file
