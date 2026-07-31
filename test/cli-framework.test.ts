@@ -95,8 +95,10 @@ describe('exit 1 — usage errors', () => {
     expect(run.stderr).toContain('github.com/acme/widgets-api');
   });
 
+  // `onboard` and `purge` landed with unit C2 and are no longer stubs; `search` is the
+  // last one. Delete this case, not just its last entry, once unit S lands.
   it('exits 1 for the not-yet-implemented commands', () => {
-    for (const name of ['search', 'onboard', 'purge']) {
+    for (const name of ['search']) {
       const run = runCli([name, 'query']);
       expect(run.status, name).toBe(1);
       expect(run.stderr, name).toContain('not implemented');

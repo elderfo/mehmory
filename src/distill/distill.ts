@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 import { DISTILL_PATTERNS, type DistilledEntry } from './patterns.js';
 import type { TranscriptRecord } from '../transcript/reader.js';
-import { redact } from '../core/redact.js';
+import { redact, type RedactOptions } from '../core/redact.js';
 
 /**
  * Distill a list of transcript records into inbox entries.
@@ -25,11 +25,15 @@ import { redact } from '../core/redact.js';
  *
  * @param records - Parsed transcript records
  * @param fallbackSessionId - Used only for records that carry no `sessionId` field
+ * @param secrets - `config.secrets`, threaded (A21). Omitted, only the built-in patterns
+ *   apply — which silently drops the user's own `secrets.patterns` for any caller that
+ *   distills directly rather than through `capture.ts` (`mehmory onboard` is one).
  * @returns Distilled entries
  */
 export function distill(
   records: TranscriptRecord[],
-  fallbackSessionId = ''
+  fallbackSessionId = '',
+  secrets?: RedactOptions
 ): DistilledEntry[] {
   const entries: DistilledEntry[] = [];
 
@@ -64,7 +68,7 @@ export function distill(
             // been written to a markdown page under ~/.mehmory and committed to
             // that repo's history, where redacting a later read cannot remove it.
             // A user who pastes a key into a prompt must not have it persisted.
-            content: redact(content),
+            content: redact(content, secrets),
             source: {
               sessionId,
               recordUuid: record.uuid,

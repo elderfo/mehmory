@@ -178,7 +178,7 @@ export function distillDelta(
       }
 
       const ts = new Date().toISOString();
-      const entries = distill(records, sessionId).map(entry => ({
+      const entries = distill(records, sessionId, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
