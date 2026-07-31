@@ -337,4 +337,17 @@ describe('distill stable ids across resume', () => {
     );
     expect(entries[0]?.id).toBe(computeId('session-invoking', 'msg-legacy'));
   });
+  it('applies the user\'s own secrets.patterns, not just the built-ins', () => {
+    // The debt run 3 closes: without the threaded options a direct consumer of
+    // `./distill/distill` got built-in patterns only, so a pattern the user configured
+    // never reached the one place content is first materialized.
+    const records: TranscriptRecord[] = [
+      { type: 'message', role: 'user', text: 'deploy key SEKRET-4711 goes here', uuid: 'msg-secret' },
+    ];
+
+    expect(distill(records, 'session-secrets')[0]?.content).toContain('SEKRET-4711');
+    expect(
+      distill(records, 'session-secrets', { patterns: ['/SEKRET-[0-9]+/g'] })[0]?.content
+    ).toBe('deploy key [REDACTED] goes here');
+  });
 });

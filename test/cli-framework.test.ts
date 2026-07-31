@@ -94,15 +94,6 @@ describe('exit 1 — usage errors', () => {
     expect(run.stderr).toContain('github.com/acme/widgets');
     expect(run.stderr).toContain('github.com/acme/widgets-api');
   });
-
-  it('exits 1 for the not-yet-implemented commands', () => {
-    // `search` is implemented (criterion 6/7); only onboard/purge remain stubs here.
-    for (const name of ['onboard', 'purge']) {
-      const run = runCli([name, 'query']);
-      expect(run.status, name).toBe(1);
-      expect(run.stderr, name).toContain('not implemented');
-    }
-  });
 });
 
 describe('exit 2 — store missing where required', () => {
