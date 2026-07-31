@@ -90,7 +90,8 @@ describe('fs primitives', () => {
       const testScriptPath = join(statePath(), 'append-worker.mjs');
       const scriptDir = dirname(testScriptPath);
       mkdirSync(scriptDir, { recursive: true });
-      const repoRoot = '/home/cgetsfred/Developer/mehmory';
+      // Vitest's cwd is the repo root; hardcoding a developer's path breaks on CI.
+      const repoRoot = process.cwd();
       const scriptContent = `
 import { appendRecord } from '${repoRoot}/dist/core/fs.js';
 import { withProjectLock } from '${repoRoot}/dist/core/lock.js';
@@ -105,7 +106,7 @@ for (let i = 0; i < recordCount; i++) {
       // Spawn 8 processes concurrently
       const processes: ReturnType<typeof spawn>[] = [];
       for (let i = 0; i < processCount; i++) {
-        const proc = spawn('node', [testScriptPath, filePath, recordsPerProcess.toString()], {
+        const proc = spawn(process.execPath, [testScriptPath, filePath, recordsPerProcess.toString()], {
           stdio: 'pipe',
           env: { ...process.env },
         });

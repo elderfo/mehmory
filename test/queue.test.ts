@@ -63,7 +63,8 @@ describe('durable queue (done-when 9)', () => {
 
     const testScriptPath = join(statePath(), 'queue-claimer.mjs');
     mkdirSync(dirname(testScriptPath), { recursive: true });
-    const repoRoot = '/home/cgetsfred/Developer/mehmory';
+    // Vitest's cwd is the repo root; hardcoding a developer's path breaks on CI.
+    const repoRoot = process.cwd();
 
     // Two-phase barrier. A timer-based release does NOT synchronize these workers:
     // a worker whose node boot outlasts the timer finds the flag already set and
@@ -107,7 +108,7 @@ if (claimed) {
       }, 10);
 
       for (let i = 0; i < processCount; i++) {
-        const proc = spawn('node', [testScriptPath], {
+        const proc = spawn(process.execPath, [testScriptPath], {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env },
         });

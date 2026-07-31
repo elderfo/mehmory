@@ -390,14 +390,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 1: record a warning
     const proc1Output = execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('recorded'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );
@@ -405,14 +405,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 2: attempt to record again within rate-limit window (should skip)
     execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('attempt2'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );
@@ -432,14 +432,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 3: after rewinding, should record again
     execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('attempt3'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );
