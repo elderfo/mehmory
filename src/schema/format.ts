@@ -38,6 +38,39 @@ export const ARCHIVE_DIVIDER = '## Archive';
 /** Directory name (relative to a scope root) holding pages aged past purge_days. */
 export const ARCHIVE_DIR = 'archive';
 
+// ─── Index line format (run-2 amendment 26) ───
+
+/**
+ * Normative index line: `- [[slug]] — one-line summary`, one line per page, the
+ * wikilink matching the page filename (`pages/<slug>.md`).
+ *
+ * The summary is optional *when parsing* only. Run-2 amendment 26 mandates it and
+ * `formatIndexLine` always emits it, but a hand-written line missing its summary must
+ * still associate to its page — the decay pass would otherwise treat that line as
+ * prose and orphan it from the page it names.
+ */
+export const INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
+
+/** One parsed index line. */
+export interface IndexLine {
+  /** Page slug from the wikilink — the page filename without `.md`. */
+  readonly slug: string;
+  /** One-line summary; empty when the line carries none. */
+  readonly summary: string;
+}
+
+/** Parse an index line, or `undefined` when the line is not one (prose, headings). */
+export function parseIndexLine(line: string): IndexLine | undefined {
+  const m = INDEX_LINE_PATTERN.exec(line.trimEnd());
+  if (!m?.[1]) return undefined;
+  return { slug: m[1], summary: m[2] ?? '' };
+}
+
+/** Serialize an index line in the normative form. */
+export function formatIndexLine(slug: string, summary: string): string {
+  return `- [[${slug}]] — ${summary}`;
+}
+
 // ─── Inbox entry format (A14) ───
 
 /** Length of the hex id embedded in an inbox entry line. */

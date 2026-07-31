@@ -11,6 +11,10 @@
  * Returns the input text with matched secrets redacted as [REDACTED].
  */
 
+import { join } from 'node:path';
+import { logError } from './errors.js';
+import { mehmoryHome } from './home.js';
+
 // ponytail: Regexes are patterns, not comprehensive scanners. Upgrade path:
 // entropy scoring (strings with high entropy) or integrating a real scanner (trivy, talisman).
 
@@ -58,13 +62,125 @@ const SECRET_PATTERNS = [
 ] as const;
 
 /**
- * Redact secrets from text using the documented pattern corpus.
+ * User-supplied secret filter settings — structurally `config.secrets`, so callers
+ * that already hold a `MehmoryConfig` pass `config.secrets` straight through.
+ *
+ * `redact()` never loads config itself: it runs three times per SessionStart
+ * injection on a <1 s budget, and a disk read there is the hot-path re-read the
+ * plan's criterion 13 forbids. Config is loaded once per process and threaded down.
+ */
+export interface RedactOptions {
+  /** Extra patterns in `RegExp.prototype.toString()` form (`/source/flags`). Additive
+   * to `SECRET_PATTERNS`, which always stays in force. Malformed entries are logged
+   * and skipped (A2 fail-open), never thrown. */
+  readonly patterns?: readonly string[];
+  /** Literal substrings exempt from redaction. */
+  readonly whitelist?: readonly string[];
+}
+
+/** Compiled user patterns, keyed by the pattern list. Config defaults mirror the
+ * built-in corpus, so the common case recompiles the same five regexes on every
+ * call without this. Bounded by the number of distinct pattern lists a process sees
+ * (one, in practice). */
+const userPatternCache = new Map<string, RegExp[]>();
+
+/** Compile `/source/flags` strings to regexes, skipping (and logging) malformed ones. */
+function compileUserPatterns(patterns: readonly string[]): RegExp[] {
+  const cacheKey = JSON.stringify(patterns);
+  const cached = userPatternCache.get(cacheKey);
+  if (cached) return cached;
+
+  const compiled: RegExp[] = [];
+  for (const raw of patterns) {
+    const parsed = /^\/(.*)\/([a-z]*)$/s.exec(raw);
+    try {
+      if (!parsed?.[1]) throw new Error('not in /source/flags form');
+      const flags = parsed[2] ?? '';
+      compiled.push(new RegExp(parsed[1], flags.includes('g') ? flags : flags + 'g'));
+    } catch (err) {
+      logError({
+        code: 'E_CONFIG_PARSE',
+        kind: 'actionable',
+        what: `secrets.patterns entry ${JSON.stringify(raw)} is not a usable regex (${
+          err instanceof Error ? err.message : String(err)
+        })`,
+        consequence: 'That pattern is skipped; the built-in secret patterns still apply',
+        fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+      });
+    }
+  }
+
+  userPatternCache.set(cacheKey, compiled);
+  return compiled;
+}
+
+/** Half-open `[start, end)` character range of one whitelisted literal occurrence. */
+type Range = readonly [start: number, end: number];
+
+/** Every occurrence of every whitelist literal in `text`. */
+function whitelistRanges(text: string, whitelist: readonly string[]): Range[] {
+  const ranges: Range[] = [];
+  for (const literal of whitelist) {
+    let from = text.indexOf(literal);
+    while (from !== -1) {
+      ranges.push([from, from + literal.length]);
+      from = text.indexOf(literal, from + 1);
+    }
+  }
+  return ranges;
+}
+
+/**
+ * True only when a whitelisted literal **fully contains** this match.
+ *
+ * Redaction wins on any partial overlap. A whitelist entry that is merely a fragment
+ * of a secret — `FODNN7` inside an AWS key, a safe line inside a private-key block —
+ * exempts nothing, so no whitelist value can ever reduce what the patterns catch.
+ */
+function isExempt(start: number, end: number, ranges: readonly Range[]): boolean {
+  return ranges.some(([from, to]) => from <= start && end <= to);
+}
+
+function applyPatterns(
+  text: string,
+  extra: readonly RegExp[],
+  whitelist: readonly string[]
+): string {
+  let result = text;
+
+  for (const pattern of [...SECRET_PATTERNS, ...extra]) {
+    pattern.lastIndex = 0;
+
+    if (whitelist.length === 0) {
+      result = result.replace(pattern, REDACTION_PLACEHOLDER);
+      continue;
+    }
+
+    // Recomputed per pattern: an earlier pattern's replacement shifts later offsets.
+    const ranges = whitelistRanges(result, whitelist);
+    result = result.replace(pattern, (...args: unknown[]): string => {
+      const match = String(args[0]);
+      // String.replace passes (match, ...groups, offset, whole); none of these
+      // patterns use named groups, so the offset is always second from the end.
+      const offset = Number(args[args.length - 2]);
+      return isExempt(offset, offset + match.length, ranges)
+        ? match
+        : REDACTION_PLACEHOLDER;
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Redact secrets from text using the built-in corpus plus any configured patterns.
  * Never throws; returns original text on any error.
  *
  * @param text — The text to redact (empty string, very large, or invalid UTF-16 all handled safely)
+ * @param options — `config.secrets`; omitted means built-in patterns only
  * @returns The text with matched secrets replaced by [REDACTED]
  */
-export function redact(text: string): string {
+export function redact(text: string, options: RedactOptions = {}): string {
   if (!text || typeof text !== 'string') {
     // text is typed `string`, but this function is a defensive fail-open boundary
     // that must survive untyped/JS callers passing null or undefined at runtime;
@@ -74,14 +190,14 @@ export function redact(text: string): string {
   }
 
   try {
-    let result = text;
+    const extra = options.patterns ? compileUserPatterns(options.patterns) : [];
+    const whitelist = (options.whitelist ?? []).filter(entry => entry !== '');
 
-    // Apply each pattern, replacing all matches with REDACTION_PLACEHOLDER
-    for (const pattern of SECRET_PATTERNS) {
-      result = result.replace(pattern, REDACTION_PLACEHOLDER);
-    }
-
-    return result;
+    // Patterns run first; the whitelist can only spare a match it fully contains.
+    // ponytail: whitelist ranges are recomputed per pattern — O(patterns × entries)
+    // indexOf scans. Ceiling: large whitelists on large inputs. Upgrade path is one
+    // combined alternation regex if that ever shows up in a profile.
+    return applyPatterns(text, extra, whitelist);
   } catch {
     // On any regex error or unexpected failure, return original text unchanged
     // Better to leak a secret than crash the system

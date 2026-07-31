@@ -23,6 +23,10 @@ declare const customRules: {
       meta: { type: string; docs: unknown };
       create: (context: unknown) => RuleListeners;
     };
+    'no-cli-imports': {
+      meta: { type: string; docs: unknown };
+      create: (context: unknown) => RuleListeners;
+    };
   };
 };
 

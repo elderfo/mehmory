@@ -20,8 +20,15 @@ export interface MehmoryConfig {
     readonly purge_days: number;
   };
   readonly secrets: {
+    /** Extra patterns, each in `RegExp.prototype.toString()` form (`/source/flags`).
+     * Additive: the built-in corpus in `redact.ts` always stays in force. */
     readonly patterns: readonly string[];
+    /** Literal substrings that are exempt from redaction. */
     readonly whitelist: readonly string[];
+  };
+  readonly stop: {
+    /** Stop invocations since the last capture that trigger a capture + block. */
+    readonly capture_threshold: number;
   };
   /** Per-hook enable switches (criterion 19). Snake-case keys match the hook filenames. */
   readonly hooks: {
@@ -99,6 +106,9 @@ const DEFAULTS: MehmoryConfig = {
       /^[A-Z_][A-Z0-9_]*=.+$/m,
     ].map(p => p.toString()),
     whitelist: [],
+  },
+  stop: {
+    capture_threshold: 15,
   },
   hooks: {
     session_start: { enabled: true },

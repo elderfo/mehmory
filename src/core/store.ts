@@ -63,6 +63,15 @@ export function initStore(): InitStoreResult {
     // Step 4: Copy SCHEMA.md (never overwrite user edits)
     ensureSchemaFile(home);
 
+    // Step 4b: .gitignore and config.json, created only when absent (A6 amendment).
+    //
+    // config.json is written **empty**, not fully defaulted: a defaults file on disk
+    // pins every default forever, so a later default change becomes a silent no-op for
+    // every existing user (the shadow-defaults failure A4 rejects). It exists only so
+    // E_CONFIG_PARSE's `$EDITOR <path>` fix opens a file that is already there.
+    ensureAbsentFile(join(home, '.gitignore'), STORE_GITIGNORE);
+    ensureAbsentFile(join(home, 'config.json'), '{}\n');
+
     // Step 5: Initialize git (idempotently, only if .git doesn't exist)
     const gitDir = join(home, '.git');
     if (!pathExists(gitDir)) {
@@ -86,7 +95,9 @@ export function initStore(): InitStoreResult {
           kind: 'actionable',
           what: err instanceof Error ? err.message : 'git init failed',
           consequence: 'Store is initialized but git repository was not created',
-          fix: 'Run: git -C ~/.mehmory init',
+          // The resolved home, not a literal `~/.mehmory`: the documented
+          // MEHMORY_HOME override would otherwise make this command wrong.
+          fix: `git -C ${home} init`,
         };
         logError(error);
         return { ok: false, error };
@@ -97,10 +108,11 @@ export function initStore(): InitStoreResult {
   } catch (err) {
     const error: MehmoryError = {
       code: 'E_STORE_INIT',
-      kind: 'actionable',
+      // Informational: "check file permissions and disk space" is prose, not a
+      // runnable command, and U10 admits only the latter under `Fix:`.
+      kind: 'informational',
       what: err instanceof Error ? err.message : 'Store initialization failed',
       consequence: 'The mehmory store could not be created or updated',
-      fix: 'Check file permissions and disk space',
     };
     logError(error);
     return { ok: false, error };
@@ -124,6 +136,16 @@ function ensureFileContent(path: string, defaultContent: string): void {
     atomicWrite(path, defaultContent);
   }
 }
+
+/** Write `content` only when the file is absent. Keeps `initStore` idempotent: a second
+ * run leaves a user-edited file — or a deliberately emptied one — exactly as it is. */
+function ensureAbsentFile(path: string, content: string): void {
+  if (!pathExists(path)) atomicWrite(path, content);
+}
+
+/** Store `.gitignore`: `.state/` is machine-local scratch (cursors, warnings, the error
+ * log) and must never enter the memory repo's history. */
+const STORE_GITIGNORE = '.state/\n';
 
 /**
  * Copy SCHEMA.md to store (never overwrite user edits).
@@ -185,9 +207,19 @@ type: entity
 Captured entries awaiting integration.
 `;
 
+/**
+ * `schema_version` of the template this build ships (A20).
+ *
+ * `doctor` compares the store's own `SCHEMA.md` against this and warns on drift. It is
+ * deliberately **not** `FORMAT_VERSION`: that versions the machine format, so tying the
+ * warning to it would fire on every code-only bump with nothing the user could do about
+ * it. Interpolated into the template below so the two can never disagree.
+ */
+export const TEMPLATE_SCHEMA_VERSION = '1';
+
 /** Template for SCHEMA.md (embedded copy of assets/SCHEMA.md) */
 const SCHEMA_TEMPLATE = `---
-schema_version: "1"
+schema_version: "${TEMPLATE_SCHEMA_VERSION}"
 ---
 
 # mehmory Schema

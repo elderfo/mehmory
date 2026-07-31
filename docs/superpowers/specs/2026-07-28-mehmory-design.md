@@ -148,14 +148,18 @@ KPI proof split: mechanical KPIs (injection budget, hook latency, capture surviv
 
 ## KPIs
 
+**Rewritten once, in place, by the run-3 plan's criterion 16 — a gate-raised contract
+change.** See `## Run-3 amendments` below for the two KPIs this drops from v1 ownership.
+
 | KPI | Target |
 |---|---|
-| Time-to-first-useful-recall (with onboard) | minutes after install |
-| Cold-start recall of ≤2-week-old decisions | works |
-| Injection budget (SessionStart) | ≤800 tokens (code-enforced cap) |
-| Hook latency | SessionStart <1s, UserPromptSubmit <100ms, Stop <5s p95 |
+| Time-to-first-useful-recall (TTHW) | ≤5 min, release-gated — **measured over the CLI steps** (install, init, onboard, search); the session and integrate steps are **fixture-asserted**, not proven by a live session or a model-driven integrate |
+| Injection budget (SessionStart) | ≤800 tokens (code-enforced cap); combined with maintenance lines (warning/compact/nudge/init), asserted ≤950 estimated tokens worst-case |
+| Hook latency | SessionStart <1s; UserPromptSubmit <100 ms in-hook work / <300 ms end-to-end including process spawn; Stop <5s p95 |
 | Capture survival across compaction | ~100% of flagged decisions |
-| Contradiction rate after integrate | ~0 |
+| Recall utility proxy | `pointers_offered` from `stats.jsonl` — measurable. `pointers-followed` is **removed from v1**; fact-actually-used is not observable |
+| Cold-start recall ≥70% relevant in top-3 pointers | **UNOWNED in v1** — no labeled query set exists and no run builds one |
+| Contradiction rate after integrate (0) | **UNOWNED in v1** — depends on the dogfood eval harness, which is out of scope this run |
 | Meta | removing it feels noticeably worse |
 
 ## Decisions log
@@ -554,3 +558,149 @@ on run 3.
     stays stateless: it takes an explicit id list. `clear` consumes and deletes the
     mapping file, so a replayed clear fails loudly instead of removing entries captured
     since.
+
+---
+
+## Run-3 amendments (2026-07-31)
+
+Landed with run 3 (CLI, search, docs, CI). The plan's 29 triaged findings, condensed to
+their decisions and keeping the plan's numbering. Two are **gate-raised contract
+changes**, marked below, decided by the user at the plan-approval gate rather than
+inferred: **item 1** (FTS5 dropped from v1) and **item 5** (the recall and contradiction
+KPIs marked unowned in v1 — see the rewritten KPI table above). All 29 are binding on
+run 4.
+
+1. **FTS5 dropped from v1 — GATE-RAISED, USER DECISION.** `search` ships on one
+   multi-corpus scan (pages + archive + log) instead of a SQLite FTS5 index. The spec's
+   two mutually exclusive rebuild triggers and the unclaimed SessionEnd rebuild job are
+   both removed, not deferred. FTS5 returns behind a named threshold — see the plan's
+   judgment entry — if the scan measurably stops being enough.
+2. **Distribution artifact.** The release workflow force-adds built `hooks/*.mjs` into
+   the tagged git tree (bundles are gitignored on `main` but the marketplace installs
+   from the tag); `package.json` pins `bin`/`files`/`engines`/`repository`/`license`;
+   `.claude-plugin/plugin.json` carries marketplace metadata. The npm publish job stays
+   inert this run.
+3. **Dead escape hatches wired, not documented as dead.** `injection.budget_tokens` and
+   `secrets.{patterns,whitelist}` are threaded parameters into `buildInjection()` and
+   `redact()`, never read from disk inside those functions. `stop.capture_threshold`
+   joins them as a 14th config group.
+4. **Purge semantics.** `mehmory purge` deletes from the working tree and commits —
+   never a history rewrite (see A19 in `docs/WORLD_MODEL.md`) — and prints the
+   `git filter-repo` recipe itself. `--session` is scoped to un-integrated inbox entries
+   only, stated in three places. `--global` is added as a scope in its own right. Tokens
+   are typed and pinned per form, scaled to blast radius. A failed commit after a
+   successful delete is a named terminal state with its own exit code and remedy.
+5. **KPI table synced — GATE-RAISED, USER DECISION.** The table is rewritten once, in
+   place (see `## KPIs` above), to the numbers run-1 amendment 8 and run-2 amendments 10
+   and 14 already fixed. The TTHW row states its measured reach. Cold-start recall
+   (≥70% top-3) and contradiction rate (0 after lint) are dropped from v1 ownership —
+   both were auto-approved spec content, so approving the run-3 plan approves this
+   change; neither a labeled query set nor a dogfood eval harness exists or is built
+   this run.
+6. **Run-3 error codes and the actionable-fix audit.** New codes for the surfaces run 3
+   adds (`E_SEARCH_FAILED`, `E_TRANSCRIPT_READ`, `E_TRANSCRIPT_DIR_UNRESOLVED`,
+   `E_PURGE_FAILED`). Every existing `actionable` call site whose `fix` was prose rather
+   than a runnable command is reclassified `informational`; `failOpen` always
+   synthesizes an `informational` instance regardless of a code's registered default.
+7. **Node capability check, simplified.** With `node:sqlite` gone, the fts5-vs-Node-
+   version distinction dissolves. `engines` (Node ≥22) plus an `init`/`doctor` version
+   check is the whole requirement.
+8. **Onboard's transcript-directory mapping.** Decode the `~/.claude/projects/<encoded>`
+   directory name to a filesystem path, resolve the project key by running
+   `resolveProjectKey()` **in that directory**, and list-and-skip when the decoded path
+   is gone. The project scan is capped at `--projects` (default 50).
+9. **Two onboarding surfaces reconciled in code, not just prose.** CLI `onboard` is
+   canonical for cold start (mining transcripts); `onboard-session` is the no-transcripts,
+   in-session path. Because `onboard` now writes a stub `project.md`, the empty-store
+   hook nudge no longer fires at a user who just onboarded and points them at the wrong
+   surface.
+10. **Pointer corpus stays narrow, deliberately.** The `UserPromptSubmit` hook keeps
+    `matchPages` over the current scope's live pages; `search` uses the wider
+    pages+archive+log scan. The spec's addendum item 22 ("full-text pointer matching")
+    is amended: search and the hook now serve different needs at different costs, not
+    one FTS implementation doing both.
+11. **`stats` cut to its real sources.** Only fields that exist in `stats.jsonl` are
+    aggregated — per-hook counts, `ms` p50/p95, injection token p50/p95, pointers
+    offered, captured entries — plus inbox age and integrate cadence read from the files
+    directly. Nothing is synthesized for a metric the store doesn't record.
+12. **Store `.gitignore`.** `initStore()` writes `~/.mehmory/.gitignore` (containing
+    `.state/`) when absent, so `git status` can actually be clean and `doctor`'s
+    dirty-tree check means something.
+13. **`doctor`'s `schema_version` check is a named, narrow exception to A4** (see A20 in
+    `docs/WORLD_MODEL.md`): it compares against the template constant baked into
+    `store.ts`, not against `FORMAT_VERSION`, which would warn on every code-only bump
+    with no correct user action.
+14. **`init`'s plugin check** is a concrete filesystem probe, with the pinned install
+    command printed when the probe fails.
+15. **TTHW's real reach stated where the user reads it** — in the KPI row and in the
+    README's quickstart, not only in the plan.
+16. **Project discovery and one scope grammar.** `src/core/scopes.ts` discovers projects
+    as any directory under `projects/` containing `inbox.md` (keys run 2–5 path
+    segments) and resolves `config.identity.aliases` before matching. `--project [<key>]`
+    is optional-valued across all four scope-taking commands; `--global`/`--all` are
+    accepted by all four; ambiguity exits 1 listing candidates.
+17. **`config.json` is written empty.** `init` writes `{}`, not a fully-defaulted file —
+    a defaults file on disk would pin every current default forever and turn a future
+    default change into a silent no-op.
+18. **Config documentation covers all 14 groups**, marking any key that exists in the
+    schema but nothing currently reads (see `docs/CONFIG.md`).
+19. **`peekWarnings()`** lets `status`/`doctor` read pending warnings without consuming
+    the channel `SessionStart` also reads from.
+20. **CLI errors do not raise session warnings.** A module-level CLI-mode flag in
+    `errors.ts`, set once at CLI startup, skips `recordWarning()` — not 17 call-site
+    changes across `src/core/`.
+21. **The CLI is one bundled file.** `src/cli/index.ts` → `dist/cli.mjs`,
+    `splitting: false`, excluded from the library's importable entry (`!src/cli/**`,
+    mirroring `!src/hooks/**` for A12).
+22. **`CLI_JSON_SCHEMA` lives in `src/cli/`**, not `src/schema/format.ts` — it versions a
+    CLI transport envelope, not the wiki's on-disk format.
+23. **Usage errors honor `--json`.** When `--json` appears anywhere in argv, even a
+    pre-command parse failure emits the envelope (`ok:false`, populated `errors[]`) on
+    stdout and exits 1. `errors[]` elements are pinned to `{code, what, consequence,
+    fix?}`.
+24. **`doctor` gains the config-disabled-hook check** run-2 amendment 17 explicitly
+    assigned to run 3: it warns, naming the key, whenever a `hooks.<name>.enabled` is
+    found false.
+25. **Index-line format promoted to a code constant** in `src/schema/format.ts`
+    (`INDEX_LINE_PATTERN`, `parseIndexLine`, `formatIndexLine`) — run-2 amendment 26's
+    run-3 assignment, closing the "regex written twice" gap.
+26. **A12's enforcement claim is aspirational — recorded, not fixed.** Three of A12's
+    four named ESLint rules (`no-process-exit`, `no-exported-promise`, `no-stderr`) gate
+    only on `filename.includes('src/core/')` and never fire in `src/hooks/`, so
+    `eslint.config.js`'s exemption carve-out for `inbox-tx.ts` is a no-op — there was
+    never anything for it to exempt. Latent since run 2; recorded here in
+    `docs/WORLD_MODEL.md` and here so run 4 does not rediscover it. **Out of scope to
+    fix this run.**
+27. **README ordering is honest about when the magical moment lands.** `project.md`
+    only carries integrated content after the *first* `/mehmory:integrate`, so "the
+    session already knows my project" is true starting with the *second* session, not
+    the first. Decision 36 above, read literally, describes an ordering that doesn't
+    hold; the README amends it.
+28. **The permission-denial fork is documented where the user hits it** — the README's
+    integrate step states plainly that the permission prompt for writes to `~/.mehmory`
+    is expected, and that denying it is safe (entries wait in the inbox for the next
+    pass, per run-2 amendment 12).
+29. **Uninstall-vs-purge and the `--export` restore procedure live in
+    `docs/PRIVACY.md`**, with a one-line pointer from the README — uninstalling the
+    plugin is not the same operation as deleting data, and putting them in
+    `docs/UPGRADE.md` would have conflated the two.
+
+### Delivered-vs-approved differences (recorded at integration)
+
+Two items where what run 3 shipped is not what the approved plan's prose described. Both were
+decided by the user at the integration gate and are the contract from here on.
+
+30. **Purge confirmation is two invocations, not an interactive prompt — USER DECISION.**
+    Plan criterion 11 said "preview, then a typed token", which reads as one invocation that
+    prints a preview and then blocks on input. Criterion 2 forbids a command body from
+    writing to stdout at all (`src/cli/index.ts` owns every byte), so one invocation cannot
+    both preview and block. The delivered grammar: `mehmory purge <scope>` prints the preview
+    and the required token and exits **4**, having touched nothing; re-running with the token
+    piped in (`printf '%s\n' 'DELETE ALL' | mehmory purge --all`) deletes. `--yes` skips both.
+    U11's requirement — friction scaled to blast radius, no one-keystroke `y/N` — is met more
+    strongly by this than by a prompt. Documented in `docs/CLI.md` and `docs/PRIVACY.md`.
+31. **`purge --session <id>` is store-wide within its stated limit — USER DECISION.** It
+    clears matching un-integrated inbox entries from *every* inbox in the store, not only the
+    selected scope. Session ids are unique, so there is no cross-project false positive, and a
+    session that touched two projects is exactly where a scope-limited delete would silently
+    leave a copy behind. The un-integrated-entries limit (amendment item 4) is unchanged.

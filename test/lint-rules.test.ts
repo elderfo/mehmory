@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import customRules from '../eslint-rules/index.js';
 
 // Test the custom ESLint rules programmatically
-describe('custom ESLint rules (A3, A9, A11, U2)', () => {
+describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
   describe('A3: no-fs-imports', () => {
     const rule = customRules.rules['no-fs-imports'];
 
@@ -279,6 +279,42 @@ describe('custom ESLint rules (A3, A9, A11, U2)', () => {
         },
       });
       expect(reported).toBe(false);
+    });
+  });
+
+  describe('A17: no-cli-imports', () => {
+    const rule = customRules.rules['no-cli-imports'];
+
+    /** Run the rule over one (filename, import source) pair; true when it reported. */
+    function reportsOn(filename: string, source: string): boolean {
+      let reported = false;
+      const listeners = rule.create({
+        filename,
+        report: function () {
+          reported = true;
+        },
+      });
+      listeners.ImportDeclaration?.({ source: { value: source } });
+      return reported;
+    }
+
+    it('forbids src/core/ importing src/cli/', () => {
+      expect(reportsOn('/project/src/core/store.ts', '../cli/index.js')).toBe(true);
+      expect(reportsOn('/project/src/core/store.ts', '../cli/commands/search.js')).toBe(true);
+    });
+
+    it('forbids src/hooks/ importing src/cli/ — not only src/core/', () => {
+      expect(reportsOn('/project/src/hooks/stop.ts', '../cli/index.js')).toBe(true);
+    });
+
+    it('allows src/cli/ importing itself and the library', () => {
+      expect(reportsOn('/project/src/cli/index.ts', './commands/search.js')).toBe(false);
+      expect(reportsOn('/project/src/core/store.ts', './config.js')).toBe(false);
+      expect(reportsOn('/project/src/core/store.ts', 'node:path')).toBe(false);
+    });
+
+    it('does not fire on a package whose name merely contains "cli"', () => {
+      expect(reportsOn('/project/src/core/store.ts', 'cli-truncate')).toBe(false);
     });
   });
 });

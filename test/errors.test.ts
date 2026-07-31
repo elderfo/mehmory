@@ -9,6 +9,8 @@ import {
   failOpen,
   recordWarning,
   pendingWarnings,
+  peekWarnings,
+  setCliMode,
 } from '../src/core/errors.js';
 import { statePath, mehmoryHome } from '../src/core/home.js';
 
@@ -198,6 +200,110 @@ describe('failOpen', () => {
     const result = failOpen(fn, 'fallback', 'E_CONFIG_PARSE');
     expect(result).toBe('fallback');
   });
+
+  // U10 / run-1 amendment 16: failOpen catches an arbitrary exception and cannot know
+  // a remedy, so it must not synthesize a `Fix:` clause — its old one merely restated
+  // the `Details:` path formatUserError already appends.
+  it('synthesizes an informational error even for an actionable code', () => {
+    failOpen(
+      () => {
+        throw new Error('boom');
+      },
+      null,
+      'E_CONFIG_PARSE'
+    );
+
+    const logged = readFileSync(statePath('errors.log'), 'utf-8');
+    expect(logged).toContain('E_CONFIG_PARSE: boom');
+    expect(logged).not.toContain('See errors.log for details');
+  });
+});
+
+describe('peekWarnings (criterion 9)', () => {
+  beforeEach(() => {
+    const warningsPath = statePath('warnings.json');
+    if (existsSync(warningsPath)) rmSync(warningsPath);
+  });
+
+  it('returns the same lines as pendingWarnings without consuming them', () => {
+    recordWarning('E_LOCK_TIMEOUT');
+
+    const peeked = peekWarnings();
+    expect(peeked).toHaveLength(1);
+    expect(peeked[0]).toContain('E_LOCK_TIMEOUT');
+
+    // Peeking twice is still non-destructive...
+    expect(peekWarnings()).toEqual(peeked);
+    // ...and SessionStart's consuming read still finds the warning waiting.
+    expect(pendingWarnings()).toEqual(peeked);
+    expect(peekWarnings()).toEqual([]);
+  });
+
+  it('is empty when nothing is pending', () => {
+    expect(peekWarnings()).toEqual([]);
+  });
+});
+
+describe('CLI mode (criterion 14)', () => {
+  beforeEach(() => {
+    const warningsPath = statePath('warnings.json');
+    if (existsSync(warningsPath)) rmSync(warningsPath);
+  });
+
+  afterEach(() => {
+    setCliMode(false);
+  });
+
+  it('still logs but records no warning, so the next session is not polluted', () => {
+    setCliMode(true);
+    logError({
+      code: 'E_SEARCH_FAILED',
+      kind: 'informational',
+      what: 'scan failed',
+      consequence: 'No results were returned',
+    });
+
+    expect(readFileSync(statePath('errors.log'), 'utf-8')).toContain('E_SEARCH_FAILED');
+    expect(peekWarnings()).toEqual([]);
+  });
+
+  it('records warnings again once CLI mode is cleared', () => {
+    setCliMode(true);
+    setCliMode(false);
+    logError({
+      code: 'E_SEARCH_FAILED',
+      kind: 'informational',
+      what: 'scan failed',
+      consequence: 'No results were returned',
+    });
+
+    expect(peekWarnings()).toHaveLength(1);
+  });
+});
+
+describe('run-3 error codes (criterion 14)', () => {
+  it('registers the CLI surfaces with a Fix clause only where a command exists', () => {
+    expect(
+      formatUserError({
+        code: 'E_PURGE_FAILED',
+        kind: 'actionable',
+        what: 'commit failed after deleting 3 pages',
+        consequence: 'The store is left dirty',
+        fix: 'git -C /tmp/store commit -a',
+      })
+    ).toContain('Fix: git -C /tmp/store commit -a.');
+
+    for (const code of ['E_SEARCH_FAILED', 'E_TRANSCRIPT_READ', 'E_TRANSCRIPT_DIR_UNRESOLVED'] as const) {
+      const rendered = formatUserError({
+        code,
+        kind: 'informational',
+        what: 'x',
+        consequence: 'y',
+      });
+      expect(rendered).toContain(`MEHMORY ${code}`);
+      expect(rendered).not.toContain('Fix:');
+    }
+  });
 });
 
 describe('warning system (U2 channel)', () => {
@@ -284,14 +390,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 1: record a warning
     const proc1Output = execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('recorded'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );
@@ -299,14 +405,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 2: attempt to record again within rate-limit window (should skip)
     execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('attempt2'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );
@@ -326,14 +432,14 @@ describe('warning system (U2 channel)', () => {
 
     // Process 3: after rewinding, should record again
     execFileSync(
-      'node',
+      process.execPath,
       [
         '--input-type=module',
         '-e',
         `process.env.MEHMORY_HOME = '${tempHome}'; import('./dist/core/errors.js').then(m => { m.recordWarning('E_CONFIG_PARSE'); console.log('attempt3'); }).catch(e => { console.error('Error:', e.message); process.exit(1); });`,
       ],
       {
-        cwd: '/home/cgetsfred/Developer/mehmory',
+        cwd: process.cwd(),
         encoding: 'utf-8',
       }
     );

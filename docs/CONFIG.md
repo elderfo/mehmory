@@ -1,0 +1,191 @@
+# Configuration
+
+mehmory reads `<store home>/config.json`. `mehmory init` writes an **empty** `{}` there, not
+a fully-defaulted file — every key below has a real default that applies whether or not you
+set it, and a defaults file on disk would pin every current default forever, silently
+freezing out future default changes. Set only the keys you want to override; `loadConfig()`
+deep-merges your file over the defaults below.
+
+**Store home:** every path in this document is `~/.mehmory` by convention, but the real
+location is `$MEHMORY_HOME` when that environment variable is set. If you've set it, read
+every `~/.mehmory/...` path below as `$MEHMORY_HOME/...` instead.
+
+There are **14** config groups. Each is listed with its keys, real defaults, and whether the
+key is actually read anywhere in the codebase — "not honored" means the key exists in the
+schema and can be set, but nothing currently reads it, so setting it changes nothing.
+
+## `injection`
+
+```json
+{ "injection": { "budget_tokens": 800 } }
+```
+
+- `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
+  index content. At the default 800, the split is identity 200 / project 200 / index 400;
+  below 800, sub-budgets scale proportionally. **Honored** (`buildInjection`).
+
+## `decay`
+
+```json
+{ "decay": { "enabled": true, "archive_days": 60, "purge_days": 90 } }
+```
+
+- `enabled` — turns the mechanical decay pass on or off.
+- `archive_days` — index pages older than this move below the Archive divider.
+- `purge_days` — index pages older than this move into `archive/`.
+
+  All three **honored** (`decay.ts`).
+
+## `secrets`
+
+```json
+{ "secrets": { "patterns": ["/AKIA[0-9A-Z]{16}/", "..."], "whitelist": [] } }
+```
+
+- `patterns` — extra regexes (as `RegExp.prototype.toString()` strings, e.g. `"/foo/i"`),
+  **additive** to the five built-in patterns baked into `redact.ts` (AWS keys, GitHub
+  tokens, bearer tokens, private-key blocks, `.env`-shaped `KEY=value` lines). **The default
+  value of `patterns` is a literal mirror of those five built-in patterns** — meaning every
+  `redact()` call runs the built-ins *plus* five duplicates of themselves. This is correct
+  (redacting twice changes nothing) but a real, currently-unowned cost: every capture and
+  every injection pays for five redundant regex passes. Changing the default to `[]` is a
+  behavior change nobody has approved this run, so it's recorded here rather than silently
+  fixed.
+- `whitelist` — literal substrings exempt from redaction. **Whitelist semantics are precise
+  and matter**: an entry exempts a secret match only when the entry **fully contains** that
+  match. A partial overlap still redacts — a whitelist entry can never make the built-in
+  patterns catch less than they otherwise would. (The first implementation of this run had
+  it backwards and would have let whole AWS keys leak through a whitelist entry that merely
+  overlapped one; it was caught during verification and fixed with regression tests. Do not
+  "simplify" this back to substring-overlap exemption.)
+
+  Both keys **honored** (`redact()`, threaded via `config.secrets`, never read from disk
+  inside `redact` itself — loaded once per process and passed down).
+
+## `stop`
+
+```json
+{ "stop": { "capture_threshold": 15 } }
+```
+
+- `capture_threshold` — Stop-hook invocations since the last capture before the next capture
+  + block fires. **Honored** (`src/hooks/stop.ts`, `src/core/capture.ts`).
+
+## `hooks`
+
+```json
+{
+  "hooks": {
+    "session_start": { "enabled": true },
+    "user_prompt_submit": { "enabled": true },
+    "stop": { "enabled": true },
+    "pre_compact": { "enabled": true },
+    "session_end": { "enabled": true }
+  }
+}
+```
+
+Per-hook on/off switch, one object per hook (object rather than a bare boolean so a later run
+can add per-hook keys without another shape change). **Honored** — every hook checks its own
+`hooks.<name>.enabled` before doing anything. `mehmory doctor` warns, naming the key, whenever
+a hook is found disabled.
+
+## `inbox`
+
+```json
+{ "inbox": { "nudge_entries": 10, "nudge_bytes": 8192 } }
+```
+
+- `nudge_entries` / `nudge_bytes` — `SessionStart` nudges toward `/mehmory:integrate` once the
+  inbox reaches either threshold. **Honored** (`src/hooks/session-start.ts`).
+
+## `session_state`
+
+```json
+{ "session_state": { "max_age_days": 14 } }
+```
+
+- `max_age_days` — age at which `.state/<session-id>.json` files are swept during
+  `SessionStart` maintenance. **Honored** (`src/core/session.ts`).
+
+## `match`
+
+```json
+{ "match": { "jaccard": 0.7, "cache_ttl_ms": 300000 } }
+```
+
+- `jaccard` — similarity threshold against the cached prompt token set that skips a repeat
+  `UserPromptSubmit` pointer lookup.
+- `cache_ttl_ms` — how long that cache entry stays valid.
+
+  Both **honored** (`src/core/session.ts`, `src/hooks/user-prompt-submit.ts`).
+
+## `identity`
+
+```json
+{ "identity": { "aliases": {} } }
+```
+
+- `aliases` — maps a project key you no longer want (a split-off or merged repo) to the key
+  its memory should resolve to instead. **Honored** (`src/core/identity.ts`,
+  `src/core/scopes.ts`) — scope resolution checks aliases before matching a `--project`
+  selector.
+
+## `lock`
+
+```json
+{ "lock": { "retry_count": 50, "retry_delay_ms": 100, "stale_ms": 30000 } }
+```
+
+- **Not honored.** `src/core/lock.ts` uses its own hardcoded constants
+  (`LOCK_RETRY_COUNT`, `LOCK_RETRY_INTERVAL_MS`, `LOCK_STALE_MS` in `src/core/fs.ts`) that
+  happen to equal these defaults today. Changing any of these three keys in `config.json`
+  currently changes nothing — the values here describe the built-in behavior but do not
+  configure it.
+
+## `queue`
+
+```json
+{ "queue": { "max_claims": 3, "stale_ms": 30000, "claims_per_start": 1 } }
+```
+
+- `claims_per_start` — **honored** (`src/hooks/session-start.ts`, A16's maintenance-lane
+  bound: at most this many durable jobs claimed per `SessionStart`).
+- `max_claims` and `stale_ms` — **not honored.** `src/core/queue.ts` uses its own hardcoded
+  `QUEUE_STALE_MS` constant for staleness, and nothing reads `max_claims` at all. Setting
+  either currently changes nothing.
+
+## `distill`
+
+```json
+{ "distill": { "max_loss_percent": 10 } }
+```
+
+- `max_loss_percent` — the unparseable-line ratio above which a distill pass logs
+  `E_DISTILL_LOSSY`. **Honored** (`src/core/capture.ts`).
+
+## `log`
+
+```json
+{ "log": { "rotation_size_mb": 5 } }
+```
+
+- `rotation_size_mb` — **partially honored.** It controls rotation of `stats.jsonl`
+  (`src/core/stats.ts`). It does **not** control rotation of `errors.log`, which is hardcoded
+  to rotate at 5 MB in `src/core/errors.ts` regardless of this setting. If you change this
+  value expecting it to move the errors-log rotation point too, it will not.
+
+## `warning`
+
+```json
+{ "warning": { "rate_limit_ms": 3600000 } }
+```
+
+- `rate_limit_ms` — **not honored.** `src/core/errors.ts` rate-limits repeated warnings using
+  its own hardcoded one-hour constant. Setting this key currently changes nothing.
+
+## `MEHMORY_HOME`
+
+Not a `config.json` key — an environment variable that overrides the store's location for
+every command and hook. Every path example in this document, and in every other doc in this
+set, should be read relative to `$MEHMORY_HOME` when it's set, not literally `~/.mehmory`.

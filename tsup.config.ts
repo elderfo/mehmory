@@ -10,11 +10,17 @@ const hookEntries = existsSync('src/hooks')
       .map(f => `src/hooks/${f}`)
   : [];
 
+// Same existsSync guard as the hook bundles, and for the same reason: `src/cli/index.ts`
+// is written by a later unit, and a hard-coded entry for a file that does not exist yet
+// breaks the build for everyone else.
+const cliEntry = existsSync('src/cli/index.ts') ? ['src/cli/index.ts'] : [];
+
 export default defineConfig([
   {
-    // Library: hook internals are deliberately excluded — they are entrypoints for the
-    // plugin host, never importable library surface (A12).
-    entry: ['src/**/*.ts', '!src/**/*.test.ts', '!src/hooks/**'],
+    // Library: hook and CLI internals are deliberately excluded — they are entrypoints
+    // for the plugin host and for a user respectively, never importable library surface
+    // (A12, and A17 mirroring it).
+    entry: ['src/**/*.ts', '!src/**/*.test.ts', '!src/hooks/**', '!src/cli/**'],
     format: ['esm'],
     dts: true,
     sourcemap: true,
@@ -33,6 +39,23 @@ export default defineConfig([
           sourcemap: false,
           clean: false,
           outDir: 'hooks',
+          outExtension: () => ({ js: '.mjs' })
+        }
+      ]
+    : []),
+  ...(cliEntry.length > 0
+    ? [
+        {
+          // CLI: one self-contained ESM bundle invoked via package.json `bin`.
+          entry: { cli: 'src/cli/index.ts' },
+          format: ['esm' as const],
+          bundle: true,
+          noExternal: [/.*/],
+          splitting: false,
+          dts: false,
+          sourcemap: false,
+          clean: false,
+          outDir: 'dist',
           outExtension: () => ({ js: '.mjs' })
         }
       ]

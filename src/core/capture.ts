@@ -12,7 +12,7 @@ import { mehmoryHome } from './home.js';
 import { appendRecord, listDir, mkdir, pathExists, readFile, stat } from './fs.js';
 import { withProjectLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
-import { loadConfig } from './config.js';
+import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
 import { advanceSessionCursor, readSessionState } from './session.js';
 import { lastStatFor } from './stats.js';
@@ -22,9 +22,6 @@ import { estimateTokens } from './tokens.js';
 import { inboxEntryId, type InboxEntry } from '../schema/format.js';
 import { readTranscript } from '../transcript/reader.js';
 import { distill } from '../distill/distill.js';
-
-/** Stop invocations since the last capture that trigger a capture + block (spec gap 8). */
-export const STOP_CAPTURE_THRESHOLD = 15;
 
 /** Absolute paths of the files a hook reads or writes for one project scope. */
 export interface ScopePaths {
@@ -93,13 +90,20 @@ function readIfPresent(path: string): string {
 
 /**
  * Compose the SessionStart injection for a scope: identity + project + index, budget-
- * truncated by `buildInjection` (≤800 tokens), wrapped in an explicit data-only frame
- * so the model reads injected memory as facts rather than as instructions.
+ * truncated by `buildInjection` to `config.injection.budget_tokens`, wrapped in an
+ * explicit data-only frame so the model reads injected memory as facts rather than as
+ * instructions.
  *
  * Empty scope → empty text, so a paused or failed session and an empty store are
  * distinguishable (U7: silence is reserved for paused/failed).
+ *
+ * Config is a parameter so a caller that already loaded it (a hook, the CLI) does not
+ * pay a second disk read on the <1 s SessionStart path (criterion 13).
  */
-export function buildScopeInjection(key: string): ScopeInjection {
+export function buildScopeInjection(
+  key: string,
+  config: MehmoryConfig = loadConfig()
+): ScopeInjection {
   return failOpen(
     () => {
       const paths = scopePaths(key);
@@ -113,7 +117,7 @@ export function buildScopeInjection(key: string): ScopeInjection {
             pathExists(projectIndex) ? projectIndex : join(paths.globalDir, 'index.md')
           ),
         },
-      ]);
+      ], { budgetTokens: config.injection.budget_tokens, secrets: config.secrets });
 
       const sections: string[] = [];
       if (frame.identity) sections.push(`# identity\n${frame.identity}`);
@@ -151,7 +155,11 @@ export interface CaptureResult {
  * Never throws: an absent or unreadable transcript yields an empty delta plus an
  * `errors.log` entry.
  */
-export function distillDelta(sessionId: string, transcriptPath: string | undefined): InboxEntry[] {
+export function distillDelta(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  config: MehmoryConfig = loadConfig()
+): InboxEntry[] {
   if (!transcriptPath) return [];
 
   return failOpen(
@@ -160,7 +168,7 @@ export function distillDelta(sessionId: string, transcriptPath: string | undefin
       const { records, skipped, endOffset } = readTranscript(transcriptPath, cursor.offset);
 
       const total = records.length + skipped;
-      if (total > 0 && (skipped / total) * 100 > loadConfig().distill.max_loss_percent) {
+      if (total > 0 && (skipped / total) * 100 > config.distill.max_loss_percent) {
         logError({
           code: 'E_DISTILL_LOSSY',
           kind: 'informational',
@@ -170,9 +178,9 @@ export function distillDelta(sessionId: string, transcriptPath: string | undefin
       }
 
       const ts = new Date().toISOString();
-      const entries = distill(records, sessionId).map(entry => ({
+      const entries = distill(records, sessionId, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
-        text: redact(entry.content),
+        text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
         ts,
       }));
@@ -194,17 +202,22 @@ export function distillDelta(sessionId: string, transcriptPath: string | undefin
 export function captureDelta(
   sessionId: string,
   transcriptPath: string | undefined,
-  key: string
+  key: string,
+  config: MehmoryConfig = loadConfig()
 ): CaptureResult {
-  const entries = distillDelta(sessionId, transcriptPath);
+  const entries = distillDelta(sessionId, transcriptPath, config);
   if (entries.length === 0) return { appended: 0, entries };
   const { appended } = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
   return { appended, entries };
 }
 
 /** Build the inbox entry for an explicit `remember:` capture (redacted here, U5). */
-export function rememberEntry(text: string, sessionId: string): InboxEntry {
-  const clean = redact(text).trim();
+export function rememberEntry(
+  text: string,
+  sessionId: string,
+  config: MehmoryConfig = loadConfig()
+): InboxEntry {
+  const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
   return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, ts };
 }
@@ -244,7 +257,10 @@ export function distillJobPayload(
  *
  * @returns number of entries appended (0 for a malformed payload)
  */
-export function applyDistillJob(data: Record<string, unknown>): number {
+export function applyDistillJob(
+  data: Record<string, unknown>,
+  config: MehmoryConfig = loadConfig()
+): number {
   const key = data['key'];
   const raw = data['entries'];
   if (typeof key !== 'string' || !Array.isArray(raw)) return 0;
@@ -259,7 +275,7 @@ export function applyDistillJob(data: Record<string, unknown>): number {
       typeof e['src'] === 'string' &&
       typeof e['ts'] === 'string'
     ) {
-      entries.push({ id: e['id'], text: redact(e['text']), src: e['src'], ts: e['ts'] });
+      entries.push({ id: e['id'], text: redact(e['text'], config.secrets), src: e['src'], ts: e['ts'] });
     }
   }
   if (entries.length === 0) return 0;

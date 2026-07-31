@@ -42,7 +42,8 @@ export default [
       'custom/no-fs-imports': 'error',
       'custom/no-process-exit': 'error',
       'custom/no-exported-promise': 'error',
-      'custom/no-stderr': 'error'
+      'custom/no-stderr': 'error',
+      'custom/no-cli-imports': 'error'
     }
   },
   {

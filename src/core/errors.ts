@@ -17,7 +17,10 @@ import { statePath } from './home.js';
 // errors.ts needs only a specific append pattern and cannot depend on fs.ts.
 // This is allowed per A3's allowlist.
 
-// All error codes for run 1, declared upfront. No other subtask edits this.
+// The error registry. Run 1 declared it closed for that run; run 3 reopens it for the
+// surfaces the CLI adds (plan criterion 14). `kind` here is the code's default class —
+// the `fix` string itself is supplied per construction site, and U10 requires it to be
+// a runnable command, never prose.
 const ERROR_KINDS = {
   E_CONFIG_PARSE: 'actionable',
   E_LOCK_TIMEOUT: 'informational',
@@ -30,6 +33,17 @@ const ERROR_KINDS = {
   E_TRANSCRIPT_PARSE: 'informational',
   E_APPEND_FAILED: 'actionable',
   E_ATOMIC_WRITE: 'actionable',
+  // ─── Run 3 (CLI) ───
+  /** A `mehmory search` scan failed or was cut short. Nothing for the user to run. */
+  E_SEARCH_FAILED: 'informational',
+  /** A transcript file could not be read during `onboard`. That session is skipped. */
+  E_TRANSCRIPT_READ: 'informational',
+  /** A `~/.claude/projects/<encoded>` directory decodes to a path that is gone, so its
+   * project key cannot be resolved. Listed as unresolvable and skipped, never guessed. */
+  E_TRANSCRIPT_DIR_UNRESOLVED: 'informational',
+  /** `mehmory purge` deleted files but could not commit — the store is left dirty, and
+   * the remedy is a real command (`git -C <home> commit -a`). */
+  E_PURGE_FAILED: 'actionable',
 } as const satisfies Record<string, 'actionable' | 'informational'>;
 
 export type ErrorCode = keyof typeof ERROR_KINDS;
@@ -63,14 +77,41 @@ export function formatUserError(error: MehmoryError): string {
  * Includes the mtime so we can detect if the file was modified outside our tracking. */
 let logFileSizeState: { size: number; mtime: number } | null = null;
 
+/** True while the process is a CLI invocation rather than a hook. */
+let cliMode = false;
+
+/**
+ * Mark this process as a CLI invocation. `src/cli/index.ts` calls this at startup.
+ *
+ * Effect: `logError` still writes to `errors.log`, but stops calling `recordWarning`,
+ * so a failed `mehmory search` does not queue a warning line into the user's *next*
+ * Claude Code session — the CLI already reported the failure on its own stdout/stderr.
+ *
+ * A module flag, not a threaded parameter: `logError` has 17 call sites across 10
+ * files in `src/core/`, and A17 forbids `src/core/**` from importing `src/cli/**`.
+ */
+export function setCliMode(enabled: boolean): void {
+  cliMode = enabled;
+}
+
 /** Log an error to <home>/.state/errors.log with 5 MB rotation (1 generation kept). */
 export function logError(error: MehmoryError): void {
   const logPath = statePath('errors.log');
   const logDir = dirname(logPath);
 
-  // Ensure .state directory exists
-  if (!existsSync(logDir)) {
-    mkdirSync(logDir, { recursive: true });
+  // Ensure .state directory exists.
+  //
+  // Guarded because this is the one place a *reporting* failure could become the
+  // caller's failure: when the store path is unusable (a file where the directory
+  // should be, a read-only volume), `mkdirSync` throws ENOTDIR/EACCES straight out of
+  // `logError` and past every fail-open boundary — observed as an unhandled ENOTDIR
+  // stack from `mehmory init`. A2/A11 make logging best-effort, not load-bearing.
+  try {
+    if (!existsSync(logDir)) {
+      mkdirSync(logDir, { recursive: true });
+    }
+  } catch {
+    return; // nowhere to write; the caller still gets its typed error back
   }
 
   const timestamp = new Date().toISOString();
@@ -101,8 +142,13 @@ export function logError(error: MehmoryError): void {
     }
   }
 
-  // Append the line
-  appendFileSync(logPath, line, 'utf-8');
+  // Append the line. Guarded for the same reason as the mkdir above: an unwritable
+  // errors.log must not turn into the caller's exception.
+  try {
+    appendFileSync(logPath, line, 'utf-8');
+  } catch {
+    return;
+  }
 
   // Update tracked size by bytes written (encoded as UTF-8)
   const bytesWritten = Buffer.byteLength(line, 'utf-8');
@@ -123,11 +169,21 @@ export function logError(error: MehmoryError): void {
     }
   }
 
-  // Record warning for rate-limited injection (U2)
-  recordWarning(error.code);
+  // Record warning for rate-limited injection (U2). Skipped in CLI mode: the CLI
+  // reports its own failures, and a warning recorded here would surface in the user's
+  // next session instead.
+  if (!cliMode) recordWarning(error.code);
 }
 
-/** Safely call a function, returning fallback on any error and recording the error. */
+/**
+ * Safely call a function, returning fallback on any error and recording the error.
+ *
+ * The synthesized error is always `informational`, regardless of the code's registered
+ * kind: `failOpen` catches an arbitrary exception and has no idea what the user should
+ * run. Its previous `fix: 'See errors.log for details'` restated the `Details:` clause
+ * `formatUserError` already appends, which U10 forbids. A caller that *does* know the
+ * remedy builds the `actionable` error itself and calls `logError` directly.
+ */
 export function failOpen<T>(
   fn: () => T,
   fallback: T,
@@ -136,26 +192,12 @@ export function failOpen<T>(
   try {
     return fn();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const kind = ERROR_KINDS[code];
-
-    const error: MehmoryError =
-      kind === 'actionable'
-        ? {
-            code,
-            kind,
-            what: message,
-            consequence: 'Operation failed; using fallback',
-            fix: 'See errors.log for details',
-          }
-        : {
-            code,
-            kind,
-            what: message,
-            consequence: 'Operation failed; using fallback',
-          };
-
-    logError(error);
+    logError({
+      code,
+      kind: 'informational',
+      what: err instanceof Error ? err.message : String(err),
+      consequence: 'Operation failed; using fallback',
+    });
     return fallback;
   }
 }
@@ -262,22 +304,17 @@ export function recordWarning(code: ErrorCode): void {
   }
 }
 
-/** Get pending warnings as formatted strings for injection. Returns and clears. */
-export function pendingWarnings(): readonly string[] {
-  const warningsPath = statePath('warnings.json');
-
-  if (!existsSync(warningsPath)) {
-    return [];
-  }
+/** Render the warnings file to its user-facing lines. Empty on any read/parse failure. */
+function readWarningLines(warningsPath: string): readonly string[] {
+  if (!existsSync(warningsPath)) return [];
 
   try {
-    const data = readFileSync(warningsPath, 'utf-8');
-    const parsed: unknown = JSON.parse(data);
+    const parsed: unknown = JSON.parse(readFileSync(warningsPath, 'utf-8'));
     const warnings: WarningRecord[] = Array.isArray(parsed)
       ? parsed.filter(isWarningRecord)
       : [];
 
-    const lines = warnings.map(w => {
+    return warnings.map(w => {
       // w.code comes off disk as a bare string (see isWarningRecord) and is not
       // guaranteed to be a known ErrorCode; look it up as a partial map so an
       // unrecognized code still falls back to 'informational' instead of throwing
@@ -288,16 +325,39 @@ export function pendingWarnings(): readonly string[] {
         'informational';
       return `${w.code} (${kind}, ${String(w.count)} occurrences): see ~/.mehmory/.state/errors.log`;
     });
+  } catch {
+    return [];
+  }
+}
 
+/**
+ * Pending warnings **without** consuming them.
+ *
+ * `pendingWarnings()` is SessionStart's only warning channel and clears as it reads, so
+ * a read-only consumer (`mehmory status`, `mehmory doctor`) must use this instead — a
+ * CLI invocation that stole the warning would mean the user's next session never sees it.
+ */
+export function peekWarnings(): readonly string[] {
+  return readWarningLines(statePath('warnings.json'));
+}
+
+/** Get pending warnings as formatted strings for injection. Returns and clears. */
+export function pendingWarnings(): readonly string[] {
+  const warningsPath = statePath('warnings.json');
+  const lines = readWarningLines(warningsPath);
+
+  if (!existsSync(warningsPath)) return lines;
+
+  try {
     // Clear after reading (consume semantics for U2)
     const emptyJson = JSON.stringify([], null, 2);
     writeFileSync(warningsPath, emptyJson, 'utf-8');
     // Update cache since we just modified the file
-    const contentHash = hashFileContents(emptyJson);
-    warningsCacheState = { warnings: [], contentHash };
-
-    return lines;
+    warningsCacheState = { warnings: [], contentHash: hashFileContents(emptyJson) };
   } catch {
-    return [];
+    // Unwritable state dir: the lines were still read, so report them once rather
+    // than swallowing them (A2).
   }
+
+  return lines;
 }

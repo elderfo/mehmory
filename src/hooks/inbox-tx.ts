@@ -20,6 +20,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { loadConfig } from '../core/config.js';
 import { statePath } from '../core/home.js';
 import { atomicWrite, pathExists, readFile, remove } from '../core/fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from '../core/inbox.js';
@@ -69,10 +70,13 @@ function doAppend(input: Record<string, unknown>): unknown {
   const raw = input['entries'];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
 
+  // Loaded once for the whole append, not per entry: `redact` never reads config
+  // itself (criterion 13).
+  const secrets = loadConfig().secrets;
   const ts = new Date().toISOString();
   const entries: InboxEntry[] = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
-    const text = redact(requireString(entry, 'text'));
+    const text = redact(requireString(entry, 'text'), secrets);
     const src = requireString(entry, 'src');
     return { id: inboxEntryId(src + text), text, src, ts };
   });

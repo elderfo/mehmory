@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-tag:
+    runs-on: ubuntu-latest
+    # Force-pushing the tag below (to attach the built hook bundles) needs write
+    # access to repo contents; the default GITHUB_TOKEN grants that only if the repo
+    # settings allow it, so it's pinned explicitly here rather than left implicit.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # The plugin marketplace installs directly from this git repo, and `hooks/*.mjs`
+      # is gitignored (it's a build artifact, not source). Without this, a tag would
+      # ship a hooks.json pointing at five files that don't exist in the tagged tree.
+      # Bundles are tag-only artifacts, never committed on a branch — see
+      # docs/WORLD_MODEL.md's run-3 ADR candidate for the alternatives this rejected.
+      - name: Force-add built hook bundles into the tagged tree
+        run: |
+          git config user.name "mehmory-release"
+          git config user.email "release@users.noreply.github.com"
+          git add -f hooks/*.mjs
+          git commit -m "chore: include built hook bundles for ${GITHUB_REF_NAME}"
+          git tag -f "$GITHUB_REF_NAME"
+          git push origin "$GITHUB_REF_NAME" --force
+
+  # Inert this run: no npm token exists yet and no tag is meant to publish.
+  #
+  # GitHub does not provide the `secrets` context inside a job-level `if:` — only
+  # `github`, `needs`, `vars` and `inputs` are available there (confirmed against
+  # GitHub's own context-availability documentation:
+  # https://docs.github.com/en/actions/learn-github-actions/contexts). A job-level
+  # `if: ... && secrets.NPM_TOKEN != ''` doesn't skip the job — it fails the whole
+  # workflow to load, taking `build-tag` down with it. So the job-level `if:` below
+  # only names the tag ref (which *is* available there), and the token check moves
+  # to the one step that actually needs it: `env` *is* available in a step-level
+  # `if:`, so the publish step's own `env:` block pulls the secret in, and its `if:`
+  # reads that env var instead of `secrets` directly.
+  publish-npm:
+    needs: build-tag
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

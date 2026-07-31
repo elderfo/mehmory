@@ -209,10 +209,11 @@ export function appendRecord(
 
   const createErrorResult = (caught: unknown): MehmoryError => ({
     code: 'E_APPEND_FAILED',
-    kind: 'actionable',
+    // Informational: "check file permissions and disk space" is prose, not a runnable
+    // command, and U10 admits only the latter under `Fix:`.
+    kind: 'informational',
     what: caught instanceof Error ? caught.message : String(caught),
     consequence: 'Record was not appended',
-    fix: 'Check file permissions and disk space',
   });
 
   // Determine if we need the lock path

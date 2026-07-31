@@ -227,3 +227,100 @@ Items 25–28 were discovered during implementation and are recorded here in ful
     can be separate process invocations minutes apart. `src/core/inbox.ts` stays
     stateless and takes an explicit id list. `clear` consumes and deletes the mapping, so
     a replayed clear fails loudly instead of removing entries captured since.
+
+---
+
+## Architectural Decisions — Run 3
+
+Established in run 3 (CLI, search, docs, CI). Binding on run 4.
+
+### A17. The CLI is a second thin consumer, not a second implementation
+
+`src/cli/` owns argument parsing, exit codes, stdout/stderr and the `--json` envelope;
+every behavior lives in `src/core|schema|distill`. Extends A12 to the run's second
+consumer, upholding A1. The core's `no-process-exit` and `no-stderr` rules gate on
+`filename.includes('src/core/')` (`eslint-rules/index.js`), so the CLI needs no rule
+change to exit or write stderr; a new import-boundary rule (`custom/no-cli-imports`)
+keeps the dependency edge from inverting — `src/core/**` and `src/hooks/**` may never
+import `src/cli/**`.
+
+**Rejected:** a CLI reimplementing distill/inbox/decay logic (two implementations of the
+product's core — the exact failure A12 exists against); CLI code under `src/hooks/`
+beside `inbox-tx.ts` (that file is a skill helper, not a user-facing binary).
+
+### A18. Search is one scan over pages + archive + log; there is no index
+
+`src/core/search.ts` extends the landed matcher (`match.ts`) rather than adding a second
+retrieval path. `matchPages()` keeps its existing signature and scope for the
+`UserPromptSubmit` hook.
+
+**Rejected:** FTS5 with a SQLite index (the spec's own original choice, declined at the
+gate) — the degraded grep fallback would have had to exist regardless and `matchPages`
+cannot reach `log.md`, so the index would have been a strict second implementation of a
+scan the run had to write anyway; it also required a named exception to A3
+(`node:sqlite` performs file I/O outside `fs.ts`, which the `fs`/`node:fs` lint rule
+cannot catch), an index schema version, a cold-build bound, and a corruption path —
+substantial machinery for a corpus the spec itself caps at ≤1500 tokens per page. The
+spec's SessionEnd rebuild job specifically: `session-start.ts` filters `claimJob()` by
+job type, so an `fts-rebuild` job would never be claimed at any `claims_per_start` value.
+A resident indexer daemon (A16: nothing in v1 owns a resident process). *Deferred, with a
+threshold* (not rejected outright): FTS returns when the scan measurably exceeds ~1s on a
+real store, or the 2000-file scan cap fires often enough that `warnings` becomes routine.
+
+### A19. mehmory deletes from the working tree and never rewrites the user's git history
+
+`mehmory purge` removes files, commits the removal, and prints the `git filter-repo`
+recipe for anyone who wants history rewritten too.
+
+**Rejected:** built-in history rewriting — the honest reason is **tool dependency**
+(`git filter-repo` must be detected or vendored, and a failed rewrite has no fail-open
+answer), not "it's the user's repo to protect": the store repo is created by
+`initStore()`, has no remote, and mehmory already overrides `commit.gpgsign` on it.
+Silent working-tree deletion without disclosure (the privacy claim would then be false,
+which is worse than stating the limitation).
+
+### A20. Narrow, read-only carve-out on A4: `doctor` may read `schema_version`
+
+`doctor` reads `schema_version` from the store's `SCHEMA.md`, compared against the
+**embedded template constant in `store.ts`** — per the spec's drift-warning intent, not
+against `FORMAT_VERSION`, which versions the machine format and would fire a warning
+with no correct user action on every code-only bump. One key, read-only, warning-only.
+
+**Rejected:** dropping the drift warning (it is the only upgrade signal the user gets —
+see `docs/UPGRADE.md`); parsing `SCHEMA.md` generally (exactly what A4 forbids, and why).
+
+### A21. Config is threaded, never ambient
+
+Functions that need configuration take it as a parameter; no core function calls
+`loadConfig()` internally. `buildInjection()` accepts the config and passes it to
+`redact()`; one loader call per process or hook invocation.
+
+**Rejected:** `loadConfig()` inside `redact()` (a disk read and `JSON.parse` in a
+previously pure function called three times per injection, on the <1s `SessionStart`
+path — the hot-path config re-read a reviewer already caught once in run 2).
+
+**WORLD_MODEL check.** A17 upholds A1/A12 and does not touch A3 (`src/cli/` uses the
+existing `fs.ts` surface); A18 upholds A2/A3/A9/A16 — with FTS dropped there is no I/O
+outside `fs.ts` and no sync/async question; A19 upholds A2; A20 is a **named, narrow
+exception** to A4, recorded as such; A21 upholds A2 and A9. A11 is unthreatened: scoped
+to core by its own text.
+
+**Amendment to A6.** `initStore()`'s owned layout grows: it now also creates, when
+absent, `~/.mehmory/.gitignore` (containing `.state/`) and an **empty** `{}`
+`config.json`. Ownership does not move — `src/core/store.ts` still owns `initStore()` —
+the layout it owns just grows by two files.
+
+**Note on A12's enforcement claim.** A12 (run 2) states the eslint boundary rules
+`no-exported-promise`, `no-process-exit`, and `no-stderr` "extend to `src/hooks/`." In
+practice, all three gate on `filename.includes('src/core/')` in
+`eslint-rules/index.js` and **never fire in `src/hooks/`** — only the
+`fs`/`no-cli-imports` boundary rules genuinely extend there. Consequently
+`eslint.config.js`'s rule exemption carved out for `inbox-tx.ts` (A15's bundled helper,
+which legitimately needs to write to stderr and exit non-zero) is a no-op: there was
+never anything active in `src/hooks/` for it to exempt. This is latent, not a regression
+from anything run 3 touched, and it is recorded here **so run 4 does not rediscover
+it** — fixing the rule scope is explicitly out of scope for run 3.
+
+**Licensing note.** `package.json` declared `license: MIT` before this run but shipped no
+`LICENSE` file to back it — an undeclared gap, not a deliberate choice. Run 3 adds
+`LICENSE` (MIT, confirmed by the user this run).

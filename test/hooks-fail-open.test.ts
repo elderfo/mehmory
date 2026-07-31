@@ -15,7 +15,14 @@ import {
 } from './hook-fixture.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { sessionStatePath, updateSessionState } from '../src/core/session.js';
-import { STOP_CAPTURE_THRESHOLD } from '../src/core/capture.js';
+import { loadConfig } from '../src/core/config.js';
+
+/** The Stop capture threshold now comes from config (`stop.capture_threshold`).
+ * Read inside the test, not at import time — MEHMORY_HOME is only hermetic once
+ * setup.ts's beforeEach has run. */
+function stopThreshold(): number {
+  return loadConfig().stop.capture_threshold;
+}
 
 const HOOKS: HookName[] = [
   'session-start',
@@ -36,7 +43,7 @@ function inputFor(hook: HookName, transcript: string): Record<string, unknown> {
 /** Stop only captures at the threshold; put it there so its write path is exercised. */
 function primeStop(hook: HookName): void {
   if (hook !== 'stop') return;
-  updateSessionState('s1', state => ({ ...state, stop_count: STOP_CAPTURE_THRESHOLD - 1 }));
+  updateSessionState('s1', state => ({ ...state, stop_count: stopThreshold() - 1 }));
 }
 
 describe('hooks fail open', () => {

@@ -14,7 +14,14 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { readSessionState, updateSessionState } from '../src/core/session.js';
-import { STOP_CAPTURE_THRESHOLD } from '../src/core/capture.js';
+import { loadConfig } from '../src/core/config.js';
+
+/** The Stop capture threshold now comes from config (`stop.capture_threshold`).
+ * Read inside the test, not at import time — MEHMORY_HOME is only hermetic once
+ * setup.ts's beforeEach has run. */
+function stopThreshold(): number {
+  return loadConfig().stop.capture_threshold;
+}
 
 const TRANSCRIPT = [
   { text: 'We decided to use fly.io for deploys.' },
@@ -26,7 +33,7 @@ const TRANSCRIPT = [
 function primeCounter(sessionId: string): void {
   updateSessionState(sessionId, state => ({
     ...state,
-    stop_count: STOP_CAPTURE_THRESHOLD - 1,
+    stop_count: stopThreshold() - 1,
   }));
 }
 
@@ -120,7 +127,7 @@ describe('Stop hook', () => {
 
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('');
-    expect(readSessionState('s1').stop_count).toBe(STOP_CAPTURE_THRESHOLD - 1);
+    expect(readSessionState('s1').stop_count).toBe(stopThreshold() - 1);
   });
 
   it('stays silent when PreCompact already reset the counter', () => {
