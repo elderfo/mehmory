@@ -102,6 +102,32 @@ describe('secrets.whitelist reaches redact', () => {
     expect(result).not.toContain('[REDACTED]');
   });
 
+  // Regression: the first implementation split the text at whitelisted literals and
+  // redacted the gaps, which broke the pattern's contiguous match and leaked the
+  // WHOLE secret. A whitelist entry overlapping a secret must never shrink what the
+  // built-in patterns catch — redaction wins on any partial overlap.
+  it('redacts a secret when a whitelist entry is only a fragment of it', () => {
+    const result = redact(`key ${AWS_KEY} here`, { whitelist: ['FODNN7'] });
+    expect(result).toBe('key [REDACTED] here');
+    expect(result).not.toContain(AWS_KEY);
+  });
+
+  it('redacts a multi-line private key when a whitelist entry sits inside it', () => {
+    const block = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      'MIIEowIBAAKCAQEAxSAFE_LITERALyGkQ',
+      'nOtRealKeyMaterialAtAll1234567890',
+      '-----END RSA PRIVATE KEY-----',
+    ].join('\n');
+
+    const result = redact(`before\n${block}\nafter`, { whitelist: ['SAFE_LITERAL'] });
+
+    expect(result).toBe('before\n[REDACTED]\nafter');
+    for (const fragment of ['BEGIN RSA', 'MIIEowIBAAK', 'nOtRealKeyMaterial', 'SAFE_LITERAL']) {
+      expect(result).not.toContain(fragment);
+    }
+  });
+
   it('still redacts non-whitelisted secrets in the same text', () => {
     writeConfig({ secrets: { whitelist: [AWS_KEY] } });
     const result = redact(

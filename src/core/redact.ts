@@ -114,20 +114,61 @@ function compileUserPatterns(patterns: readonly string[]): RegExp[] {
   return compiled;
 }
 
-/** Escape a literal for use inside a RegExp. */
-function escapeLiteral(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Half-open `[start, end)` character range of one whitelisted literal occurrence. */
+type Range = readonly [start: number, end: number];
+
+/** Every occurrence of every whitelist literal in `text`. */
+function whitelistRanges(text: string, whitelist: readonly string[]): Range[] {
+  const ranges: Range[] = [];
+  for (const literal of whitelist) {
+    let from = text.indexOf(literal);
+    while (from !== -1) {
+      ranges.push([from, from + literal.length]);
+      from = text.indexOf(literal, from + 1);
+    }
+  }
+  return ranges;
 }
 
-function applyPatterns(text: string, extra: readonly RegExp[]): string {
+/**
+ * True only when a whitelisted literal **fully contains** this match.
+ *
+ * Redaction wins on any partial overlap. A whitelist entry that is merely a fragment
+ * of a secret — `FODNN7` inside an AWS key, a safe line inside a private-key block —
+ * exempts nothing, so no whitelist value can ever reduce what the patterns catch.
+ */
+function isExempt(start: number, end: number, ranges: readonly Range[]): boolean {
+  return ranges.some(([from, to]) => from <= start && end <= to);
+}
+
+function applyPatterns(
+  text: string,
+  extra: readonly RegExp[],
+  whitelist: readonly string[]
+): string {
   let result = text;
-  for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(pattern, REDACTION_PLACEHOLDER);
-  }
-  for (const pattern of extra) {
+
+  for (const pattern of [...SECRET_PATTERNS, ...extra]) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, REDACTION_PLACEHOLDER);
+
+    if (whitelist.length === 0) {
+      result = result.replace(pattern, REDACTION_PLACEHOLDER);
+      continue;
+    }
+
+    // Recomputed per pattern: an earlier pattern's replacement shifts later offsets.
+    const ranges = whitelistRanges(result, whitelist);
+    result = result.replace(pattern, (...args: unknown[]): string => {
+      const match = String(args[0]);
+      // String.replace passes (match, ...groups, offset, whole); none of these
+      // patterns use named groups, so the offset is always second from the end.
+      const offset = Number(args[args.length - 2]);
+      return isExempt(offset, offset + match.length, ranges)
+        ? match
+        : REDACTION_PLACEHOLDER;
+    });
   }
+
   return result;
 }
 
@@ -151,17 +192,12 @@ export function redact(text: string, options: RedactOptions = {}): string {
   try {
     const extra = options.patterns ? compileUserPatterns(options.patterns) : [];
     const whitelist = (options.whitelist ?? []).filter(entry => entry !== '');
-    if (whitelist.length === 0) return applyPatterns(text, extra);
 
-    // ponytail: whitelisted literals are cut out and the gaps redacted separately,
-    // so a whitelisted string can never be matched. Ceiling: a multi-line pattern
-    // spanning a whitelisted literal no longer matches. Upgrade path is
-    // match-then-restore if that ever bites.
-    const splitter = new RegExp(`(${whitelist.map(escapeLiteral).join('|')})`);
-    return text
-      .split(splitter)
-      .map((segment, i) => (i % 2 === 1 ? segment : applyPatterns(segment, extra)))
-      .join('');
+    // Patterns run first; the whitelist can only spare a match it fully contains.
+    // ponytail: whitelist ranges are recomputed per pattern — O(patterns × entries)
+    // indexOf scans. Ceiling: large whitelists on large inputs. Upgrade path is one
+    // combined alternation regex if that ever shows up in a profile.
+    return applyPatterns(text, extra, whitelist);
   } catch {
     // On any regex error or unexpected failure, return original text unchanged
     // Better to leak a secret than crash the system
