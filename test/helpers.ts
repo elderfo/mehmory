@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
 /**
  * Create a temporary directory for tests with a prefixed unique name.
@@ -46,7 +46,57 @@ export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessE
         'Call this inside a test, after the setup hook has created one.'
     );
   }
-  return { ...process.env, MEHMORY_HOME: home, HOME: home, ...extra };
+
+  const env = { ...process.env, MEHMORY_HOME: home, HOME: home, ...extra };
+
+  // `extra` is applied last so a test can point HOME at a fake ~/.claude (see
+  // createFakeClaudeHome) — which also means `extra` can punch straight through the
+  // redirect above. Re-check afterwards: this is the only guard a CLI subprocess gets,
+  // since the in-process MEHMORY_HOME check in setup.ts cannot see a child.
+  for (const key of ['MEHMORY_HOME', 'HOME'] as const) {
+    if (!isHermeticHome(env[key])) {
+      throw new Error(
+        `hermeticEnv: ${key} would be ${env[key]} in the child, not a temp dir. ` +
+          'A spawned CLI must not be able to reach the real ~/.mehmory or ~/.claude.'
+      );
+    }
+  }
+
+  return env;
+}
+
+/**
+ * Encode a filesystem path the way Claude Code names its transcript directories:
+ * every path separator and `.` becomes `-`, so `/home/u/dev/repo` becomes
+ * `-home-u-dev-repo` under `~/.claude/projects/`.
+ */
+export function encodeClaudeProjectDir(projectPath: string): string {
+  return projectPath.replace(/[/\\.]/g, '-');
+}
+
+/**
+ * Build a fake `~/.claude` tree and return the HOME directory that contains it —
+ * pass it as `hermeticEnv({ HOME: … })` when spawning, or set `process.env.HOME`.
+ *
+ * `projects` maps a project's real filesystem path to its sessions, and each session
+ * maps a session id to the JSONL transcript lines it holds. Directories are created
+ * under `<home>/.claude/projects/<encoded>/<session-id>.jsonl`.
+ *
+ * A project path with **no** sessions still gets its directory, which is how a test
+ * builds the `unresolvable` case: a decoded path that no longer exists on disk.
+ */
+export function createFakeClaudeHome(
+  projects: Record<string, Record<string, readonly string[]>>
+): string {
+  const home = createTempDir('mehmory-claude');
+  for (const [projectPath, sessions] of Object.entries(projects)) {
+    const dir = join(home, '.claude', 'projects', encodeClaudeProjectDir(projectPath));
+    mkdirSync(dir, { recursive: true });
+    for (const [sessionId, lines] of Object.entries(sessions)) {
+      writeFileSync(join(dir, `${sessionId}.jsonl`), lines.map(l => l + '\n').join(''));
+    }
+  }
+  return home;
 }
 
 /**

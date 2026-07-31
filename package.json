@@ -3,6 +3,24 @@
   "version": "0.0.1",
   "type": "module",
   "description": "Memory abstraction layer for Claude Code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elderfo/mehmory.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "mehmory": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "hooks",
+    "skills",
+    "assets",
+    ".claude-plugin"
+  ],
   "exports": {
     "./core/home": "./dist/core/home.js",
     "./core/errors": "./dist/core/errors.js",
@@ -22,6 +40,7 @@
     "./core/redact": "./dist/core/redact.js",
     "./core/tokens": "./dist/core/tokens.js",
     "./core/injection": "./dist/core/injection.js",
+    "./core/scopes": "./dist/core/scopes.js",
     "./schema/format": "./dist/schema/format.js",
     "./transcript/reader": "./dist/transcript/reader.js",
     "./distill/patterns": "./dist/distill/patterns.js",

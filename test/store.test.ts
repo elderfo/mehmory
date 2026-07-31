@@ -13,6 +13,39 @@ import { createTempDir, cleanupTempDir } from './helpers.js';
 
 // Note: test/setup.ts already guards MEHMORY_HOME to prevent touching ~/.mehmory
 
+describe('initStore writes .gitignore and an empty config.json (A6 amendment)', () => {
+  let testHome: string;
+
+  beforeEach(() => {
+    testHome = createTempDir('mehmory-store-init');
+    process.env.MEHMORY_HOME = testHome;
+  });
+
+  afterEach(() => {
+    cleanupTempDir(testHome);
+  });
+
+  it('creates both files with the specified contents', () => {
+    initStore();
+
+    expect(readFile(join(testHome, '.gitignore'))).toBe('.state/\n');
+    // Empty, not fully defaulted: a defaults file on disk would pin every default
+    // forever and make a later default change a silent no-op for existing users.
+    expect(JSON.parse(readFile(join(testHome, 'config.json')))).toEqual({});
+  });
+
+  it('stays idempotent — a second run overwrites neither', () => {
+    initStore();
+    atomicWrite(join(testHome, '.gitignore'), '.state/\nscratch/\n');
+    atomicWrite(join(testHome, 'config.json'), '{"decay":{"enabled":false}}');
+
+    initStore();
+
+    expect(readFile(join(testHome, '.gitignore'))).toContain('scratch/');
+    expect(readFile(join(testHome, 'config.json'))).toContain('"enabled":false');
+  });
+});
+
 describe('initStore', () => {
   let testHome: string;
 

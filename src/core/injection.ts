@@ -6,12 +6,11 @@
  * data-only wrapper so the model treats injected memory as facts, not instructions.
  */
 
-import { redact } from './redact.js';
+import { redact, type RedactOptions } from './redact.js';
 import {
   estimateTokens,
   INJECTION_IDENTITY_TOKENS,
   INJECTION_PROJECT_TOKENS,
-  INJECTION_INDEX_TOKENS,
   INJECTION_BUDGET_TOKENS,
   TOKENS_PER_CHAR,
 } from './tokens.js';
@@ -43,20 +42,48 @@ interface TruncationResult {
   tokens: number;
 }
 
+/** Config the injection path needs, threaded from a single `loadConfig()` per
+ * process (criterion 13) — this function never reads config from disk itself. */
+export interface InjectionOptions {
+  /** `config.injection.budget_tokens`. Defaults to `INJECTION_BUDGET_TOKENS` (800). */
+  readonly budgetTokens?: number;
+  /** `config.secrets`, forwarded to `redact()`. */
+  readonly secrets?: RedactOptions;
+}
+
 /**
  * Build an injection frame from identity, project, and index parts.
  *
  * Contract:
- * - Allocates identity/project/index budget per Spec gap 1: 200/200/400 = 800 total
+ * - Allocates identity/project/index budget in the 200/200/400 ratio of Spec gap 1,
+ *   scaled to `budgetTokens` (default 800, so the default split is exactly 200/200/400)
  * - Truncates in priority order: index detail first, then project, then identity last
  * - Identity is never dropped entirely (may be truncated, but always present)
  * - Data-only framing is applied AFTER truncation (framing never pushes over budget)
  * - Return frame always satisfies totalTokens ≤ budget_tokens
  *
  * @param parts — Array of InjectionPart with label, content
+ * @param options — Threaded config (budget, secret filter settings)
  * @returns InjectionFrame with truncated content
  */
-export function buildInjection(parts: InjectionPart[]): InjectionFrame {
+export function buildInjection(
+  parts: InjectionPart[],
+  options: InjectionOptions = {}
+): InjectionFrame {
+  const budget =
+    options.budgetTokens !== undefined && options.budgetTokens > 0
+      ? options.budgetTokens
+      : INJECTION_BUDGET_TOKENS;
+  // Sub-budgets keep the spec's 1:1:2 ratio at any total, so a lowered
+  // budget_tokens tightens each part instead of leaving three fixed caps that
+  // together exceed it and can only be met by the last-resort trim loop.
+  const scale = budget / INJECTION_BUDGET_TOKENS;
+  const identityBudget = Math.floor(INJECTION_IDENTITY_TOKENS * scale);
+  const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
+  // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the three
+  // sub-budgets always sum to exactly `budget` after flooring.
+  const indexBudget = budget - identityBudget - projectBudget;
+
   // Start with defaults (empty but safe)
   let identityContent = '';
   let projectContent = '';
@@ -64,7 +91,7 @@ export function buildInjection(parts: InjectionPart[]): InjectionFrame {
 
   // Extract parts by label
   for (const part of parts) {
-    const redacted = redact(part.content);
+    const redacted = redact(part.content, options.secrets);
     switch (part.label) {
       case 'identity':
         identityContent = redacted;
@@ -92,26 +119,26 @@ export function buildInjection(parts: InjectionPart[]): InjectionFrame {
   let iterations = 0;
 
   while (
-    identityTokens + projectTokens + indexTokens > INJECTION_BUDGET_TOKENS &&
+    identityTokens + projectTokens + indexTokens > budget &&
     iterations < maxIterations
   ) {
     iterations++;
 
     // Priority 1: Truncate index detail first
-    if (indexTokens > INJECTION_INDEX_TOKENS) {
-      const result = truncateToTokens(indexTruncated, INJECTION_INDEX_TOKENS);
+    if (indexTokens > indexBudget) {
+      const result = truncateToTokens(indexTruncated, indexBudget);
       indexTruncated = result.text;
       indexTokens = result.tokens;
     }
     // Priority 2: Truncate project
-    else if (projectTokens > INJECTION_PROJECT_TOKENS) {
-      const result = truncateToTokens(projectTruncated, INJECTION_PROJECT_TOKENS);
+    else if (projectTokens > projectBudget) {
+      const result = truncateToTokens(projectTruncated, projectBudget);
       projectTruncated = result.text;
       projectTokens = result.tokens;
     }
     // Priority 3: Truncate identity (but keep at least some content)
-    else if (identityTokens > INJECTION_IDENTITY_TOKENS) {
-      const result = truncateToTokens(identityTruncated, INJECTION_IDENTITY_TOKENS);
+    else if (identityTokens > identityBudget) {
+      const result = truncateToTokens(identityTruncated, identityBudget);
       identityTruncated = result.text;
       identityTokens = result.tokens;
     } else {

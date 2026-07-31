@@ -6,6 +6,8 @@ import {
   FRONTMATTER_KEYS,
   FRONTMATTER_DIVIDER,
   USER_ERROR_TEMPLATE,
+  formatIndexLine,
+  parseIndexLine,
 } from '../src/schema/format.js';
 
 describe('format constants', () => {
@@ -98,5 +100,27 @@ describe('USER_ERROR_TEMPLATE', () => {
 
     expect(text).not.toContain('Fix:');
     expect(text).not.toContain('rm something');
+  });
+});
+
+/** Run-2 amendment 26, promoted from decay.ts's heuristic to a format constant. */
+describe('index line format', () => {
+  it('round-trips slug and summary', () => {
+    const line = formatIndexLine('deploy-process', 'staging via GitHub Actions');
+    expect(line).toBe('- [[deploy-process]] — staging via GitHub Actions');
+    expect(parseIndexLine(line)).toEqual({
+      slug: 'deploy-process',
+      summary: 'staging via GitHub Actions',
+    });
+  });
+
+  it('parses a line that carries no summary', () => {
+    expect(parseIndexLine('- [[deploy-process]]')?.slug).toBe('deploy-process');
+  });
+
+  it('rejects prose that merely names a page', () => {
+    expect(parseIndexLine('The deploy-process page covers staging.')).toBeUndefined();
+    expect(parseIndexLine('## Archive')).toBeUndefined();
+    expect(parseIndexLine('')).toBeUndefined();
   });
 });

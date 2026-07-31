@@ -104,12 +104,14 @@ export function runHook(
     }
   } catch (err) {
     try {
+      // Informational, not actionable: there is no command that fixes an arbitrary
+      // hook exception, and the old `fix` merely restated the `Details: <errors.log>`
+      // clause `formatUserError` already appends (U10 / run-1 amendment 16).
       logError({
         code: 'E_APPEND_FAILED',
-        kind: 'actionable',
+        kind: 'informational',
         what: `${event} hook failed: ${err instanceof Error ? err.message : String(err)}`,
         consequence: 'This hook produced no output; the session is unaffected',
-        fix: 'See ~/.mehmory/.state/errors.log',
       });
     } catch {
       // The store itself is unwritable. Nothing left to do but stay silent.

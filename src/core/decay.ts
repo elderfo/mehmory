@@ -15,7 +15,12 @@ import { join } from 'node:path';
 import { atomicWrite, listDir, mkdir, pathExists, readFile, rename, stat } from './fs.js';
 import { loadConfig } from './config.js';
 import { failOpen } from './errors.js';
-import { ARCHIVE_DIR, ARCHIVE_DIVIDER, FRONTMATTER_DIVIDER } from '../schema/format.js';
+import {
+  ARCHIVE_DIR,
+  ARCHIVE_DIVIDER,
+  FRONTMATTER_DIVIDER,
+  parseIndexLine,
+} from '../schema/format.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -52,14 +57,15 @@ function ageDays(contents: string, now: number): number | null {
   return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
 }
 
-/** True when an index line refers to this page (by `[[wikilink]]`, filename, or path). */
+/**
+ * True when an index line refers to this page.
+ *
+ * Association is by the `format.ts` grammar (run-2 amendment 26 promoted this from
+ * run 2's heuristic), so a prose line that merely *names* a page is no longer
+ * mistaken for that page's index line.
+ */
 function lineRefersTo(line: string, pageFile: string): boolean {
-  const slug = pageFile.replace(/\.md$/, '');
-  return (
-    line.includes(`[[${slug}]]`) ||
-    line.includes(pageFile) ||
-    new RegExp(`(^|[^\\w-])${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w-]|$)`).test(line)
-  );
+  return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, '');
 }
 
 /**
@@ -147,10 +153,8 @@ export function decayPass(
  * Rebuild index.md: live page lines newest-first, then `## Archive` with the demoted
  * lines, with every non-page line (frontmatter, headings, prose) kept in place.
  *
- * ponytail: the index line format is editorial (the model writes it), so association
- * is by page-name occurrence rather than a parsed grammar. Ceiling: a prose line that
- * happens to name a page is treated as that page's line. Upgrade path is a format
- * constant in `format.ts` once the skills settle on one.
+ * Index lines are recognized by `INDEX_LINE_PATTERN` (`format.ts`); everything else
+ * — frontmatter, headings, prose — is preamble and is kept in place.
  */
 function rewriteIndex(
   contents: string,

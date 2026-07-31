@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta, scopePaths, STOP_CAPTURE_THRESHOLD } from '../core/capture.js';
+import { captureDelta, scopePaths } from '../core/capture.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
 const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
@@ -47,9 +47,9 @@ runHook('Stop', (input, project) => {
   if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
 
   const count = incrementStopCount(input.session_id);
-  if (count < STOP_CAPTURE_THRESHOLD) return { stats: { stop_count: count } };
+  if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
 
-  const captured = captureDelta(input.session_id, input.transcript_path, project);
+  const captured = captureDelta(input.session_id, input.transcript_path, project, config);
   resetStopCount(input.session_id);
 
   return {

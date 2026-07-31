@@ -11,6 +11,10 @@
  * Returns the input text with matched secrets redacted as [REDACTED].
  */
 
+import { join } from 'node:path';
+import { logError } from './errors.js';
+import { mehmoryHome } from './home.js';
+
 // ponytail: Regexes are patterns, not comprehensive scanners. Upgrade path:
 // entropy scoring (strings with high entropy) or integrating a real scanner (trivy, talisman).
 
@@ -58,13 +62,84 @@ const SECRET_PATTERNS = [
 ] as const;
 
 /**
- * Redact secrets from text using the documented pattern corpus.
+ * User-supplied secret filter settings — structurally `config.secrets`, so callers
+ * that already hold a `MehmoryConfig` pass `config.secrets` straight through.
+ *
+ * `redact()` never loads config itself: it runs three times per SessionStart
+ * injection on a <1 s budget, and a disk read there is the hot-path re-read the
+ * plan's criterion 13 forbids. Config is loaded once per process and threaded down.
+ */
+export interface RedactOptions {
+  /** Extra patterns in `RegExp.prototype.toString()` form (`/source/flags`). Additive
+   * to `SECRET_PATTERNS`, which always stays in force. Malformed entries are logged
+   * and skipped (A2 fail-open), never thrown. */
+  readonly patterns?: readonly string[];
+  /** Literal substrings exempt from redaction. */
+  readonly whitelist?: readonly string[];
+}
+
+/** Compiled user patterns, keyed by the pattern list. Config defaults mirror the
+ * built-in corpus, so the common case recompiles the same five regexes on every
+ * call without this. Bounded by the number of distinct pattern lists a process sees
+ * (one, in practice). */
+const userPatternCache = new Map<string, RegExp[]>();
+
+/** Compile `/source/flags` strings to regexes, skipping (and logging) malformed ones. */
+function compileUserPatterns(patterns: readonly string[]): RegExp[] {
+  const cacheKey = JSON.stringify(patterns);
+  const cached = userPatternCache.get(cacheKey);
+  if (cached) return cached;
+
+  const compiled: RegExp[] = [];
+  for (const raw of patterns) {
+    const parsed = /^\/(.*)\/([a-z]*)$/s.exec(raw);
+    try {
+      if (!parsed?.[1]) throw new Error('not in /source/flags form');
+      const flags = parsed[2] ?? '';
+      compiled.push(new RegExp(parsed[1], flags.includes('g') ? flags : flags + 'g'));
+    } catch (err) {
+      logError({
+        code: 'E_CONFIG_PARSE',
+        kind: 'actionable',
+        what: `secrets.patterns entry ${JSON.stringify(raw)} is not a usable regex (${
+          err instanceof Error ? err.message : String(err)
+        })`,
+        consequence: 'That pattern is skipped; the built-in secret patterns still apply',
+        fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+      });
+    }
+  }
+
+  userPatternCache.set(cacheKey, compiled);
+  return compiled;
+}
+
+/** Escape a literal for use inside a RegExp. */
+function escapeLiteral(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyPatterns(text: string, extra: readonly RegExp[]): string {
+  let result = text;
+  for (const pattern of SECRET_PATTERNS) {
+    result = result.replace(pattern, REDACTION_PLACEHOLDER);
+  }
+  for (const pattern of extra) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, REDACTION_PLACEHOLDER);
+  }
+  return result;
+}
+
+/**
+ * Redact secrets from text using the built-in corpus plus any configured patterns.
  * Never throws; returns original text on any error.
  *
  * @param text — The text to redact (empty string, very large, or invalid UTF-16 all handled safely)
+ * @param options — `config.secrets`; omitted means built-in patterns only
  * @returns The text with matched secrets replaced by [REDACTED]
  */
-export function redact(text: string): string {
+export function redact(text: string, options: RedactOptions = {}): string {
   if (!text || typeof text !== 'string') {
     // text is typed `string`, but this function is a defensive fail-open boundary
     // that must survive untyped/JS callers passing null or undefined at runtime;
@@ -74,14 +149,19 @@ export function redact(text: string): string {
   }
 
   try {
-    let result = text;
+    const extra = options.patterns ? compileUserPatterns(options.patterns) : [];
+    const whitelist = (options.whitelist ?? []).filter(entry => entry !== '');
+    if (whitelist.length === 0) return applyPatterns(text, extra);
 
-    // Apply each pattern, replacing all matches with REDACTION_PLACEHOLDER
-    for (const pattern of SECRET_PATTERNS) {
-      result = result.replace(pattern, REDACTION_PLACEHOLDER);
-    }
-
-    return result;
+    // ponytail: whitelisted literals are cut out and the gaps redacted separately,
+    // so a whitelisted string can never be matched. Ceiling: a multi-line pattern
+    // spanning a whitelisted literal no longer matches. Upgrade path is
+    // match-then-restore if that ever bites.
+    const splitter = new RegExp(`(${whitelist.map(escapeLiteral).join('|')})`);
+    return text
+      .split(splitter)
+      .map((segment, i) => (i % 2 === 1 ? segment : applyPatterns(segment, extra)))
+      .join('');
   } catch {
     // On any regex error or unexpected failure, return original text unchanged
     // Better to leak a secret than crash the system

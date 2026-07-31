@@ -1,5 +1,7 @@
 // Custom ESLint rules for mehmory architecture decisions
 
+import { dirname, resolve, sep } from 'node:path';
+
 const noFsImports = {
   meta: {
     type: 'problem',
@@ -167,11 +169,55 @@ const noStderr = {
   }
 };
 
+const noCliImports = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Forbid src/core/** and src/hooks/** from importing src/cli/** (A17)',
+      category: 'Possible Errors'
+    }
+  },
+  create(context) {
+    // Scoped to exactly the two directories A17 names. Deliberately NOT reusing the
+    // `filename.includes('src/core/')` shape of the older rules as a single check —
+    // those claim to cover src/hooks/ and do not (see docs/WORLD_MODEL.md A12); this
+    // rule names both paths explicitly so it cannot inherit that gap.
+    const filename = context.filename.split(sep).join('/');
+    const isGuarded =
+      filename.includes('src/core/') || filename.includes('src/hooks/');
+
+    return {
+      ImportDeclaration(node) {
+        if (!isGuarded) return;
+
+        const source = node.source.value;
+        if (typeof source !== 'string') return;
+
+        // Relative specifiers are resolved against the importing file so that
+        // '../cli/index.js' from src/core/ is caught, while a package literally
+        // named e.g. 'oclif' is not.
+        const target = source.startsWith('.')
+          ? resolve(dirname(filename), source).split(sep).join('/')
+          : source;
+
+        if (target.includes('src/cli/') || target.endsWith('src/cli')) {
+          context.report({
+            node,
+            message:
+              'src/core/ and src/hooks/ must not import src/cli/ (A17 - the CLI is a consumer of the library, never the reverse)'
+          });
+        }
+      }
+    };
+  }
+};
+
 export default {
   rules: {
     'no-fs-imports': noFsImports,
     'no-process-exit': noProcessExit,
     'no-exported-promise': noExportedPromise,
-    'no-stderr': noStderr
+    'no-stderr': noStderr,
+    'no-cli-imports': noCliImports
   }
 };
