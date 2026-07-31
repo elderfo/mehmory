@@ -2,7 +2,7 @@
 
 mode: single
 approved: 2026-07-29 (rev 1, incl. gate-raised contract changes: spec gaps 2, 10, 14)
-retroed: false
+retroed: 2026-07-31T15:10:00Z
 case_studied: 2026-07-30T12:35:00Z
 session: 953569ee-46a4-486c-ace4-5d53104f635b
 model: claude-fable-5
