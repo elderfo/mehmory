@@ -2,14 +2,14 @@
 
 mode: single
 approved: 2026-07-31T02:37:27Z (rev 1, incl. two gate-raised contract changes: FTS5 dropped from v1; recall + contradiction KPIs unowned in v1)
-landed: false
+landed: 2026-07-31T14:48:48Z
 retroed: false
 case_studied: false
 session: db0f33c7-4f00-4a5a-9588-3dd7c48d4598
 model: claude-opus-5
 context_at_approval: same session as intake; plan frozen before the gate
 
-Dispatches: 0 of 13 (execution envelope; intake-charged: 4 of 4 spent)
+Dispatches: 13 of 13 (execution envelope; intake-charged: 4 of 4 spent)
 
 ## Approved plan (rev 1)
 
@@ -665,10 +665,10 @@ the user reads.
 
 ## Execution ledger
 
-landed: pending (blessed at `6e744f0`; landing held at the auto-land trust gate — see
-Escalations)
+landed: 2026-07-31T14:48:48Z (PR #3 squash-merged as `a3307e7`; measurement window approved
+2026-07-31T02:37:27Z → landed 2026-07-31T14:48:48Z)
 
-**Dispatches: 11 of 13** (intake-charged separately: 4 of 4 — spec adversary, contract,
+**Dispatches: 13 of 13** (envelope fully spent) (intake-charged separately: 4 of 4 — spec adversary, contract,
 architecture, UX reviewers). Execution: L (opus), X (sonnet), C1 (opus), S (sonnet),
 C2 (opus), I (opus) workers; V-L forward-looking verifier (sonnet); V-F final verifier
 (opus, told it was last); 2 fix resumes (L on the whitelist leak, X on the release
@@ -690,8 +690,8 @@ requested matched observed throughout; no silent override, no blank observed-mod
 | Lead triage (cross-unit seams, pre-merge) | 5 | `E_USAGE` undocumented by construction; plugin-name match; `doctor`-after-`init` exits 5; `status` scope flags; the predicted S↔C2 conflict — all visible only by reading two reports against each other |
 | Verify (V-L, mid-run) | 1 BLOCKER | `secrets.whitelist` under-redaction: a whitelist fragment overlapping a secret leaked the whole secret to the inbox. Born in L, reported by L **as safe** |
 | Verify (V-F, final) | 1 | criterion 18 unmet (class `code`) — the required test absent, and `secrets` used in a job-level `if:` where GitHub does not provide it, which killed the whole workflow |
-| Landing | pending | |
-| Post-ship | 0 | as of blessing |
+| Landing | 4 | 1 CI failure (3 tests, **born run 1/2** — hardcoded developer path; never executed before because this run built the first CI) + 3 Copilot findings, all fixed pre-merge |
+| Post-ship | 0 | as of landing |
 
 Born-at vs caught-at: the two verification boundaries caught 2 defects between them, both
 born in implementation and **both already reported green by their own units**. V-L's
@@ -732,12 +732,46 @@ which is a real result and the reason the fan-out cost no rework.
 2. **Purge confirmation grammar** — criteria 11 and 2 are mutually unsatisfiable; resolved
    by the user in favor of the two-step, recorded as spec amendment 30.
 3. **`purge --session` reach** — resolved: store-wide, spec amendment 31.
-4. **Auto-land trust gate — OPEN.** The diff adds `.github/workflows/` with a tag trigger,
+4. **Auto-land trust gate** — the diff adds `.github/workflows/` with a tag trigger,
    `contents: write`, and an npm publish job. Widened workflow permissions and triggers are
-   a named trust decision under auto-land's step-2 checklist and do not convert to a silent
-   default. Landing stops here for the user.
+   a named trust decision under auto-land's step-2 checklist. Resolved: user approved landing
+   both workflows and a full auto-land.
+5. **Commit signing failed** (1Password agent, `failed to fill whole buffer`) on the CI-fix
+   commit. Per the standing rule the fix was left staged rather than committed unsigned;
+   user unlocked, commit retried and signed (`G`).
 
-No envelope breach; every dispatch counted before spend.
+No envelope breach; every dispatch counted before spend. The envelope finished **exactly
+spent at 13 of 13** — the last dispatch went to the CI root-cause fix, and everything after
+it (review fixes, merge, ledger) was orchestrator work requiring no agent.
+
+### Landing-stage findings
+
+- **CI red on first run.** Three run-1/run-2 tests hardcoded the absolute developer checkout
+  path; on a runner that directory does not exist, so `execFileSync`'s `cwd` pointed nowhere
+  and Node reported it as `spawnSync node ENOENT` — an error naming the command, not the
+  directory. The other two failures were the same path interpolated into generated worker
+  scripts. **Baseline failures by the verify stage's own rule** (present before the run,
+  recorded not charged) — this run built the CI that first executed them. Fixed with
+  `process.cwd()` + `process.execPath`, proven by reproducing all three failures locally
+  against a rewritten path and by a stripped-`PATH` control.
+  **The orchestrator's stated hypothesis (the hermetic guard dropping `PATH`) was wrong**;
+  the worker disproved it with evidence rather than implementing it. Had it not, the fix
+  would have gone green for the wrong reason and left the `cwd` bug latent.
+- **Copilot: 3 findings.** Two doc claims corrected (`lastIntegrate` returns a timestamp,
+  not the log line; `E_APPEND_FAILED` carries a different consequence when raised through
+  `failOpen`). The third — `stats --all` aggregating records for undiscoverable projects —
+  was **half rejected with reasoning**: the unfiltered aggregate is deliberate and pinned by
+  a test using an `unlisted/project` fixture, so a purged project keeps its history.
+  Filtering by discovered keys broke that test, which is how the intent surfaced. The real
+  defect the reviewer had found — one report spanning two populations — was fixed by
+  labelling the directory-derived lines `(projects on disk)` under `--all`.
+- **Security review: clean.** No finding survived falsification. It attacked the
+  `secrets.whitelist` offset arithmetic specifically (strict containment holds; a named-group
+  edge case fails *closed* toward redaction), confirmed purge cannot escape the store root,
+  that every git call is `execFileSync` with an argv array, and that `ci.yml` uses
+  `pull_request` rather than `pull_request_target`. Two hardening notes recorded, neither
+  exploitable: an unvalidated page slug reaching `join()` from a trusted terminal invocation,
+  and the named-group offset assumption.
 
 ### Delivered-vs-approved diff
 
