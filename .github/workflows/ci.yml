@@ -20,6 +20,17 @@ jobs:
           node-version: '22'
           cache: pnpm
 
+      - name: Lint workflows
+        run: |
+          # Pinned release tarball rather than a third-party action: this step needs no
+          # repository token, and the workflow files are the one thing in CI that nothing
+          # else checks. Catches what YAML parsing cannot — e.g. a `secrets` reference in a
+          # job-level `if:`, which is valid YAML, invalid GitHub Actions, and fails the
+          # whole workflow to load rather than skipping the job.
+          curl -sSfL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar xz actionlint
+          ./actionlint -color
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
