@@ -3,7 +3,7 @@
 mode: single
 approved: 2026-07-31T02:37:27Z (rev 1, incl. two gate-raised contract changes: FTS5 dropped from v1; recall + contradiction KPIs unowned in v1)
 landed: 2026-07-31T14:48:48Z
-retroed: false
+retroed: 2026-07-31T15:10:00Z
 case_studied: false
 session: db0f33c7-4f00-4a5a-9588-3dd7c48d4598
 model: claude-opus-5
