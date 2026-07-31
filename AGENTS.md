@@ -29,39 +29,65 @@ mehmory/
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
 │   │   ├── session-start.ts
 │   │   ├── user-prompt-submit.ts
-│   │   ├── stop.ts
+│   │   ├── stop.ts             # run-3: reads stop.capture_threshold from config (L)
 │   │   ├── pre-compact.ts
 │   │   ├── session-end.ts
-│   │   └── inbox-tx.ts        # bundled transactional helper for skills (C)
+│   │   └── inbox-tx.ts        # bundled transactional helper for skills; run-3: config-aware redact() call site (L)
 │   ├── schema/
-│   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A)
+│   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A); run-3: index-line format constant (L)
 │   ├── transcript/
 │   │   └── reader.ts          # JSONL transcript reader, incremental parsing (D)
-│   └── distill/
-│       ├── patterns.ts        # Normative distill patterns (D, A7)
-│       └── distill.ts         # Record → inbox entry distillation (D)
+│   ├── distill/
+│   │   ├── patterns.ts        # Normative distill patterns (D, A7)
+│   │   └── distill.ts         # Record → inbox entry distillation (D)
+│   ├── core/                  # (continued) run-3 additions:
+│   │   └── scopes.ts          # run 3: project discovery + alias resolution, one scope grammar (L)
+│   └── cli/                   # run 3: the CLI — argument parsing, exit codes, --json envelope;
+│                               # no business logic (A17). Bundled to dist/cli.mjs, excluded from
+│                               # the library's importable entry.
+│       ├── index.ts           # parsing, exit codes, envelope, help/version, command registry (C1)
+│       └── commands/
+│           ├── init.ts        # (C1)
+│           ├── doctor.ts      # (C1)
+│           ├── status.ts      # (C1)
+│           ├── stats.ts       # (C1)
+│           ├── search.ts      # (S)
+│           ├── onboard.ts     # (C2)
+│           └── purge.ts       # (C2)
 ├── hooks/                     # run 2: plugin hook dir — committed hooks.json plus
 │                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
 ├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
-├── .claude-plugin/            # run 2: plugin.json manifest (C)
+├── .claude-plugin/            # run 2: plugin.json manifest (C); run-3: marketplace metadata (X)
+├── .github/
+│   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR),
+│                               # release.yml (v* tag → build → force-add hooks/*.mjs into the
+│                               # tagged tree; npm publish job inert this run) (X)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
 │   ├── errors.test.ts         # errors module tests with worked examples
-│   └── format.test.ts         # format constants tests
+│   ├── format.test.ts         # format constants tests
+│   └── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
 ├── eslint-rules/
-│   └── index.js               # Custom ESLint rules (A3, A9, A11, U2)
-├── package.json               # pnpm workspace, all devDeps (A)
-├── tsconfig.json              # strict: true, no any (A)
-├── tsup.config.ts             # ESM-only output (A10)
-├── vitest.config.ts           # Test runner config (A)
-├── eslint.config.js           # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
+│   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
+├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L)
+├── tsconfig.json               # strict: true, no any (A)
+├── tsup.config.ts              # ESM-only output (A10); run-3: CLI bundle entry, splitting: false (L)
+├── vitest.config.ts             # Test runner config (A)
+├── eslint.config.js             # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
 ├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
 ├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, /hooks/*.mjs (D)
+├── LICENSE                     # run 3: MIT, Christopher Freddy Getsfred (X)
+├── README.md                   # run 3: "First 5 Minutes" quickstart (X)
 └── docs/
-    └── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16 (C)
+    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21 (C, X)
+    ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
+    ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
+    ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
+    ├── CONFIG.md              # run 3: all 14 config groups, real defaults, unhonored keys (X)
+    └── UPGRADE.md             # run 3: schema_version drift (X)
 ```
 
 ## Working directories
@@ -110,6 +136,38 @@ reuse A–F; check the run's plan doc for which is which).
   `assets/SCHEMA.md` additions, spec `## Run-2 amendments`, `docs/WORLD_MODEL.md` A12–A16.
 
 Unlock order: D → A → (B, C in parallel).
+
+### Run 3 — CLI, search, docs, CI
+
+Letters below are run-3 subtask units, distinct from the run-1/run-2 letters above (both
+runs reuse A–F/D–C; check the run's plan doc for which is which).
+
+- **L — library + packaging.** Config threading (`injection.budget_tokens`,
+  `secrets.patterns`/`whitelist`, new `stop.capture_threshold`) plus the two permitted
+  hook call-site updates it forces (`src/hooks/stop.ts`, `src/hooks/inbox-tx.ts`);
+  error-registry additions and the actionable-fix audit, `peekWarnings()`, the
+  `errors.ts` CLI-mode flag; `initStore` gitignore + empty config; the index-line format
+  constant in `format.ts`; `src/core/scopes.ts` (project discovery + alias resolution);
+  the `eslint-rules/` import-boundary rule; `package.json` (`bin`/`files`/`engines`/
+  `repository`/`license`) and `tsup.config.ts` (CLI bundle entry); shared test
+  infrastructure. Unlocks S, C1, C2, X.
+- **S — search.** `src/core/search.ts` (multi-corpus scan, scoring, snippets, file cap)
+  and `src/cli/commands/search.ts`.
+- **C1 — CLI framework + read commands.** `src/cli/index.ts` (parsing, exit codes,
+  envelope, help/version, the complete command registry plus stub files for every
+  command), `init`, `doctor`, `status`, `stats`.
+- **C2 — write commands.** `onboard` (dry-run, resume, project cap, stub `project.md`,
+  zero-transcript path) and `purge` (scopes, tokens, export, commit-failure path), plus
+  `src/core/onboard.ts`.
+- **X — docs, CI, amendments** (this unit). `README.md`, `docs/{CLI,TROUBLESHOOTING,
+  PRIVACY,CONFIG,UPGRADE}.md`, `LICENSE`, `.github/workflows/{ci,release}.yml`,
+  `.claude-plugin/plugin.json` metadata, the spec's KPI rewrite and
+  `## Run-3 amendments`, `docs/WORLD_MODEL.md` A17–A21, this file's run-3 sections.
+- **Integration unit.** Merges the tails; owns the bidirectional docs↔binary
+  consistency test and `test/quickstart.test.ts` — both spawn `dist/cli.mjs`, which does
+  not exist inside any single parallel worktree.
+
+Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 
 ## Project Commands
 

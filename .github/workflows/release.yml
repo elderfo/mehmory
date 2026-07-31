@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # The plugin marketplace installs directly from this git repo, and `hooks/*.mjs`
+      # is gitignored (it's a build artifact, not source). Without this, a tag would
+      # ship a hooks.json pointing at five files that don't exist in the tagged tree.
+      # Bundles are tag-only artifacts, never committed on a branch — see
+      # docs/WORLD_MODEL.md's run-3 ADR candidate for the alternatives this rejected.
+      - name: Force-add built hook bundles into the tagged tree
+        run: |
+          git config user.name "mehmory-release"
+          git config user.email "release@users.noreply.github.com"
+          git add -f hooks/*.mjs
+          git commit -m "chore: include built hook bundles for ${GITHUB_REF_NAME}"
+          git tag -f "$GITHUB_REF_NAME"
+          git push origin "$GITHUB_REF_NAME" --force
+
+  # Inert this run: no npm token exists yet and no tag is meant to publish. The `if:`
+  # below names both conditions so this job never runs until a maintainer deliberately
+  # adds NPM_TOKEN — it is not enough for a v* tag alone to trigger a publish.
+  publish-npm:
+    needs: build-tag
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && secrets.NPM_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm
+        run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
