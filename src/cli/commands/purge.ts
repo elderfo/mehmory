@@ -45,9 +45,14 @@ import { selectScope, SCOPE_FLAGS } from '../scope.js';
  */
 const E_ABORTED = 'E_ABORTED';
 
-/** `--session` reaches exactly one copy of the data, and says so everywhere. */
+/**
+ * `--session` reaches exactly one copy of the data, and says so everywhere. Within that
+ * limit it spans every inbox in the store (`planSession` walks `allInboxes()`): session ids
+ * are unique, and a session that touched two projects is where a scoped purge would leave a
+ * copy behind.
+ */
 const SESSION_REACH =
-  '`--session` reaches un-integrated inbox entries only — `src=<id>` in the entry trailer is the only place session provenance survives. Content already integrated into a page is not reachable by session id.';
+  '`--session` reaches un-integrated inbox entries only — `src=<id>` in the entry trailer is the only place session provenance survives. Content already integrated into a page is not reachable by session id. Within that limit it reaches every inbox in the store, not just the current scope.';
 
 export const command: Command = {
   name: 'purge',

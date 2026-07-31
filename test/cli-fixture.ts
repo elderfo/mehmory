@@ -63,9 +63,11 @@ export function envelopeOf(run: CliRun): Record<string, unknown> {
  * registers `events`. Returns the HOME to pass as `claudeHome`.
  */
 export function fakeInstalledPlugin(
-  events: readonly string[] = Object.values(HOOK_EVENTS)
+  events: readonly string[] = Object.values(HOOK_EVENTS),
+  /** Install into an existing fake HOME (e.g. one that already holds transcripts). */
+  into?: string
 ): string {
-  const home = createTempDir('mehmory-claude-home');
+  const home = into ?? createTempDir('mehmory-claude-home');
   const installPath = join(home, '.claude', 'plugins', 'cache', 'mehmory', 'mehmory', '0.0.1');
   mkdirSync(join(installPath, 'hooks'), { recursive: true });
   writeFileSync(

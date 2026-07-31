@@ -684,3 +684,23 @@ run 4.
     `docs/PRIVACY.md`**, with a one-line pointer from the README — uninstalling the
     plugin is not the same operation as deleting data, and putting them in
     `docs/UPGRADE.md` would have conflated the two.
+
+### Delivered-vs-approved differences (recorded at integration)
+
+Two items where what run 3 shipped is not what the approved plan's prose described. Both were
+decided by the user at the integration gate and are the contract from here on.
+
+30. **Purge confirmation is two invocations, not an interactive prompt — USER DECISION.**
+    Plan criterion 11 said "preview, then a typed token", which reads as one invocation that
+    prints a preview and then blocks on input. Criterion 2 forbids a command body from
+    writing to stdout at all (`src/cli/index.ts` owns every byte), so one invocation cannot
+    both preview and block. The delivered grammar: `mehmory purge <scope>` prints the preview
+    and the required token and exits **4**, having touched nothing; re-running with the token
+    piped in (`printf '%s\n' 'DELETE ALL' | mehmory purge --all`) deletes. `--yes` skips both.
+    U11's requirement — friction scaled to blast radius, no one-keystroke `y/N` — is met more
+    strongly by this than by a prompt. Documented in `docs/CLI.md` and `docs/PRIVACY.md`.
+31. **`purge --session <id>` is store-wide within its stated limit — USER DECISION.** It
+    clears matching un-integrated inbox entries from *every* inbox in the store, not only the
+    selected scope. Session ids are unique, so there is no cross-project false positive, and a
+    session that touched two projects is exactly where a scope-limited delete would silently
+    leave a copy behind. The un-integrated-entries limit (amendment item 4) is unchanged.

@@ -45,7 +45,16 @@ regression is exactly what it would reintroduce.
 ## What `purge` does and does not reach
 
 `mehmory purge` (see `docs/CLI.md`) deletes from the working tree and commits the removal.
-Three things follow from that:
+
+**Deleting anything takes two invocations.** The first run previews the targets, prints the
+confirmation token scaled to what you're about to lose, and exits 4 having changed nothing;
+the second run supplies that token on stdin
+(`printf '%s\n' 'DELETE ALL' | mehmory purge --all`). `--yes` collapses the two into one when
+you're scripting. There is no interactive `y/N` prompt anywhere in mehmory — a single
+keystroke is not enough friction for `--all`, and the CLI's output contract does not allow a
+command to print a preview and then block for an answer.
+
+Three more things follow from working-tree deletion:
 
 1. **It removes files, not history.** mehmory never rewrites your store's git history — see
    the recipe below for when you need that.
@@ -55,6 +64,10 @@ Three things follow from that:
    the session id that produced it is gone — the page just has a fact on it. Purging a
    session cannot reach content that already made it into a page; if you need that gone,
    purge the page itself.
+   Within that limit it is deliberately **store-wide**: `--session` clears matching entries
+   from *every* inbox, not only the project you happen to be standing in. Session ids are
+   unique, so there is no false positive to fear, and a session that touched two projects is
+   exactly the case where a scope-limited delete would leave a copy behind.
 3. **`--global` is its own scope**, not "every project" — `identity.md` and `global/pages/`
    are the most personal content in the store, and purge lets you reach them without deleting
    every project's memory along with them.

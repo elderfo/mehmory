@@ -21,7 +21,8 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   the finding `doctor` exists to report, not a reason to fail differently from every other
   finding.
 
-- **`--help`**, **`<command> --help`**, and **`--version`** always exit 0.
+- **`--help`** (alias `-h`), **`<command> --help`**, and **`--version`** (alias `-v`) always
+  exit 0.
 
 - **`--json`.** Any invocation that includes `--json` anywhere in its arguments emits exactly
   one line on stdout and nothing else:
@@ -38,8 +39,10 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   text goes to stdout for normal output and stderr for errors; JSON mode always writes to
   stdout only.
 
-- **Scopes.** `init`, `doctor`, `stats`, `search`, and `purge` share one scope grammar where
-  it applies to them:
+- **Scopes.** The four scope-taking commands — `onboard`, `search`, `stats`, and `purge` —
+  share one grammar. `init`, `doctor`, and `status` take **no** scope flags: the first two act
+  on the store as a whole, and `status` reports the current directory's scope, which is why it
+  has nothing to select.
   - `--project [<key>]` — a specific project. The value is optional: with no value, the scope
     resolves from the current working directory's project key. A full key or a unique
     substring both match; an ambiguous substring exits 1 listing the candidate keys.
@@ -82,9 +85,11 @@ you've ever run a session with mehmory active — the cold-start path. Defaults:
   (the scan spawns `git` per uncached directory, so the cost is user-sized).
 - Transcripts are distilled recent-first up to the session/byte caps, redacted, and appended
   via the inbox's append primitive, so replay by entry id is a no-op.
-- A non-dry-run run also writes a one-line stub `project.md` for the target scope, so the
-  store no longer looks unpopulated to the next `SessionStart` hook (see the README's note on
-  why this matters).
+- A non-dry-run run also writes a one-line stub `project.md` into the target scope's
+  directory. Under `--project` this is what stops the next `SessionStart` from reporting an
+  empty store (see the README's note on why that matters). Under `--global` the file is
+  written the same way but has **no** such effect: the empty-store check is keyed by project,
+  so a global stub is inert.
 - **Zero usable transcripts is not an error**: exit 0, printing "no transcripts found — run
   `/mehmory:onboard-session` inside a Claude Code session in your project instead."
 - `--dry-run` writes nothing to the store — every byte of that guarantee is testable by
@@ -162,9 +167,26 @@ Deletes. Preview-first, then a typed confirmation token **scaled to the blast ra
 | `--global` | `global` |
 | a page slug | the page's slug |
 
+**Confirmation is two invocations, not an interactive prompt.** The first run prints the
+preview and the required token and exits **4**, having touched nothing. You then re-run the
+same command with the token on stdin:
+
+```bash
+mehmory purge --all                              # preview + token + exit 4, nothing deleted
+printf '%s\n' 'DELETE ALL' | mehmory purge --all # deletes
+```
+
+This is deliberate, not a missing prompt: a command body never writes to stdout in this CLI
+(the framework owns every byte), so a single invocation cannot print a preview and *then*
+block for an answer. Exit 4 carries the code `E_ABORTED` and, in its `fix`, the exact piped
+command to re-run. `--yes` skips both invocations and deletes immediately.
+
 - A bare page slug that resolves in more than one scope exits 1, listing the candidates —
-  it never deletes from both.
-- The wrong token exits 4 and changes nothing. `--yes` skips the prompt.
+  it never deletes from both. The error's `fix` is the disambiguated command:
+  `mehmory purge <slug> --project <key>` (or `mehmory purge <slug> --global`). Passing a
+  scope beside a slug is a *qualifier*, not a second target.
+- A wrong token — or no token at all, which includes running the command on a terminal with
+  nothing piped in — exits 4 and changes nothing.
 - `--export <path>` copies the targets before deleting; if the export fails, the command
   aborts with exit 3 and deletes nothing.
 - Purge deletes from the working tree, then commits. **If the commit fails, the files are
@@ -178,3 +200,6 @@ Deletes. Preview-first, then a typed confirmation token **scaled to the blast ra
   an entry has been integrated into a page, the session id that produced it is gone; purging
   a session cannot reach content that already made it into a page. This is stated here, in
   the command's own `--help` text, and in `docs/PRIVACY.md`.
+- Within that limit, `--session` reaches **every inbox in the store**, not just the scope you
+  would otherwise be in. Session ids are unique, and a session that touched two projects is
+  exactly the case where a scoped purge would silently leave a copy behind.

@@ -24,8 +24,13 @@ defaults, so your settings are not applied` is stable and indexed below. `Detail
 points at `$MEHMORY_HOME/.state/errors.log` (`~/.mehmory/.state/errors.log` unless you've set
 `MEHMORY_HOME` — see `docs/CONFIG.md`).
 
-Every code below is checked against the codebase's `ERROR_KINDS` registry. `actionable` codes
-always carry a `Fix:` clause with a runnable command; `informational` codes never invent one.
+Every `##` code below is checked against the codebase's `ERROR_KINDS` registry — a test fails
+the build if this page and the registry disagree in either direction. `actionable` codes always
+carry a `Fix:` clause with a runnable command; `informational` codes never invent one.
+
+The CLI adds a few codes of its own that are deliberately **not** in that registry, because no
+library function can raise them. They have their own section at the bottom of this page, and
+they include the one you will hit most often.
 
 ## E_CONFIG_PARSE (actionable)
 
@@ -130,3 +135,39 @@ store is left dirty, with the files already gone. Consequence: *the store is lef
 uncommitted state.* Fix: `git -C <resolved store home> commit -a`. This is the one purge
 failure mode with a real remedy: the delete already happened, so re-running `purge` is not
 the fix — committing the pending removal is.
+
+## CLI-level codes (not in `ERROR_KINDS`)
+
+These three shapes are raised by `src/cli/` and never by a library function, so they are
+correctly absent from the registry above — a hook can't produce a usage error, and nothing in
+`src/core/` knows what a confirmation prompt is. They use the same
+`MEHMORY E_<CODE>: …` template and appear in the `--json` envelope's `errors[]` exactly like
+registry codes.
+
+### E_USAGE (actionable)
+
+The command didn't run: an unknown command or flag, wrong arity, a flag missing its value, two
+mutually exclusive forms at once, or a scope selector that matched more than one project.
+Consequence: *The command did not run.* Fix: always a runnable command — usually
+`mehmory <command> --help`, and for an ambiguous purge slug the disambiguated command itself
+(`mehmory purge <slug> --project <key>`). Exit code **1**. This is the code you will see most
+often, and it is the one a script should treat as "I called it wrong", never as "the store is
+broken".
+
+### E_ABORTED (actionable)
+
+`mehmory purge` stopped before deleting anything, because the confirmation token on stdin was
+absent or wrong. Consequence: *Nothing was deleted.* Fix: the exact piped re-run, with the
+token filled in — `printf '%s\n' '<token>' | mehmory purge <the same arguments>`. Exit code
+**4**. Seeing this on a first `purge` invocation is the designed path, not a failure: purge
+confirmation is two invocations (see `docs/CLI.md` and `docs/PRIVACY.md`).
+
+### E_DOCTOR_&lt;CHECK&gt; (informational or actionable)
+
+`mehmory doctor --json` reports each failing finding as an envelope error whose code is
+`E_DOCTOR_` plus the check name upper-cased with non-alphanumerics collapsed to `_` — so
+`git.gitignore` becomes `E_DOCTOR_GIT_GITIGNORE`, `hooks.liveness` becomes
+`E_DOCTOR_HOOKS_LIVENESS`, and so on. These are a machine-readable projection of the text
+`doctor` already prints; the remedy is whatever that finding's `fix` names. They are generated
+from the check list, which is why they are described as a shape here rather than enumerated —
+`mehmory doctor` is the authoritative list, and `docs/CLI.md` documents the checks themselves.
