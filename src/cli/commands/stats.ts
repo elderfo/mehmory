@@ -60,6 +60,11 @@ export const command: Command = {
     }
 
     const keys = scope.kind === 'all' ? listProjects().map(p => p.key) : [scope.key];
+    // `--all` deliberately aggregates every record in stats.jsonl, including keys with no
+    // discoverable directory — a purged or renamed project keeps its history, which is the
+    // point of asking for all of it. The `dirs`-derived figures below (inbox age, integrate
+    // cadence) can only cover projects that still exist, so those two halves span different
+    // populations by design; the output labels them so the report cannot be misread.
     const report = aggregateStats({
       ...(scope.kind === 'all' ? {} : { projects: keys }),
       ...(since !== undefined ? { since } : {}),
@@ -85,15 +90,18 @@ export const command: Command = {
     );
     lines.push(`pointers   ${String(report.pointersOffered)} offered`);
     lines.push(`captured   ${String(report.capturedEntries)} entries`);
+    // Suffix only under `--all`, where the record counts above span every key in
+    // stats.jsonl but these two can only read directories that still exist.
+    const onDisk = scope.kind === 'all' ? ' (projects on disk)' : '';
     lines.push(
       inboxAge === undefined
-        ? 'inbox      no inbox yet'
-        : `inbox      last written ${formatAge(inboxAge)} ago`
+        ? `inbox      no inbox yet${onDisk}`
+        : `inbox      last written ${formatAge(inboxAge)} ago${onDisk}`
     );
     lines.push(
       cadence === undefined
-        ? 'integrate  fewer than two integrates recorded'
-        : `integrate  every ${cadence.toFixed(1)} days on average`
+        ? `integrate  fewer than two integrates recorded${onDisk}`
+        : `integrate  every ${cadence.toFixed(1)} days on average${onDisk}`
     );
 
     return {

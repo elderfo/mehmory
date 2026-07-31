@@ -61,6 +61,11 @@ A single-line append to the store (inbox, log, or stats) failed — usually perm
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
 disk space" is prose, not a command, so it's omitted rather than printed as if it were one.
 
+The same code is also raised through `failOpen` by read-shaped operations that fall back
+rather than append (the store summary behind `status` and `doctor`, for one). Those print
+the generic *Operation failed; using fallback* consequence instead, so match on the
+`MEHMORY E_APPEND_FAILED` prefix rather than on the sentence after it.
+
 ## E_ATOMIC_WRITE (informational in practice)
 
 Covers a temp-file-plus-rename write that failed — building the injection frame, or a decay

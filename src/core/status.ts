@@ -48,7 +48,7 @@ export interface StatusReport {
   readonly inboxEntries: number;
   /** ISO timestamp of the oldest un-integrated inbox entry. */
   readonly oldestInbox?: string;
-  /** The `log.md` line of the most recent integrate. */
+  /** ISO timestamp of the most recent integrate, parsed out of the `log.md` line. */
   readonly lastIntegrate?: string;
   /** `<short-sha> <date> <subject>` of the store's last commit. */
   readonly lastCommit?: string;
@@ -121,7 +121,7 @@ export function integrateTimestamps(logFile: string): readonly string[] {
   return stamps.sort();
 }
 
-/** The most recent integrate log line, or undefined when there has never been one. */
+/** ISO timestamp of the most recent integrate, or undefined when there has never been one. */
 export function lastIntegrate(logFile: string): string | undefined {
   const stamps = integrateTimestamps(logFile);
   return stamps[stamps.length - 1];
