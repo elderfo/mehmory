@@ -99,9 +99,19 @@ export function logError(error: MehmoryError): void {
   const logPath = statePath('errors.log');
   const logDir = dirname(logPath);
 
-  // Ensure .state directory exists
-  if (!existsSync(logDir)) {
-    mkdirSync(logDir, { recursive: true });
+  // Ensure .state directory exists.
+  //
+  // Guarded because this is the one place a *reporting* failure could become the
+  // caller's failure: when the store path is unusable (a file where the directory
+  // should be, a read-only volume), `mkdirSync` throws ENOTDIR/EACCES straight out of
+  // `logError` and past every fail-open boundary — observed as an unhandled ENOTDIR
+  // stack from `mehmory init`. A2/A11 make logging best-effort, not load-bearing.
+  try {
+    if (!existsSync(logDir)) {
+      mkdirSync(logDir, { recursive: true });
+    }
+  } catch {
+    return; // nowhere to write; the caller still gets its typed error back
   }
 
   const timestamp = new Date().toISOString();
@@ -132,8 +142,13 @@ export function logError(error: MehmoryError): void {
     }
   }
 
-  // Append the line
-  appendFileSync(logPath, line, 'utf-8');
+  // Append the line. Guarded for the same reason as the mkdir above: an unwritable
+  // errors.log must not turn into the caller's exception.
+  try {
+    appendFileSync(logPath, line, 'utf-8');
+  } catch {
+    return;
+  }
 
   // Update tracked size by bytes written (encoded as UTF-8)
   const bytesWritten = Buffer.byteLength(line, 'utf-8');

@@ -207,9 +207,19 @@ type: entity
 Captured entries awaiting integration.
 `;
 
+/**
+ * `schema_version` of the template this build ships (A20).
+ *
+ * `doctor` compares the store's own `SCHEMA.md` against this and warns on drift. It is
+ * deliberately **not** `FORMAT_VERSION`: that versions the machine format, so tying the
+ * warning to it would fire on every code-only bump with nothing the user could do about
+ * it. Interpolated into the template below so the two can never disagree.
+ */
+export const TEMPLATE_SCHEMA_VERSION = '1';
+
 /** Template for SCHEMA.md (embedded copy of assets/SCHEMA.md) */
 const SCHEMA_TEMPLATE = `---
-schema_version: "1"
+schema_version: "${TEMPLATE_SCHEMA_VERSION}"
 ---
 
 # mehmory Schema
