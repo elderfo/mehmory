@@ -68,6 +68,7 @@ mehmory/
 │   ├── home.test.ts           # home module tests
 │   ├── errors.test.ts         # errors module tests with worked examples
 │   ├── format.test.ts         # format constants tests
+│   ├── docs-consistency.test.ts # run 3: docs ↔ binary, both directions (Integration)
 │   └── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
@@ -159,7 +160,7 @@ runs reuse A–F/D–C; check the run's plan doc for which is which).
 - **C2 — write commands.** `onboard` (dry-run, resume, project cap, stub `project.md`,
   zero-transcript path) and `purge` (scopes, tokens, export, commit-failure path), plus
   `src/core/onboard.ts`.
-- **X — docs, CI, amendments** (this unit). `README.md`, `docs/{CLI,TROUBLESHOOTING,
+- **X — docs, CI, amendments.** `README.md`, `docs/{CLI,TROUBLESHOOTING,
   PRIVACY,CONFIG,UPGRADE}.md`, `LICENSE`, `.github/workflows/{ci,release}.yml`,
   `.claude-plugin/plugin.json` metadata, the spec's KPI rewrite and
   `## Run-3 amendments`, `docs/WORLD_MODEL.md` A17–A21, this file's run-3 sections.
