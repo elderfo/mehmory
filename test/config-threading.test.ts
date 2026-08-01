@@ -163,7 +163,7 @@ describe('stop.capture_threshold reaches the Stop hook', () => {
     expect(loadConfig().stop.capture_threshold).toBe(2);
 
     const first = runHook('stop', { session_id: 's1' }, { cwd });
-    expect(first.stdout).toBe('');
+    expect(first.stdout).toBe('{}');
 
     const second = runHook('stop', { session_id: 's1' }, { cwd });
     expect(outputJson(second)['decision']).toBe('block');

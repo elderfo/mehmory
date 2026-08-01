@@ -21,17 +21,35 @@ import { estimateTokens } from '../core/tokens.js';
 import {
   applyDistillJob,
   buildScopeInjection,
+  finalizePendingSessions,
   inboxBytes,
   scopePaths,
   storeExists,
   storeIsUnpopulated,
 } from '../core/capture.js';
+import type { Host } from '../core/host.js';
 
 /** Maintenance-line allowance (U4 / spec gap 14): 2 lines, ~150 tokens. */
 const MAX_MAINTENANCE_LINES = 2;
 
-/** Run the best-effort lane. Every step yields rather than waits (A16). */
-function maintenance(project: string, config: MehmoryConfig): void {
+/**
+ * Run the best-effort lane. Every step yields rather than waits (A16).
+ *
+ * Pending finalization goes first, ahead of both the queue drain — so a session finalized
+ * here has its delta applied in the same start rather than the next one — and the state
+ * sweep, which would otherwise be free to delete a pending session's state before anyone
+ * read it (issue #24).
+ *
+ * @returns number of abandoned sessions finalized
+ */
+function maintenance(
+  sessionId: string,
+  project: string,
+  host: Host,
+  config: MehmoryConfig
+): number {
+  const finalized = finalizePendingSessions(sessionId, project, host, config);
+
   tryProjectLock(project, () => decayPass(scopePaths(project).projectDir));
 
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
@@ -42,9 +60,10 @@ function maintenance(project: string, config: MehmoryConfig): void {
   }
 
   sweepSessionState();
+  return finalized;
 }
 
-runHook('SessionStart', (input, project) => {
+runHook('SessionStart', (input, project, host) => {
   const config = loadConfig();
   if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
 
@@ -77,7 +96,7 @@ runHook('SessionStart', (input, project) => {
   const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
   const context = [injection.text, ...lines].filter(Boolean).join('\n');
 
-  maintenance(project, config);
+  const finalized = maintenance(input.session_id, project, host, config);
 
   return {
     context,
@@ -85,6 +104,7 @@ runHook('SessionStart', (input, project) => {
       injected_tokens: estimateTokens(context),
       inbox_bytes: bytes,
       maintenance_lines: lines.length,
+      finalized_sessions: finalized,
     },
   };
 });

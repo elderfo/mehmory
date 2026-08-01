@@ -57,7 +57,9 @@ describe('Stop hook', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(run.stdout).toBe('');
+    // `{}`, not silence: Codex parses Stop output on every Stop, and the
+    // below-threshold Stop is the most frequent one (D9).
+    expect(run.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(1);
   });
 
@@ -112,7 +114,7 @@ describe('Stop hook', () => {
 
     const next = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
-    expect(next.stdout).toBe('');
+    expect(next.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(1);
   });
 
@@ -126,7 +128,7 @@ describe('Stop hook', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(run.stdout).toBe('');
+    expect(run.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(stopThreshold() - 1);
   });
 
@@ -136,7 +138,7 @@ describe('Stop hook', () => {
 
     const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
-    expect(run.stdout).toBe('');
+    expect(run.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(1);
   });
 });

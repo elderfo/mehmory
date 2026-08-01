@@ -247,3 +247,43 @@ This is a property of non-interactive execution, not a bug, and mehmory does not
 the alternatives (writing the nudge to stderr, blocking a run that cannot answer) would either
 be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
 for it in the prompt — `remember:` works there like anywhere else.
+
+## Not an error: a Codex session is finalized by the *next* session, not by its own end
+
+Codex has no session-end event. Claude Code fires `SessionEnd`, mehmory distills the last
+stretch of the transcript there, and the next `SessionStart` writes it to the inbox. Under Codex
+that first half never happens — nothing tells mehmory the session is over, including when the
+session is over because the terminal was closed or the process was killed.
+
+So finalization moves to the front of the next session instead. Every hook invocation records
+which transcript the session is reading and which harness is reading it; a session whose state is
+still on disk, has no finalization marker, and has sat untouched for 30 minutes is treated as
+abandoned, and the next `SessionStart` in any project distills its remaining delta, files it,
+logs one `session-end` line, commits, and marks it finalized. The marker is what makes this safe
+to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
+is skipped, so nothing is written or committed twice. The 30-minute idle window is what keeps a
+second terminal from retiring a session that is merely quiet.
+
+**Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
+the inbox when the next session starts, not when the session ended. If that session was the last
+one of the day, the entries land tomorrow. `mehmory status` will show the inbox without them
+until then. Starting any session — in any project — is enough to flush it.
+
+### The `PreCompact` caveat
+
+mehmory registers a `PreCompact` hook on Codex, and on Claude Code it does what it says: capture
+everything since the last capture, just before the context is compacted.
+
+On Codex CLI 0.146.0 that hook is **unverified**. The event exists in the binary, and there is
+evidence it has fired on some machines, but no run in this project's measurement work ever
+produced one — a `codex exec` run fires `SessionStart`, `UserPromptSubmit` and `Stop` and never
+compacts. Its payload has therefore never been observed, so the hook assumes nothing about it: it
+checks for a readable `transcript_path` (the one field every measured Codex event does carry) and,
+on any payload it does not recognize, logs `E_TRANSCRIPT_PARSE` and does nothing at all rather
+than acting on guessed field names.
+
+The consequence is that on Codex, compaction is not a capture point you should count on. The
+next-session-start path above is what the design relies on, and it does not depend on `PreCompact`
+firing, on its payload, or on compaction happening at all. Deliberately, `PreCompact` also never
+finalizes a session: a compaction is not an ending, and retiring the session there would leave
+everything after the compaction with no route into the inbox.
