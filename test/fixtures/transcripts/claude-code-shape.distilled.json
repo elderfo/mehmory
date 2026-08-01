@@ -1,0 +1,24 @@
+[
+  {
+    "id": "67427102c78919bc6c05dfd4921533daa567c33abfc0ab8ece54a6d3ed8b9932",
+    "pattern": "user_message",
+    "content": "Can you help me refactor this function?",
+    "source": {
+      "sessionId": "real-session",
+      "recordUuid": "aa000000-0000-4000-8000-000000000002",
+      "recordType": "user",
+      "lineNumber": 3
+    }
+  },
+  {
+    "id": "7cc71f9b04e73c212c8c2a001ccca8f6fa6f031c012ba1fd6072e3b7dc661edc",
+    "pattern": "decision_marker",
+    "content": "Decision: Let's cache the API responses instead.",
+    "source": {
+      "sessionId": "real-session",
+      "recordUuid": "aa000000-0000-4000-8000-000000000004",
+      "recordType": "user",
+      "lineNumber": 5
+    }
+  }
+]
