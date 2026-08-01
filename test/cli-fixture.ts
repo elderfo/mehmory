@@ -31,6 +31,11 @@ export interface CliOptions {
   readonly claudeHome?: string;
   /** MEHMORY_HOME override, for the fixtures that need a broken store path. */
   readonly mehmoryHome?: string;
+  /**
+   * CODEX_HOME override, so one test can own a Codex home it seeds and asserts on.
+   * Still re-checked by `hermeticEnv()` — it must be a temp directory.
+   */
+  readonly codexHome?: string;
 }
 
 /** Run the CLI once. Throws only if the build is missing. */
@@ -41,6 +46,7 @@ export function runCli(args: readonly string[], options: CliOptions = {}): CliRu
   const env = hermeticEnv({
     HOME: options.claudeHome ?? createTempDir('mehmory-claude-home'),
     ...(options.mehmoryHome !== undefined ? { MEHMORY_HOME: options.mehmoryHome } : {}),
+    ...(options.codexHome !== undefined ? { CODEX_HOME: options.codexHome } : {}),
   });
   const result = spawnSync(process.execPath, [CLI, ...args], {
     env,

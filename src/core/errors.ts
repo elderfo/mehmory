@@ -44,6 +44,22 @@ const ERROR_KINDS = {
   /** `mehmory purge` deleted files but could not commit — the store is left dirty, and
    * the remedy is a real command (`git -C <home> commit -a`). */
   E_PURGE_FAILED: 'actionable',
+  // ─── Run 4 (Codex host) ───
+  /** `mehmory init --host codex` could not read or write a file under `$CODEX_HOME`.
+   * Nothing was modified — the file is shared with other tools, so a config mehmory
+   * cannot parse is refused rather than overwritten. */
+  E_CODEX_INSTALL: 'actionable',
+  /** mehmory is wired into a Codex that is not there: `$CODEX_HOME` holds mehmory's hook
+   * entries but no `config.toml`, so those entries are pointing at nothing. */
+  E_CODEX_HARNESS_MISSING: 'actionable',
+  /** Codex's `[features] hooks` flag is off or unset, so no hook of any tool fires. */
+  E_CODEX_HOOKS_DISABLED: 'actionable',
+  /** `$CODEX_HOME/hooks.json` carries no mehmory entry for one or more events, so those
+   * lifecycle events capture and inject nothing under Codex. */
+  E_CODEX_HOOKS_UNWIRED: 'actionable',
+  /** The mehmory skills are not installed for Codex, so the judgment-work commands
+   * (integrate, lint, onboard) are unavailable there. Capture still runs. */
+  E_CODEX_SKILLS_MISSING: 'actionable',
 } as const satisfies Record<string, 'actionable' | 'informational'>;
 
 export type ErrorCode = keyof typeof ERROR_KINDS;

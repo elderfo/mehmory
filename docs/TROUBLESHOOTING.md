@@ -141,6 +141,58 @@ uncommitted state.* Fix: `git -C <resolved store home> commit -a`. This is the o
 failure mode with a real remedy: the delete already happened, so re-running `purge` is not
 the fix — committing the pending removal is.
 
+## E_CODEX_INSTALL (actionable)
+
+`mehmory init --host codex` could not read or write a file under `$CODEX_HOME`. Consequence:
+*the file was left exactly as it is, so no hook registration was changed.* Fix: `$EDITOR
+<the named file>` when it does not parse, `ls -l <its directory>` when the write itself
+failed.
+
+The refusal is deliberate. `~/.codex/hooks.json` is shared with every other tool that
+registers a Codex hook, so a file mehmory cannot parse is left alone rather than replaced —
+overwriting it would silently unregister whoever else owns entries in it. Fix the JSON (or
+move the file aside) and re-run the install.
+
+## E_CODEX_HARNESS_MISSING (actionable)
+
+`$CODEX_HOME/hooks.json` holds mehmory's hook entries, but there is no `config.toml` there —
+Codex is not configured at that location. Consequence: *those entries run nothing.* Fix:
+`mehmory init --host codex --uninstall`.
+
+Usually means Codex was uninstalled, or `CODEX_HOME` now points somewhere else. If Codex is
+still installed elsewhere, set `CODEX_HOME` to that directory and run the install there
+instead of the uninstall above.
+
+## E_CODEX_HOOKS_DISABLED (actionable)
+
+Codex's `[features] hooks` flag is `false` or unset in `$CODEX_HOME/config.toml`.
+Consequence: *no hook fires at all* — not mehmory's, and not any other tool's. Fix:
+`mehmory init --host codex`, which turns the flag on without touching the rest of the file.
+
+This is the first thing to check when Codex sessions capture nothing: the hooks can be
+perfectly registered and still never run, because the flag gates all of them.
+
+## E_CODEX_HOOKS_UNWIRED (actionable)
+
+`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the four Codex events
+mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`) — or the file
+does not parse, in which case nothing at all is registered. Consequence: *those events
+capture and inject nothing under Codex.* Fix: `mehmory init --host codex`, or `$EDITOR
+$CODEX_HOME/hooks.json` when `doctor` reports the file as unparseable.
+
+`mehmory doctor` names the specific events that are missing, so a partial wiring — one hook
+hand-deleted, or an install interrupted — reads as such rather than as "not installed".
+
+## E_CODEX_SKILLS_MISSING (actionable)
+
+No `mehmory` or `mehmory-*` skill directory under `$CODEX_HOME/skills/`. Consequence:
+*nothing integrates what Codex captures* — the judgment-work commands (integrate, lint,
+onboard) are unavailable there. Fix: `mehmory init --host codex`.
+
+Reported as a **warning**, not an error: the hooks are what capture and inject, and they
+keep working. What you will notice instead is the inbox filling up and never being merged
+into the wiki.
+
 ## CLI-level codes (not in `ERROR_KINDS`)
 
 These three shapes are raised by `src/cli/` and never by a library function, so they are

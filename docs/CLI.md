@@ -55,7 +55,14 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
 
 ## Commands
 
-### `mehmory init`
+### `mehmory init [--host <name>] [--uninstall]`
+
+`--host` selects the harness to wire mehmory into: `claude-code` (the default) or `codex`.
+`--uninstall` reverses the wiring, and requires a non-default `--host` — Claude Code installs
+and removes mehmory through its own plugin system, so there is nothing there for `init` to
+undo.
+
+#### Default host
 
 Idempotent. Calls the library's `initStore()`, which creates the store layout, `git init`s it,
 and — when absent — writes `~/.mehmory/.gitignore` (containing `.state/`) and an **empty**
@@ -70,6 +77,40 @@ and — when absent — writes `~/.mehmory/.gitignore` (containing `.state/`) an
   where slash commands do nothing.
 
 Running `init` twice changes nothing on disk.
+
+#### Codex host
+
+Codex has no plugin mechanism for hooks, so `init` writes the configuration itself — two
+files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONFIG.md`):
+
+- **`hooks.json`** gets one entry per Codex lifecycle event mehmory captures:
+  `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. There is no `SessionEnd`
+  entry, because Codex has no session-end event.
+- **`config.toml`** gets `[features] hooks = true`, which Codex requires before any hook of
+  any tool runs. Already on, and it is left exactly as it was.
+
+Both files are shared with every other tool that registers a Codex hook, so both edits are
+merges, never rewrites:
+
+- Entries mehmory did not write are never read, moved or removed — they survive install,
+  re-install and uninstall unchanged.
+- Mehmory's own entries are identified by a marker token on the command they run, not by
+  the path of the script, so upgrading mehmory replaces the previous entry instead of
+  leaving a stale duplicate. Re-running the install is idempotent: no duplicates, and a
+  second run with nothing to change writes no bytes at all.
+- Every file is copied to `<file>.mehmory.bak` immediately before it is modified. A run
+  that changes nothing takes no backup.
+- A `hooks.json` that does not parse is **refused**, not overwritten: exit **3** with
+  `E_CODEX_INSTALL`, and the file is left byte-for-byte as it was. Overwriting a file
+  mehmory could not read would silently unregister whoever else owns entries in it.
+- The `config.toml` edit is a line edit. Your models, MCP servers, per-project trust levels
+  and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
+
+Uninstall removes only mehmory's entries, prunes the events and groups that empty out as a
+result, and **never turns the hooks feature back off** — the flag is Codex's, and other
+tools' hooks depend on it.
+
+Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
 
 ### `mehmory onboard [--project [<key>]|--global] [--dry-run] [--sessions N] [--max-bytes N] [--projects N] [--resume]`
 
@@ -140,6 +181,20 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - `schema_version` drift (see `docs/UPGRADE.md`).
 - Config parseability.
 - KPI budget violations against the amended numbers in the spec's KPI table.
+- The Codex surface, four checks, each carrying a real error code documented in
+  `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
+
+  | Check | Code | What it means |
+  |---|---|---|
+  | `codex.harness` | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED` | Codex's `[features] hooks` is off or unset, so no hook fires at all |
+  | `codex.hooks` | `E_CODEX_HOOKS_UNWIRED` | one or more Codex events carry no mehmory entry, so those events capture nothing |
+  | `codex.skills` | `E_CODEX_SKILLS_MISSING` | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+
+  All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
+  a Claude-Code-only user gets no findings about a harness they don't run. They appear as
+  soon as either `$CODEX_HOME/config.toml` or a mehmory entry in `$CODEX_HOME/hooks.json`
+  exists.
 
 Every finding with a real remedy carries a copy-paste command. Exit 0 (all `ok`), 5 (only
 `warn` findings), or 6 (at least one `error` finding). `doctor` never exits 2 — an absent
