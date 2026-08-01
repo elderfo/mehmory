@@ -55,6 +55,10 @@ describe('SessionStart hook', () => {
     expect(context).toContain('<mehmory-memory>');
     expect(context).toContain('stack: rust');
     expect(context).toContain('[[deploy]]');
+    // Routing rides along with real memory, in its own block: the memory frame is
+    // declared data-only, so instructions must not live inside it.
+    expect(context).toContain('<mehmory-routing>');
+    expect(context.indexOf('</mehmory-memory>')).toBeLessThan(context.indexOf('<mehmory-routing>'));
 
     const stat = statsLines().at(-1);
     expect(stat).toMatchObject({ project: key, hook: 'SessionStart' });

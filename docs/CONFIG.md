@@ -48,6 +48,12 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 { "injection": { "budget_tokens": 800 } }
 ```
 
+This budget governs **stored memory only**. `SessionStart` also emits a fixed
+`<mehmory-routing>` block of about 80 tokens telling the model how to use that memory
+(follow pointers before grepping, what `(stale)` means, how to capture). It sits outside
+`budget_tokens` on purpose — a large wiki must not crowd out the lines explaining what to
+do with it — and is capped by its own test rather than by this key.
+
 - `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
   index content. At the default 800, the split is identity 200 / project 200 / index 400;
   below 800, sub-budgets scale proportionally. **Honored** (`buildInjection`).
