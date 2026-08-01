@@ -1,15 +1,16 @@
 /** `finalizeSession` core-op tests (issue #16): the SessionEnd hook adapter is now
  * just a caller of this. */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { writeTranscript } from './hook-fixture.js';
-import { finalizeSession } from '../src/core/capture.js';
+import { finalizeSession, scopePaths } from '../src/core/capture.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
+import * as sessionModule from '../src/core/session.js';
 import { sessionStatePath } from '../src/core/session.js';
 import { initStore } from '../src/core/store.js';
 
@@ -86,5 +87,36 @@ describe('finalizeSession', () => {
     const afterSecond = snapshotStore();
 
     expect(afterSecond).toEqual(afterFirst);
+  });
+
+  it('does not double-log or double-commit when the completion marker write fails after the rest of the work already landed (seam defect)', () => {
+    const transcript = writeTranscript([{ text: 'We decided to ship the plugin unbundled.' }]);
+    const sessionId = 's3';
+
+    // Simulate `markSessionFinalized`'s write failing on the first call, after
+    // distill/enqueue/log/commit have already run — exactly the partial-failure
+    // window the seam finding describes (deleteSessionState already ran too, in the
+    // pre-fix ordering; that ordering is no longer what protects against the retry).
+    const markSpy = vi.spyOn(sessionModule, 'markSessionFinalized').mockImplementationOnce(() => {
+      throw new Error('simulated marker write failure');
+    });
+
+    expect(() => finalizeSession(sessionId, transcript, key)).toThrow('simulated marker write failure');
+
+    // The failure was transient (as most write failures are); it clears and the
+    // SessionEnd hook is retried, the same way a harness would retry.
+    markSpy.mockRestore();
+    const retried = finalizeSession(sessionId, transcript, key);
+
+    const logLines = readFileSync(scopePaths(key).logFile, 'utf-8')
+      .split('\n')
+      .filter(line => line.includes(`(session ${sessionId})`));
+    const commits = gitLog()
+      .split('\n')
+      .filter(line => line.includes(`session ${sessionId} ended`));
+
+    expect(logLines).toHaveLength(1);
+    expect(commits).toHaveLength(1);
+    expect(retried.capturedEntries).toBe(0);
   });
 });

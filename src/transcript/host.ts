@@ -9,9 +9,15 @@
 
 import { readTranscript, type ReadTranscriptResult } from './reader.js';
 import { readCodexRollout } from './codex.js';
+import type { InboxHost } from '../schema/format.js';
 
-/** The agent harness that wrote the transcript on disk. */
-export type Host = 'claude-code' | 'codex';
+/**
+ * The agent harness that wrote the transcript on disk. Re-exported from
+ * `src/schema/format.ts`, the single source of truth for the closed set of harness
+ * literals — this module, `src/core/host.ts`, and inbox serialization all agree on the
+ * same type by construction.
+ */
+export type Host = InboxHost;
 
 /**
  * Read a session transcript into normalized records, picking the reader by host.

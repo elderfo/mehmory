@@ -31,7 +31,7 @@ describe('hook host argument', () => {
     expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'claude-code' });
   });
 
-  it('passes an unrecognized host argument straight through', () => {
+  it('falls back rather than failing on an unrecognized host argument (issue #20)', () => {
     const cwd = createTempDir('mehmory-project');
     seedStore(keyFor(cwd));
 
@@ -42,9 +42,10 @@ describe('hook host argument', () => {
     );
 
     expect(run.status).toBe(0);
+    expect(run.stderr).toBe('');
     expect(statsLines().at(-1)).toMatchObject({
       hook: 'UserPromptSubmit',
-      host: 'some-future-harness',
+      host: 'claude-code',
     });
   });
 });

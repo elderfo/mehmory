@@ -17,11 +17,20 @@ describe('resolveHost', () => {
   it('uses the explicit argument when present', () => {
     delete process.env.CLAUDE_PLUGIN_ROOT;
     expect(resolveHost('claude-code')).toBe('claude-code');
-    expect(resolveHost('some-other-harness')).toBe('some-other-harness');
+    expect(resolveHost('codex')).toBe('codex');
   });
 
   it('trims whitespace off the argument', () => {
     expect(resolveHost('  claude-code  ')).toBe('claude-code');
+  });
+
+  it('falls back rather than throwing on an unrecognized host value (issue #20)', () => {
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+    expect(() => resolveHost('some-other-harness')).not.toThrow();
+    expect(resolveHost('some-other-harness')).toBe(DEFAULT_HOST);
+
+    process.env.CLAUDE_PLUGIN_ROOT = '/some/plugin/root';
+    expect(resolveHost('some-other-harness')).toBe('claude-code');
   });
 
   it('falls back to environment detection when no argument is passed (A2)', () => {
