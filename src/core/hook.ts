@@ -13,6 +13,7 @@ import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
 import { resolveHost, type Host } from './host.js';
 import { loadConfig } from './config.js';
+import { rememberSessionOrigin } from './session.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
 export interface HookInput {
@@ -60,10 +61,20 @@ export function parseHookInput(raw: string): HookInput {
   }
 }
 
-/** Serialize a result into the bytes Claude Code expects on stdout ('' for silence). */
+/**
+ * Serialize a result into the bytes the harness expects on stdout ('' for silence).
+ *
+ * Stop is the exception, and gets `{}` rather than silence. Codex's Stop output was
+ * measured (`VERDICT.md`) to accept `{}` and `{decision, reason}` and to reject the
+ * `hookSpecificOutput` envelope that is valid on every other event — but silence was
+ * never exercised there, and a harness that parses Stop output unconditionally would
+ * surface an error on the most frequent path in the integration: the below-threshold
+ * Stop. `{}` removes that unknown instead of trading it for another, since `{}` is the
+ * documented no-op on Claude Code too (A2, A8).
+ */
 export function renderHookOutput(event: string, result: HookResult): string {
   if (result.json) return JSON.stringify(result.json);
-  if (!result.context) return '';
+  if (!result.context) return event === 'Stop' ? '{}' : '';
   return JSON.stringify({
     hookSpecificOutput: { hookEventName: event, additionalContext: result.context },
   });
@@ -114,6 +125,9 @@ export function runHook(
           consequence: 'The invocation was skipped; no session state was read or written',
         });
       } else {
+        // Where this session's material lives and who wrote it, so the next session start
+        // can finalize it even if this session never reports an end (issue #24).
+        rememberSessionOrigin(input.session_id, input.transcript_path, host);
         result = body(input, project, host);
       }
     }

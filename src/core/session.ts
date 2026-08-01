@@ -18,6 +18,7 @@ import { logError } from './errors.js';
 import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
+import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
 /** Cached prompt token set used to skip repeat lookups within a TTL. */
 export interface TopicCache {
@@ -39,6 +40,18 @@ export interface SessionState {
   topic?: TopicCache;
   /** Resolved project key, cached to keep UserPromptSubmit off the git path. */
   project_key?: string;
+  /**
+   * Transcript the last hook invocation reported for this session. The cursor stores
+   * file identity, not a path, so without this a session that never reaches SessionEnd
+   * has nothing to re-read at the next session start (issue #24).
+   */
+  transcript_path?: string;
+  /**
+   * Harness that wrote that transcript. Recorded rather than assumed: it selects the
+   * reader *and* stamps the entries, so finalizing a leftover session under whichever
+   * harness happens to start next would both mis-parse and mis-attribute it (issue #20).
+   */
+  host?: InboxHost;
   /** Session-level capture pause (subtractive only: never re-enables config-off hooks). */
   paused: boolean;
 }
@@ -75,12 +88,20 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
     }
   }
 
+  const rawHost = v['host'];
+  const host =
+    typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
+      ? (rawHost as InboxHost)
+      : undefined;
+
   return {
     session_id: sessionId,
     cursor: v['cursor'],
     stop_count: v['stop_count'],
     ...(topicCache ? { topic: topicCache } : {}),
     ...(typeof v['project_key'] === 'string' ? { project_key: v['project_key'] } : {}),
+    ...(typeof v['transcript_path'] === 'string' ? { transcript_path: v['transcript_path'] } : {}),
+    ...(host !== undefined ? { host } : {}),
     paused: v['paused'] === true,
   };
 }
@@ -158,6 +179,80 @@ export function isSessionFinalized(sessionId: string): boolean {
 /** Record that this session's finalization completed, so a retry becomes a no-op. */
 export function markSessionFinalized(sessionId: string): void {
   atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
+}
+
+/**
+ * Record where this session's material lives, so a session that never reports an end can
+ * still be finalized later (issue #24).
+ *
+ * Every hook payload carries `transcript_path`, and `runHook` already knows the harness,
+ * so the cheapest place to learn both is the invocation itself. Written only when
+ * something actually changed — the common case is a no-op read.
+ */
+export function rememberSessionOrigin(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  host: InboxHost
+): void {
+  if (transcriptPath === undefined || transcriptPath === '') return;
+  const state = readSessionState(sessionId);
+  if (state.transcript_path === transcriptPath && state.host === host) return;
+  writeSessionState({ ...state, transcript_path: transcriptPath, host });
+}
+
+/**
+ * How long a session's state must sit untouched before another session's start treats it
+ * as abandoned and finalizes it (issue #24).
+ *
+ * A live session touches its state on every prompt and every Stop, so the window only has
+ * to outlast a quiet stretch. Finalizing a session that is merely idle is not data loss —
+ * entry ids are stable, so its next capture re-distills and dedups — but it does retire
+ * that session early, which is why the window is not tighter.
+ *
+ * ponytail: fixed constant, not a config knob. Promote it to `session_state` if a real
+ * session is ever observed idling past it.
+ */
+export const PENDING_FINALIZE_IDLE_MS = 30 * 60 * 1000;
+
+/**
+ * Sessions with state on disk, no finalization marker, and nothing left to lose but their
+ * transcript delta: the leftovers of a session that crashed, was killed, or ran under a
+ * harness with no session-end event at all (Codex).
+ *
+ * Only states idle for `idleMs` qualify, so a session running concurrently in another
+ * terminal is not retired out from under itself. States with no recorded transcript are
+ * skipped — there is nothing to distill, and finalizing them would only add a log line
+ * and a commit per dead session.
+ */
+export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): SessionState[] {
+  const dir = statePath();
+  if (!pathExists(dir)) return [];
+
+  const cutoff = Date.now() - idleMs;
+  const pending: SessionState[] = [];
+
+  for (const name of listDir(dir)) {
+    // `<id>.finalized.json` is the marker, not state, and parses as neither.
+    if (!name.endsWith('.json') || name.endsWith('.finalized.json')) continue;
+    try {
+      const path = join(dir, name);
+      const mtime = stat(path)?.mtimeMs;
+      if (mtime === undefined || mtime > cutoff) continue;
+
+      const raw = readFile(path);
+      const id: unknown = (JSON.parse(raw) as Record<string, unknown>)['session_id'];
+      if (typeof id !== 'string' || id.trim() === '') continue;
+
+      const state = parseSessionState(raw, id);
+      if (!state || state.transcript_path === undefined) continue;
+      if (isSessionFinalized(id)) continue;
+      pending.push(state);
+    } catch {
+      // Not a session-state file, or it vanished mid-scan: leave it to the sweep.
+    }
+  }
+
+  return pending;
 }
 
 /**

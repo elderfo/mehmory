@@ -335,11 +335,11 @@ describe('Codex capture (#23)', () => {
 
     // The Stop our own block caused: guard set, so no counting and no second block.
     const guarded = runHook('stop', stop(cwd, rollout, true), { cwd, args: CODEX_ARGS });
-    expect(guarded.stdout).toBe('');
+    expect(guarded.stdout).toBe('{}');
 
     // And the next ordinary Stop is back at the bottom of the counter.
     const next = runHook('stop', stop(cwd, rollout), { cwd, args: CODEX_ARGS });
-    expect(next.stdout).toBe('');
+    expect(next.stdout).toBe('{}');
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop', host: 'codex', stop_count: 1 });
   });
 
@@ -354,7 +354,7 @@ describe('Codex capture (#23)', () => {
       { cwd, args: CODEX_ARGS }
     );
 
-    expect(stopRun.stdout).toBe('');
+    expect(stopRun.stdout).toBe('{}');
     expect(remember.stdout).toBe('');
     expect(readIfPresent(paths(key).inbox)).toBe('');
   });

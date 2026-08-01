@@ -19,6 +19,7 @@ import {
   deleteSessionState,
   isPaused,
   isSessionFinalized,
+  listPendingSessions,
   markSessionFinalized,
   readSessionState,
 } from './session.js';
@@ -439,4 +440,50 @@ export function finalizeSession(
   deleteSessionState(sessionId);
   markSessionFinalized(sessionId);
   return { capturedEntries };
+}
+
+/**
+ * Finalize every session left pending — state on disk, no finalization marker, idle long
+ * enough to be abandoned — at the next session start (issue #24).
+ *
+ * Codex has no session-end event at all, so for a Codex session this is not a fallback:
+ * it is the only route the last stretch of the session has into the inbox. A Claude Code
+ * session killed before SessionEnd fires is the same shape, and recovers the same way.
+ * Either way the work goes through `finalizeSession` — one operation, one marker, so a
+ * session already finalized by its own SessionEnd is skipped and nothing is written twice.
+ *
+ * The current session is excluded by id: it is the one session on disk that is provably
+ * still running.
+ *
+ * The recorded host and project key win over the running session's, because the pending
+ * session may well come from the other harness or another project directory; the
+ * arguments are only the fallback for state written before either was recorded.
+ *
+ * @returns number of sessions finalized
+ */
+export function finalizePendingSessions(
+  currentSessionId: string,
+  project: string,
+  host: InboxHost,
+  config: MehmoryConfig = loadConfig()
+): number {
+  return failOpen(
+    () => {
+      let finalized = 0;
+      for (const state of listPendingSessions()) {
+        if (state.session_id === currentSessionId) continue;
+        finalizeSession(
+          state.session_id,
+          state.transcript_path,
+          state.project_key ?? project,
+          state.host ?? host,
+          config
+        );
+        finalized++;
+      }
+      return finalized;
+    },
+    0,
+    'E_SESSION_STATE'
+  );
 }
