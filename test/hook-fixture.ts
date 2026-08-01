@@ -31,17 +31,21 @@ export interface HookRun {
   readonly stderr: string;
 }
 
-/** Spawn a built hook bundle with `input` as its stdin JSON. Never throws. */
+/** Spawn a built hook bundle with `input` as its stdin JSON. Never throws.
+ *
+ * `args` are extra command-line arguments, e.g. the host argument `hooks.json` passes
+ * on every command (`["claude-code"]`) — omit it to exercise the no-argument fallback.
+ */
 export function runHook(
   hook: HookName,
   input: Record<string, unknown>,
-  options: { cwd?: string } = {}
+  options: { cwd?: string; args?: readonly string[] } = {}
 ): HookRun {
   const script = join(HOOKS_DIR, `${hook}.mjs`);
   if (!existsSync(script)) {
     throw new Error(`${script} is missing — run \`pnpm build\` before the hook suites.`);
   }
-  const result = spawnSync(process.execPath, [script], {
+  const result = spawnSync(process.execPath, [script, ...(options.args ?? [])], {
     input: JSON.stringify(input),
     env: hermeticEnv(),
     encoding: 'utf-8',
