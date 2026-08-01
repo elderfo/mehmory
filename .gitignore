@@ -17,5 +17,9 @@ dist/
 .env.local
 coverage/
 
+# VitePress build output and cache for the marketing/docs site
+site/.vitepress/dist/
+site/.vitepress/cache/
+
 # Skill-owned local state (auto-land ledger etc.)
 .elderfo/

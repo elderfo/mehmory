@@ -9,6 +9,16 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+### Added
+
+- **Project website** — a VitePress site under `site/`, deployed to GitHub Pages on every
+  push that touches it. Carries the pitch, a five-minute quickstart, and a "how it works"
+  walkthrough of the three planes, the retrieval trade-off, and the context budget. Deep
+  reference (`docs/CLI.md`, `CONFIG.md`, `PRIVACY.md`, `TROUBLESHOOTING.md`, `UPGRADE.md`,
+  `WORLD_MODEL.md`) is linked from the site rather than duplicated into it, so there is one
+  copy of every fact. Build it locally with `pnpm docs:dev`. The site is not part of the
+  published package — `files` in `package.json` is unchanged.
+
 ## [0.1.0] - 2026-08-01
 
 First released version. Everything below shipped across the three build runs that
