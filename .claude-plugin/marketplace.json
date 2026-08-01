@@ -1,0 +1,13 @@
+{
+  "name": "mehmory",
+  "owner": {
+    "name": "Christopher Freddy Getsfred"
+  },
+  "plugins": [
+    {
+      "name": "mehmory",
+      "source": "./",
+      "description": "Memory abstraction layer for Claude Code: deterministic capture hooks plus model-driven skills over a markdown wiki in ~/.mehmory."
+    }
+  ]
+}
