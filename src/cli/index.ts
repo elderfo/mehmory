@@ -25,6 +25,7 @@ import { command as stats } from './commands/stats.js';
 import { command as search } from './commands/search.js';
 import { command as onboard } from './commands/onboard.js';
 import { command as purge } from './commands/purge.js';
+import { command as inboxTx } from './commands/inbox-tx.js';
 
 /**
  * The command registry — one `command` export per file in `commands/`.
@@ -33,7 +34,16 @@ import { command as purge } from './commands/purge.js';
  * units write commands in parallel worktrees, and a registry each of them had to edit
  * would be a guaranteed merge conflict on the one file none of them owns.
  */
-const COMMANDS: readonly Command[] = [init, doctor, status, stats, search, onboard, purge];
+const COMMANDS: readonly Command[] = [
+  init,
+  doctor,
+  status,
+  stats,
+  search,
+  onboard,
+  purge,
+  inboxTx,
+];
 
 function globalHelp(): readonly string[] {
   const width = Math.max(...COMMANDS.map(c => c.name.length));

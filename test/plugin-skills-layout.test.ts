@@ -95,12 +95,21 @@ describe('plugin skills layout', () => {
         if (m[1]) referenced.add(m[1]);
       }
     }
-    // A skill set that references nothing would pass vacuously; integrate must use one.
-    expect(referenced).toContain('inbox-tx.mjs');
     for (const script of referenced) {
       expect(existsSync(resolve('hooks', script)), `hooks/${script} missing — run pnpm build`).toBe(
         true
       );
+    }
+  });
+
+  // Issue #17: the inbox helper is reachable through `mehmory inbox-tx`, so skills call
+  // the binary instead of resolving a path through the Claude-Code-specific plugin-root
+  // variable. Asserted with teeth (not a vacuous pass) — at least one skill must use it.
+  it('skills reach the inbox helper through the CLI, not a plugin-root variable', () => {
+    const usesCli = [...bodies.values()].some(body => body.includes('mehmory inbox-tx'));
+    expect(usesCli).toBe(true);
+    for (const [name, body] of bodies) {
+      expect(body, name).not.toContain('CLAUDE_PLUGIN_ROOT');
     }
   });
 });
