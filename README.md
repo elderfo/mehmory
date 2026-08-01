@@ -22,9 +22,16 @@ your project" — that's wrong for this ordering, and this README is the correct
 
 ### 1. Install
 
+The CLI publishes to GitHub Packages, not npmjs.org, so npm needs to be told where the
+`@elderfo` scope lives and given a GitHub token with `read:packages`:
+
 ```bash
-npm install -g mehmory
+npm config set @elderfo:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken <your-github-token>
+npm install -g @elderfo/mehmory
 ```
+
+The token is required even for a public package — GitHub Packages has no anonymous read.
 
 Then install the Claude Code plugin from the marketplace (see the plugin's listing for the
 exact install command; `mehmory init`, in the next step, prints the pinned install command
