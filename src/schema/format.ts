@@ -32,11 +32,71 @@ export const FRONTMATTER_KEYS = {
 /** Divider text used to separate frontmatter from content. */
 export const FRONTMATTER_DIVIDER = '---';
 
+/** Read a page's frontmatter as a flat key→value map (values are raw strings). */
+export function readFrontmatter(contents: string): Record<string, string> {
+  const lines = contents.split('\n');
+  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
+
+  const fields: Record<string, string> = {};
+  for (const line of lines.slice(1)) {
+    if (line.trim() === FRONTMATTER_DIVIDER) break;
+    const separator = line.indexOf(':');
+    if (separator < 0) continue;
+    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return fields;
+}
+
+/** Milliseconds in a day — shared by every age computation over `updated`. */
+export const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Age of a page in days from its `updated` frontmatter; null when absent/unparseable. */
+export function pageAgeDays(contents: string, now: number): number | null {
+  const updated = readFrontmatter(contents)['updated'];
+  if (!updated) return null;
+  const parsed = Date.parse(updated);
+  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
+}
+
 /** Heading that separates live index lines from demoted (aged) ones (decay, run 2). */
 export const ARCHIVE_DIVIDER = '## Archive';
 
 /** Directory name (relative to a scope root) holding pages aged past purge_days. */
 export const ARCHIVE_DIR = 'archive';
+
+// ─── Retrieval demotion (A22) ───
+
+/**
+ * Multiplicative demotion for a page aged past `decay.archive_days` but still live.
+ *
+ * Multiplicative rather than the subtractive penalty memhub uses, because mehmory's
+ * scores are unbounded token-occurrence counts, not a 0–1 blend: subtracting a constant
+ * would erase a weak fresh hit and barely dent a strong stale one.
+ *
+ * The rule these two constants encode: a demoted page is never excluded from retrieval.
+ * It stays in the pool, ranks lower, and is flagged `stale` so the caller can say so.
+ * Silent exclusion hides a valid memory and gives the user no way to notice.
+ */
+export const STALE_SCORE_MULTIPLIER = 0.7;
+
+/**
+ * Multiplicative demotion for a page already moved into `archive/`.
+ *
+ * Below `STALE_SCORE_MULTIPLIER` on purpose: archival is an explicit "this aged out"
+ * act, a stronger signal than merely drifting past the staleness horizon.
+ */
+export const ARCHIVED_SCORE_MULTIPLIER = 0.5;
+
+/**
+ * True when a page body's `updated` frontmatter is older than `staleAfterDays`.
+ *
+ * A page with no parseable `updated` is NOT stale: unknown age is not evidence of age,
+ * and treating it as stale would demote every hand-written page that skipped frontmatter.
+ */
+export function isStalePage(contents: string, now: number, staleAfterDays: number): boolean {
+  const age = pageAgeDays(contents, now);
+  return age !== null && age > staleAfterDays;
+}
 
 // ─── Index line format (run-2 amendment 26) ───
 

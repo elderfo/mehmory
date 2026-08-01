@@ -14,7 +14,7 @@ import { mehmoryHome } from './home.js';
 import { listDir, pathExists, readFile, stat } from './fs.js';
 import { failOpen, peekWarnings } from './errors.js';
 import { readInboxEntries } from './inbox.js';
-import { parseIndexLine } from '../schema/format.js';
+import { ARCHIVE_DIR, ARCHIVE_DIVIDER, parseIndexLine } from '../schema/format.js';
 
 /** The files one scope is made of. `global` has no `projects/<key>` directory. */
 export interface ScopeFiles {
@@ -45,6 +45,10 @@ export interface StatusReport {
   readonly pages: number;
   /** Lines in `index.md` that match the index-line format. */
   readonly indexLines: number;
+  /** Index lines sitting below the `## Archive` divider — demoted, still in the wiki. */
+  readonly demoted: number;
+  /** Pages moved out to `archive/` — still searchable, demoted harder (A22). */
+  readonly archived: number;
   readonly inboxEntries: number;
   /** ISO timestamp of the oldest un-integrated inbox entry. */
   readonly oldestInbox?: string;
@@ -70,6 +74,8 @@ export function buildStatus(key: string, dir: string): StatusReport {
     dir,
     pages: countPages(files.pagesDir),
     indexLines: countIndexLines(files.indexFile),
+    demoted: countDemotedIndexLines(files.indexFile),
+    archived: countPages(join(dir, ARCHIVE_DIR)),
     inboxEntries: entries.length,
     ...(oldest !== undefined ? { oldestInbox: oldest } : {}),
     ...(integrated !== undefined ? { lastIntegrate: integrated } : {}),
@@ -96,6 +102,27 @@ export function countIndexLines(indexFile: string): number {
             .split('\n')
             .filter(line => parseIndexLine(line) !== undefined).length
         : 0,
+    0,
+    'E_APPEND_FAILED'
+  );
+}
+
+/**
+ * Index lines below the `## Archive` divider (A22).
+ *
+ * Reported so decay is visible rather than silent: a growing demoted count is the
+ * user's cue that pages are aging out of the front of the wiki, and the only place
+ * that number surfaces without reading `index.md` by hand.
+ */
+export function countDemotedIndexLines(indexFile: string): number {
+  return failOpen(
+    () => {
+      if (!pathExists(indexFile)) return 0;
+      const lines = readFile(indexFile).split('\n');
+      const divider = lines.findIndex(line => line.trim() === ARCHIVE_DIVIDER);
+      if (divider < 0) return 0;
+      return lines.slice(divider + 1).filter(line => parseIndexLine(line) !== undefined).length;
+    },
     0,
     'E_APPEND_FAILED'
   );

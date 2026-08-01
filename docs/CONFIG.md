@@ -31,10 +31,18 @@ schema and can be set, but nothing currently reads it, so setting it changes not
 ```
 
 - `enabled` — turns the mechanical decay pass on or off.
-- `archive_days` — index pages older than this move below the Archive divider.
-- `purge_days` — index pages older than this move into `archive/`.
+- `archive_days` — index pages older than this move below the Archive divider. **Also the
+  staleness horizon for retrieval** (A22): past it, a page is scored ×0.7 in both
+  `matchPages` and `search` and comes back flagged `stale`. Raising this makes retrieval
+  trust old pages for longer; it does not make them disappear either way.
+- `purge_days` — index pages older than this move into `archive/`. Archived pages stay
+  searchable, scored ×0.5 — lower than the staleness demotion, because archival is an
+  explicit act rather than mere drift.
 
-  All three **honored** (`decay.ts`).
+  All three **honored** (`decay.ts`, and `archive_days` additionally by `match.ts` /
+  `search.ts`). Neither demotion multiplier is configurable: they are calibration
+  constants in `schema/format.ts`, and `archive_days` already controls when demotion
+  starts. Nothing is ever excluded from retrieval for age.
 
 ## `secrets`
 

@@ -299,11 +299,33 @@ Functions that need configuration take it as a parameter; no core function calls
 previously pure function called three times per injection, on the <1s `SessionStart`
 path — the hot-path config re-read a reviewer already caught once in run 2).
 
+### A22. Aged memory is demoted and flagged, never silently excluded
+
+Retrieval never drops a page for age. A page past `decay.archive_days` is scored
+×`STALE_SCORE_MULTIPLIER` (0.7); a page already moved into `archive/` is scored
+×`ARCHIVED_SCORE_MULTIPLIER` (0.5), lower because archival is an explicit act rather than
+mere drift. Both come back flagged `stale`, so `search` can print `[stale]` and the
+`UserPromptSubmit` pointer can say `(stale)`. `status` reports the demoted and archived
+counts. `log.md` is exempt: it records what happened, so it cannot become untrue.
+
+Multiplicative, not the subtractive penalty the source system (memhub) uses, because
+mehmory's scores are unbounded token-occurrence counts rather than a 0–1 blend —
+subtracting a constant would erase a weak fresh hit while barely denting a strong stale
+one. A page with no parseable `updated` is treated as fresh: unknown age is not evidence
+of age, and the opposite reading would demote every hand-written page without frontmatter.
+
+**Rejected:** excluding stale pages from retrieval (a stale answer beats no answer, and a
+bad staleness default then hides valid memory with no way for the user to notice — demote
+is the reversible posture); a config knob per multiplier (two calibration constants nobody
+has yet had cause to tune — `decay.archive_days` already controls *when* demotion starts).
+
 **WORLD_MODEL check.** A17 upholds A1/A12 and does not touch A3 (`src/cli/` uses the
 existing `fs.ts` surface); A18 upholds A2/A3/A9/A16 — with FTS dropped there is no I/O
 outside `fs.ts` and no sync/async question; A19 upholds A2; A20 is a **named, narrow
-exception** to A4, recorded as such; A21 upholds A2 and A9. A11 is unthreatened: scoped
-to core by its own text.
+exception** to A4, recorded as such; A21 upholds A2 and A9; A22 upholds A4 (the
+multipliers and the staleness predicate live in `schema/format.ts`, the format authority)
+and A21 (`archive_days` is threaded in from the caller's config, never read inside
+`match.ts` or `search.ts`). A11 is unthreatened: scoped to core by its own text.
 
 **Amendment to A6.** `initStore()`'s owned layout grows: it now also creates, when
 absent, `~/.mehmory/.gitignore` (containing `.state/`) and an **empty** `{}`

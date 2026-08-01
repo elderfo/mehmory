@@ -44,11 +44,11 @@ describe('matchPages', () => {
     writePage('m1', 'testing.md', '# Testing\n\nVitest runs the suite.\n');
     writePage('m1', 'rollback.md', '# Rollback\n\nRollback reverts the deploy.\n');
 
-    const hits = matchPages('how does deploy work', pagesDir('m1'));
+    const paths = matchPages('how does deploy work', pagesDir('m1')).map(p => p.path);
 
-    expect(hits[0]).toBe(join('pages', 'deploy.md'));
-    expect(hits).toContain(join('pages', 'rollback.md'));
-    expect(hits).not.toContain(join('pages', 'testing.md'));
+    expect(paths[0]).toBe(join('pages', 'deploy.md'));
+    expect(paths).toContain(join('pages', 'rollback.md'));
+    expect(paths).not.toContain(join('pages', 'testing.md'));
   });
 
   it('returns nothing when no page matches', () => {
@@ -69,7 +69,7 @@ describe('matchPages', () => {
     writePage('m4', 'rollback.md', '# Rollback\n\nshort note\n');
     writePage('m4', 'misc.md', '# Misc\n\nrollback is mentioned once here in the body\n');
 
-    expect(matchPages('rollback', pagesDir('m4'))[0]).toBe(join('pages', 'rollback.md'));
+    expect(matchPages('rollback', pagesDir('m4'))[0]?.path).toBe(join('pages', 'rollback.md'));
   });
 
   it('returns nothing for an empty prompt or a missing directory', () => {
@@ -80,5 +80,56 @@ describe('matchPages', () => {
   it('ignores non-markdown files', () => {
     writePage('m6', 'notes.txt', 'deploy deploy');
     expect(matchPages('deploy', pagesDir('m6'))).toEqual([]);
+  });
+});
+
+describe('matchPages staleness (A22)', () => {
+  const NOW = Date.parse('2026-08-01T00:00:00Z');
+  const daysAgo = (n: number): string =>
+    new Date(NOW - n * 24 * 60 * 60 * 1000).toISOString();
+
+  function writeDatedPage(scope: string, file: string, updated: string, body: string): void {
+    writePage(scope, file, `---\nupdated: ${updated}\n---\n\n${body}`);
+  }
+
+  it('demotes a stale page but never drops it', () => {
+    writeDatedPage('s1', 'old.md', daysAgo(200), '# Old\n\ndeploy deploy deploy deploy\n');
+
+    const hits = matchPages('deploy', pagesDir('s1'), 3, { staleAfterDays: 60, now: NOW });
+
+    // Kept — a stale answer still beats no answer — and flagged so the caller can say so.
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.stale).toBe(true);
+  });
+
+  it('ranks a weaker fresh page above a stronger stale one once demoted', () => {
+    // Stale page scores 4 raw hits, fresh scores 3. Demotion (×0.7 → 2.8) flips the order;
+    // without it the stale page would win, which is the bug this rule exists to prevent.
+    writeDatedPage('s2', 'stale.md', daysAgo(200), '# Notes\n\ndeploy deploy deploy deploy\n');
+    writeDatedPage('s2', 'fresh.md', daysAgo(1), '# Notes\n\ndeploy deploy deploy\n');
+
+    const hits = matchPages('deploy', pagesDir('s2'), 3, { staleAfterDays: 60, now: NOW });
+
+    expect(hits.map(h => h.path)).toEqual([join('pages', 'fresh.md'), join('pages', 'stale.md')]);
+    expect(hits[1]?.stale).toBe(true);
+  });
+
+  it('treats a page with no parseable `updated` as fresh, not stale', () => {
+    writePage('s3', 'undated.md', '# Undated\n\ndeploy deploy\n');
+    writeDatedPage('s4', 'bad.md', 'not-a-date', '# Bad\n\ndeploy deploy\n');
+
+    expect(matchPages('deploy', pagesDir('s3'), 3, { staleAfterDays: 60, now: NOW })[0]?.stale).toBe(
+      false
+    );
+    expect(matchPages('deploy', pagesDir('s4'), 3, { staleAfterDays: 60, now: NOW })[0]?.stale).toBe(
+      false
+    );
+  });
+
+  it('evaluates no staleness at all when the caller passes no horizon', () => {
+    writeDatedPage('s5', 'old.md', daysAgo(500), '# Old\n\ndeploy deploy\n');
+
+    const hits = matchPages('deploy', pagesDir('s5'), 3, { now: NOW });
+    expect(hits[0]?.stale).toBe(false);
   });
 });

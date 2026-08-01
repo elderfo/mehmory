@@ -69,6 +69,39 @@ describe('searchScope', () => {
     expect(scan.warnings).toEqual([]);
   });
 
+  it('ranks an archived page below an equally-matching live one, and flags it (A22)', () => {
+    const files = seedScope();
+    const body = '# Widget\n\nwidget widget widget\n';
+    writeFileSync(join(files.pagesDir, 'live.md'), body);
+    writeFileSync(join(files.archiveDir, 'old.md'), body);
+
+    const scan = searchScope('widget', 'proj', files);
+
+    // Identical text, so only the demotion can separate them — and neither is dropped.
+    expect(scan.hits.map(h => h.path)).toEqual(['pages/live.md', 'archive/old.md']);
+    expect(scan.hits[0]?.stale).toBe(false);
+    expect(scan.hits[1]?.stale).toBe(true);
+    expect(scan.hits[1]?.score).toBeLessThan(scan.hits[0]?.score ?? 0);
+  });
+
+  it('demotes a page aged past the horizon, and leaves log.md alone', () => {
+    const files = seedScope();
+    const now = Date.parse('2026-08-01T00:00:00Z');
+    const old = new Date(now - 200 * 24 * 60 * 60 * 1000).toISOString();
+    writeFileSync(
+      join(files.pagesDir, 'stale.md'),
+      `---\nupdated: ${old}\n---\n\n# Widget\n\nwidget widget\n`
+    );
+    writeFileSync(files.logFile, '# Log\n\n## 2020-01-01T00:00:00.000Z integrate | widget\n');
+
+    const scan = searchScope('widget', 'proj', files, { staleAfterDays: 60, now });
+    const byPath = new Map(scan.hits.map(h => [h.path, h]));
+
+    expect(byPath.get('pages/stale.md')?.stale).toBe(true);
+    // The log records what happened; it cannot go out of date, so it is never demoted.
+    expect(byPath.get('log.md')?.stale).toBe(false);
+  });
+
   it('over the file cap, scans only the newest files and warns rather than truncating silently', () => {
     const files = seedScope();
     const now = Date.now();

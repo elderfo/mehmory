@@ -14,6 +14,11 @@
 import { join } from 'node:path';
 import { listDir, pathExists, readFile, stat } from './fs.js';
 import { tokenize } from './match.js';
+import {
+  ARCHIVED_SCORE_MULTIPLIER,
+  isStalePage,
+  STALE_SCORE_MULTIPLIER,
+} from '../schema/format.js';
 
 /** Above this many combined pages+archive files in one scope, scan only the newest. */
 export const DEFAULT_FILE_CAP = 2000;
@@ -29,6 +34,12 @@ export interface SearchHit {
   readonly scope: string;
   readonly score: number;
   readonly snippet: string;
+  /**
+   * True when the hit was demoted (A22): a page past `staleAfterDays`, or anything under
+   * `archive/`. Demoted hits are never dropped from the result — they rank lower and
+   * carry this flag so the caller can label them.
+   */
+  readonly stale: boolean;
 }
 
 /** The files one scope's scan reads. */
@@ -41,6 +52,13 @@ export interface SearchFiles {
 export interface SearchOptions {
   /** Combined pages+archive file cap. Default `DEFAULT_FILE_CAP`. */
   readonly fileCap?: number;
+  /**
+   * `config.decay.archive_days`. Omitted → no page is judged stale by age; anything
+   * under `archive/` is still demoted, since that needs no clock.
+   */
+  readonly staleAfterDays?: number;
+  /** Clock override for tests. */
+  readonly now?: number;
 }
 
 export interface SearchScan {
@@ -55,6 +73,9 @@ interface Doc {
   readonly title: string;
   readonly body: string;
   readonly mtimeMs: number;
+  /** Score multiplier for this doc: 1 when live, below 1 when stale or archived. */
+  readonly demotion: number;
+  readonly stale: boolean;
 }
 
 function countOccurrences(haystack: string, token: string): number {
@@ -99,7 +120,13 @@ function bestSnippet(tokens: ReadonlySet<string>, body: string): string {
     : best;
 }
 
-function markdownDocs(dir: string, pathPrefix: string): Doc[] {
+function markdownDocs(
+  dir: string,
+  pathPrefix: string,
+  archived: boolean,
+  options: SearchOptions,
+  now: number
+): Doc[] {
   const docs: Doc[] = [];
   if (!pathExists(dir)) return docs;
   for (const name of listDir(dir)) {
@@ -115,12 +142,23 @@ function markdownDocs(dir: string, pathPrefix: string): Doc[] {
     } catch {
       continue; // unreadable file: skip, never fail the scan
     }
+    // Archival is the stronger signal, so it wins when a page is both.
+    const agedOut =
+      options.staleAfterDays !== undefined && isStalePage(body, now, options.staleAfterDays);
+    const demotion = archived
+      ? ARCHIVED_SCORE_MULTIPLIER
+      : agedOut
+        ? STALE_SCORE_MULTIPLIER
+        : 1;
+
     const titleLine = /^#\s+(.*)$/m.exec(body);
     docs.push({
       path: join(pathPrefix, name),
       title: `${name.toLowerCase()} ${(titleLine?.[1] ?? '').toLowerCase()}`,
       body,
       mtimeMs,
+      demotion,
+      stale: archived || agedOut,
     });
   }
   return docs;
@@ -147,9 +185,10 @@ export function searchScope(
   if (tokens.size === 0) return { hits: [], warnings };
 
   const fileCap = options.fileCap ?? DEFAULT_FILE_CAP;
+  const now = options.now ?? Date.now();
   let docs = [
-    ...markdownDocs(files.pagesDir, 'pages'),
-    ...markdownDocs(files.archiveDir, 'archive'),
+    ...markdownDocs(files.pagesDir, 'pages', false, options, now),
+    ...markdownDocs(files.archiveDir, 'archive', true, options, now),
   ];
 
   if (docs.length > fileCap) {
@@ -164,7 +203,15 @@ export function searchScope(
   for (const doc of docs) {
     const score = scoreDoc(tokens, doc.body.toLowerCase(), doc.title);
     if (score > 0) {
-      hits.push({ path: doc.path, scope: scopeLabel, score, snippet: bestSnippet(tokens, doc.body) });
+      hits.push({
+        path: doc.path,
+        scope: scopeLabel,
+        // Rounded: a demoted score is fractional, and `12 * 0.7` prints as
+        // 8.399999999999999 in both the text lines and the JSON envelope.
+        score: Math.round(score * doc.demotion * 100) / 100,
+        snippet: bestSnippet(tokens, doc.body),
+        stale: doc.stale,
+      });
     }
   }
 
@@ -176,9 +223,17 @@ export function searchScope(
       logBody = undefined; // unreadable log: skip, never fail the scan
     }
     if (logBody !== undefined) {
+      // The log is an append-only record of what happened, not a claim that can go
+      // stale — it is never demoted.
       const score = scoreDoc(tokens, logBody.toLowerCase(), 'log.md');
       if (score > 0) {
-        hits.push({ path: 'log.md', scope: scopeLabel, score, snippet: bestSnippet(tokens, logBody) });
+        hits.push({
+          path: 'log.md',
+          scope: scopeLabel,
+          score,
+          snippet: bestSnippet(tokens, logBody),
+          stale: false,
+        });
       }
     }
   }
