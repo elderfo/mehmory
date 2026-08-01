@@ -30,7 +30,7 @@ Change these deliberately, and prefer to note *why* somewhere your future self w
 | `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
 | `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
 | `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
-| `decay.archive_days` / `purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move. |
+| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move. |
 | `injection.budget_tokens` | The always-on context cap. Lowering it truncates what every session starts with. |
 
 **Preference — safe to tune to taste, reversible, affects only this machine's ergonomics.**
