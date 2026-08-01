@@ -228,3 +228,22 @@ confirmation is two invocations (see `docs/CLI.md` and `docs/PRIVACY.md`).
 `doctor` already prints; the remedy is whatever that finding's `fix` names. They are generated
 from the check list, which is why they are described as a shape here rather than enumerated —
 `mehmory doctor` is the authoritative list, and `docs/CLI.md` documents the checks themselves.
+
+## Not an error: the stop nudge never appears under `codex exec`
+
+In an interactive Codex TUI session the Stop hook's once-per-threshold nudge renders as
+`Stop hook (blocked) feedback: …`, the model answers it, and Stop re-fires with
+`stop_hook_active: true` — the same loop-guard cycle as Claude Code.
+
+Under `codex exec` (non-interactive) it does not. Codex accepts the block, but a non-interactive
+run has no follow-up turn to put it in: the run simply ends. Measured against Codex CLI 0.146.0.
+
+**Nothing is lost.** The nudge is the second of two layers. The first — distilling the session's
+transcript delta into the inbox — is deterministic, needs nothing from the model, and runs before
+the block is emitted, so a `codex exec` run captures exactly what an interactive one does. What
+you do not get is the model volunteering the reasoning that never reached the transcript.
+
+This is a property of non-interactive execution, not a bug, and mehmory does not work around it:
+the alternatives (writing the nudge to stderr, blocking a run that cannot answer) would either
+be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
+for it in the prompt — `remember:` works there like anywhere else.

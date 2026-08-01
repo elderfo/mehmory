@@ -156,6 +156,50 @@ export function writeTranscript(
   return path;
 }
 
+/**
+ * Write a Codex rollout JSONL file and return its path.
+ *
+ * Mirrors the measured on-disk shape (`.research/codex-spike/VERDICT.md`): a
+ * `session_meta` envelope whose `payload.id` is the rollout uuid, then `event_msg`
+ * envelopes carrying `user_message` / `agent_message`. Each user turn also gets its
+ * `response_item` echo, because a rollout always has both and the reader must take only
+ * the `event_msg` — a fixture without the echo could not catch double-filing.
+ */
+export function writeCodexRollout(
+  messages: readonly { text: string; role?: 'user' | 'assistant' }[],
+  sessionId = '019fbf44-4f17-7a53-8914-1002bc65fbae'
+): string {
+  const dir = createTempDir('mehmory-codex-rollout');
+  const path = join(dir, `rollout-${sessionId}.jsonl`);
+
+  const lines: string[] = [
+    JSON.stringify({
+      timestamp: '2026-08-01T16:39:12.000Z',
+      type: 'session_meta',
+      payload: { id: sessionId, cwd: '/tmp/project' },
+    }),
+  ];
+  messages.forEach((message, i) => {
+    const role = message.role ?? 'user';
+    const timestamp = `2026-08-01T16:39:${String(20 + i).padStart(2, '0')}.000Z`;
+    lines.push(
+      JSON.stringify({
+        timestamp,
+        type: 'event_msg',
+        payload: { type: role === 'user' ? 'user_message' : 'agent_message', message: message.text },
+      }),
+      JSON.stringify({
+        timestamp,
+        type: 'response_item',
+        payload: { type: 'message', role, content: [{ type: 'input_text', text: message.text }] },
+      })
+    );
+  });
+
+  writeFileSync(path, `${lines.join('\n')}\n`);
+  return path;
+}
+
 /** Contents of the store's errors.log ('' when nothing was logged). */
 export function errorsLog(): string {
   const path = statePath('errors.log');

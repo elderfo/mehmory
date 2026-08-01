@@ -28,8 +28,8 @@ import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { buildInjection } from './injection.js';
 import { estimateTokens } from './tokens.js';
-import { inboxEntryId, type InboxEntry } from '../schema/format.js';
-import { readTranscript } from '../transcript/reader.js';
+import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
+import { readSession } from '../transcript/host.js';
 import { distill } from '../distill/distill.js';
 
 /** Absolute paths of the files a hook reads or writes for one project scope. */
@@ -190,12 +190,18 @@ export interface CaptureResult {
  * reset each other. Text is redacted here as well as inside `distill` — this module is
  * the write boundary, and criterion 14 puts the filter at every one of them.
  *
+ * `host` selects the on-disk reader (`readSession`) *and* is stamped on every entry, so
+ * a Codex rollout is parsed as one and attributed as one. It is a required argument
+ * rather than a defaulted one on purpose: a silent default is exactly how a Codex
+ * capture would mis-attribute itself with no type error (issue #20).
+ *
  * Never throws: an absent or unreadable transcript yields an empty delta plus an
  * `errors.log` entry.
  */
 export function distillDelta(
   sessionId: string,
   transcriptPath: string | undefined,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry[] {
   if (!transcriptPath) return [];
@@ -203,7 +209,7 @@ export function distillDelta(
   return failOpen(
     () => {
       const cursor = readSessionState(sessionId).cursor;
-      const { records, skipped, endOffset } = readTranscript(transcriptPath, cursor.offset);
+      const { records, skipped, endOffset } = readSession(transcriptPath, host, cursor.offset);
 
       const total = records.length + skipped;
       if (total > 0 && (skipped / total) * 100 > config.distill.max_loss_percent) {
@@ -220,6 +226,7 @@ export function distillDelta(
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
+        host,
         ts,
       }));
 
@@ -241,9 +248,10 @@ export function captureDelta(
   sessionId: string,
   transcriptPath: string | undefined,
   key: string,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): CaptureResult {
-  const entries = distillDelta(sessionId, transcriptPath, config);
+  const entries = distillDelta(sessionId, transcriptPath, host, config);
   if (entries.length === 0) return { appended: 0, entries };
   const { appended } = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
   return { appended, entries };
@@ -253,11 +261,12 @@ export function captureDelta(
 export function rememberEntry(
   text: string,
   sessionId: string,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry {
   const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
-  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, ts };
+  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, host, ts };
 }
 
 /** Append one `## <iso> <op> | <summary>` line to a scope's log.md (spec log format). */
@@ -313,7 +322,21 @@ export function applyDistillJob(
       typeof e['src'] === 'string' &&
       typeof e['ts'] === 'string'
     ) {
-      entries.push({ id: e['id'], text: redact(e['text'], config.secrets), src: e['src'], ts: e['ts'] });
+      // The queued payload is JSON round-tripped, so `host` survives as a plain string:
+      // narrow it back rather than dropping it, or a Codex session's deferred entries
+      // would land attributed to Claude Code by the serializer's default.
+      const rawHost = e['host'];
+      const host =
+        typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
+          ? (rawHost as InboxHost)
+          : undefined;
+      entries.push({
+        id: e['id'],
+        text: redact(e['text'], config.secrets),
+        src: e['src'],
+        ...(host !== undefined ? { host } : {}),
+        ts: e['ts'],
+      });
     }
   }
   if (entries.length === 0) return 0;
@@ -375,6 +398,7 @@ export function finalizeSession(
   sessionId: string,
   transcriptPath: string | undefined,
   project: string,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): FinalizeSessionResult {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
@@ -392,7 +416,7 @@ export function finalizeSession(
 
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDelta(sessionId, transcriptPath, config);
+    const entries = distillDelta(sessionId, transcriptPath, host, config);
     if (entries.length > 0) {
       enqueueJob(distillJobPayload(project, entries), 'distill-final');
     }

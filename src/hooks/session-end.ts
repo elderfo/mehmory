@@ -10,7 +10,7 @@
 import { runHook } from '../core/hook.js';
 import { finalizeSession } from '../core/capture.js';
 
-runHook('SessionEnd', (input, project) => {
-  const result = finalizeSession(input.session_id, input.transcript_path, project);
+runHook('SessionEnd', (input, project, host) => {
+  const result = finalizeSession(input.session_id, input.transcript_path, project, host);
   return { stats: { captured_entries: result.capturedEntries } };
 });
