@@ -49,8 +49,11 @@ jobs:
       - name: Build site
         run: pnpm docs:build
 
-      - uses: actions/configure-pages@v5
-
+      # No `actions/configure-pages` step: it calls the Pages API, which would force this
+      # job's token up to `pages: write`, and its only output we could use is `base_path`
+      # — which VitePress gets from the hardcoded `base` in site/.vitepress/config.mts.
+      # Pages must be set to "Source: GitHub Actions" in repository settings for the
+      # deploy job to succeed.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/.vitepress/dist
