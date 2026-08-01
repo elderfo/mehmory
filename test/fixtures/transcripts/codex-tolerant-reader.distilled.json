@@ -1,0 +1,24 @@
+[
+  {
+    "id": "9c864da37e4b57156ed5d0f81619d4252c7aab4f53f9b556072d72c768cfd8e6",
+    "pattern": "user_message",
+    "content": "Was this already done?",
+    "source": {
+      "sessionId": "bb000000-0000-4000-8000-000000000001",
+      "recordUuid": "12f800d7c1304a5be948a91f58a689f0",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "f7d8c547e4bd9ed8992c2bef9dfef59a831df5eb46ccb65db89d62a7852c8949",
+    "pattern": "user_message",
+    "content": "Follow the skill in commit-push-pr",
+    "source": {
+      "sessionId": "bb000000-0000-4000-8000-000000000001",
+      "recordUuid": "dc6983b64f9aa4772b213cd193402c66",
+      "recordType": "message",
+      "lineNumber": 2
+    }
+  }
+]
