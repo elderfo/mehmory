@@ -97,7 +97,11 @@ mehmory/
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
     ├── CONFIG.md              # run 3: all 14 config groups, real defaults, unhonored keys (X)
-    └── UPGRADE.md             # run 3: schema_version drift (X)
+    ├── UPGRADE.md             # run 3: schema_version drift (X)
+    └── agents/                # where the engineering skills look for repo conventions:
+        ├── issue-tracker.md   # GitHub Issues via `gh`
+        ├── triage-labels.md   # the five canonical triage roles
+        └── domain.md          # doc-consumer rules; points ADRs at WORLD_MODEL.md
 ```
 
 ## Working directories
@@ -260,3 +264,17 @@ Later subtasks register additional codes via `registerErrorCode(code, kind)` in 
   `description` fields (~650 tokens, capped at 800 combined / 160 each, asserted in
   `test/plugin-skills-layout.test.ts`). Both ceilings are deliberate. Raising one is a
   decision to make in a commit that says why, not something to discover after the fact.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `elderfo/mehmory`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label named after its role. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. ADRs live in `docs/WORLD_MODEL.md`, not `docs/adr/`. See `docs/agents/domain.md`.
