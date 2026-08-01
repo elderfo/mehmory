@@ -235,6 +235,13 @@ Later subtasks register additional codes via `registerErrorCode(code, kind)` in 
 - Worked examples from the spec are test vectors (done-when criterion 5)
 - No pytest/mocha fixtures; one simple setup file per suite
 - Test coverage: every numbered criterion has ≥1 assertion
+- **Retrieval changes are judged by the golden set, not by feel.**
+  `test/fixtures/golden-queries.json` holds a fixed miniature wiki plus the queries a user
+  would type at it; `test/retrieval-golden.test.ts` reports Recall@1 and Recall@3 over it.
+  Run it before and after any change to weighting, tokenizing, stopwords or scoring, and
+  record the new numbers in that file's measurement block. The paraphrase split (queries
+  sharing no vocabulary with their target page) is reported separately — it is the
+  measured size of what keyword matching cannot do.
 - **Always-on context is budgeted, and the budget is a test.** Two things load before the
   user types anything: the `SessionStart` injection frame (capped at
   `injection.budget_tokens`, asserted in `test/injection.test.ts`) and the six skill
