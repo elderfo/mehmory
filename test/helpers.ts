@@ -14,29 +14,30 @@ export function createTempDir(prefix: string): string {
 }
 
 /**
- * True when `dir` is a throwaway temp directory — i.e. safe to use as MEHMORY_HOME.
+ * True when `dir` is a throwaway temp directory — i.e. safe to use as MEHMORY_HOME (or,
+ * with `realDirName: '.codex'`, as CODEX_HOME).
  *
  * The guard is positive (must be under the OS temp dir), not a blocklist of the real
  * home: a test that computes the wrong path fails here rather than writing somewhere
- * unexpected that merely isn't `~/.mehmory`.
+ * unexpected that merely isn't the real store.
  */
-export function isHermeticHome(dir: string | undefined): boolean {
+export function isHermeticHome(dir: string | undefined, realDirName = '.mehmory'): boolean {
   if (!dir) return false;
   const resolved = resolve(dir);
-  if (resolved === resolve(join(homedir(), '.mehmory'))) return false;
+  if (resolved === resolve(join(homedir(), realDirName))) return false;
   return resolved.startsWith(resolve(tmpdir()));
 }
 
 /**
  * Environment for a spawned subprocess (a built `hooks/*.mjs` fixture test).
  *
- * MUST be used instead of `process.env` when spawning: the in-process MEHMORY_HOME
- * guard cannot see a child that inherited the developer's real home. `HOME` is
- * redirected too, so a child that falls back to `~/.mehmory` or reads `~/.claude`
- * still lands in the temp dir (criterion 21).
+ * MUST be used instead of `process.env` when spawning: the in-process MEHMORY_HOME /
+ * CODEX_HOME guards cannot see a child that inherited the developer's real home. `HOME`
+ * is redirected too, so a child that falls back to `~/.mehmory`, `~/.codex`, or reads
+ * `~/.claude` still lands in the temp dir (criterion 21).
  *
- * Throws if called outside a test (no hermetic MEHMORY_HOME set) — failing loudly is
- * the point of the guard.
+ * Throws if called outside a test (no hermetic MEHMORY_HOME/CODEX_HOME set) — failing
+ * loudly is the point of the guard.
  */
 export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const home = process.env.MEHMORY_HOME;
@@ -46,18 +47,29 @@ export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessE
         'Call this inside a test, after the setup hook has created one.'
     );
   }
+  const codexHome = process.env.CODEX_HOME;
+  if (codexHome === undefined || !isHermeticHome(codexHome, '.codex')) {
+    throw new Error(
+      `hermeticEnv: CODEX_HOME is ${codexHome ?? '(unset)'}, not a temp dir. ` +
+        'Call this inside a test, after the setup hook has created one.'
+    );
+  }
 
-  const env = { ...process.env, MEHMORY_HOME: home, HOME: home, ...extra };
+  const env = { ...process.env, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
 
   // `extra` is applied last so a test can point HOME at a fake ~/.claude (see
   // createFakeClaudeHome) — which also means `extra` can punch straight through the
-  // redirect above. Re-check afterwards: this is the only guard a CLI subprocess gets,
-  // since the in-process MEHMORY_HOME check in setup.ts cannot see a child.
-  for (const key of ['MEHMORY_HOME', 'HOME'] as const) {
-    if (!isHermeticHome(env[key])) {
+  // redirects above. Re-check afterwards: this is the only guard a CLI subprocess gets,
+  // since the in-process MEHMORY_HOME/CODEX_HOME checks in setup.ts cannot see a child.
+  for (const [key, realDirName] of [
+    ['MEHMORY_HOME', '.mehmory'],
+    ['HOME', '.mehmory'],
+    ['CODEX_HOME', '.codex'],
+  ] as const) {
+    if (!isHermeticHome(env[key], realDirName)) {
       throw new Error(
         `hermeticEnv: ${key} would be ${env[key]} in the child, not a temp dir. ` +
-          'A spawned CLI must not be able to reach the real ~/.mehmory or ~/.claude.'
+          'A spawned CLI must not be able to reach the real ~/.mehmory, ~/.codex, or ~/.claude.'
       );
     }
   }
