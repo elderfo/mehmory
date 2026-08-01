@@ -17,7 +17,15 @@ import { buildScopeInjection } from '../src/core/capture.js';
 import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
-import { errorsLog, keyFor, outputJson, runHook, seedStore } from './hook-fixture.js';
+import {
+  errorsLog,
+  keyFor,
+  outputJson,
+  readIfPresent,
+  runHook,
+  seedStore,
+  statsLines,
+} from './hook-fixture.js';
 
 /** Overwrite the store's config.json (initStore writes an empty one). */
 function writeConfig(config: Record<string, unknown>): void {
@@ -159,6 +167,48 @@ describe('stop.capture_threshold reaches the Stop hook', () => {
 
     const second = runHook('stop', { session_id: 's1' }, { cwd });
     expect(outputJson(second)['decision']).toBe('block');
+  });
+});
+
+describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
+  let cwd: string;
+  let key: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = keyFor(cwd);
+    seedStore(key);
+  });
+
+  const remember = (host: string): ReturnType<typeof runHook> =>
+    runHook(
+      'user-prompt-submit',
+      { session_id: 's1', prompt: 'remember: a durable decision from this session' },
+      { cwd, args: [host] }
+    );
+
+  it('a disabled harness captures nothing and stays silent, but still records a stat', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = remember('codex');
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe('');
+    expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+  });
+
+  it('leaves the other harness capturing normally', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = remember('claude-code');
+    expect(run.status).toBe(0);
+    expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toContain(
+      'a durable decision'
+    );
+  });
+
+  it('captures normally for both harnesses on the untouched default', () => {
+    expect(remember('codex').stdout).toContain('captured to inbox');
   });
 });
 
