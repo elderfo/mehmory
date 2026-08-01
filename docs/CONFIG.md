@@ -231,3 +231,21 @@ a hook is found disabled.
 Not a `config.json` key — an environment variable that overrides the store's location for
 every command and hook. Every path example in this document, and in every other doc in this
 set, should be read relative to `$MEHMORY_HOME` when it's set, not literally `~/.mehmory`.
+
+## `CODEX_HOME`
+
+Also not a `config.json` key — the environment variable Codex itself uses for its
+configuration directory, honored by `mehmory init --host codex` and by `mehmory doctor`'s
+Codex checks. Unset, both read `~/.codex`.
+
+Two files there are mehmory's business, and **neither belongs to mehmory**:
+
+| File | What mehmory does to it |
+|---|---|
+| `$CODEX_HOME/hooks.json` | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched. |
+| `$CODEX_HOME/config.toml` | Sets `[features] hooks = true`, which Codex requires before any hook runs. Nothing else in the file is read or rewritten, and uninstall never turns it back off. |
+
+Before either file is modified it is copied to `<file>.mehmory.bak`. A run that changes
+nothing takes no backup, so that copy always holds the state from just before the last real
+change. See `docs/CLI.md` for the merge rules and `docs/TROUBLESHOOTING.md` for the
+`E_CODEX_*` codes `doctor` reports against these paths.
