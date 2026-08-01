@@ -45,22 +45,22 @@ jobs:
           git tag -f "$GITHUB_REF_NAME"
           git push origin "$GITHUB_REF_NAME" --force
 
-  # Inert this run: no npm token exists yet and no tag is meant to publish.
+  # Publishes to the repo owner's GitHub Packages registry, not npmjs.org. The
+  # package is scoped `@elderfo/*` (GitHub Packages requires the scope to match the
+  # owner) and `publishConfig.registry` in package.json pins the same URL, so a local
+  # `pnpm publish` lands in the same place as this job.
   #
-  # GitHub does not provide the `secrets` context inside a job-level `if:` — only
-  # `github`, `needs`, `vars` and `inputs` are available there (confirmed against
-  # GitHub's own context-availability documentation:
-  # https://docs.github.com/en/actions/learn-github-actions/contexts). A job-level
-  # `if: ... && secrets.NPM_TOKEN != ''` doesn't skip the job — it fails the whole
-  # workflow to load, taking `build-tag` down with it. So the job-level `if:` below
-  # only names the tag ref (which *is* available there), and the token check moves
-  # to the one step that actually needs it: `env` *is* available in a step-level
-  # `if:`, so the publish step's own `env:` block pulls the secret in, and its `if:`
-  # reads that env var instead of `secrets` directly.
+  # No `NPM_TOKEN` secret is involved: the default `GITHUB_TOKEN` can publish packages
+  # owned by this repo, given `packages: write` below. That also removes the
+  # secrets-context problem the previous npmjs version worked around — there is no
+  # secret to check for, so the job-level `if:` is just the tag ref.
   publish-npm:
     needs: build-tag
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -68,11 +68,19 @@ jobs:
         with:
           version: 9
 
+      # `scope` is not optional here. Given `registry-url` alone, setup-node writes a
+      # bare `registry=` line into the .npmrc it points NPM_CONFIG_USERCONFIG at, which
+      # redirects *every* dependency resolution — including the `pnpm install` below —
+      # at GitHub Packages, where the public devDependencies do not exist. With `scope`
+      # it writes `@elderfo:registry=` instead, so installs keep using npmjs and only
+      # this package's scope resolves to GitHub Packages. The auth token line is written
+      # for the registry host either way, so publishing still authenticates.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@elderfo'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -80,9 +88,7 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Publish to npm
-        if: env.NPM_TOKEN != ''
+      - name: Publish to GitHub Packages
         run: pnpm publish --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

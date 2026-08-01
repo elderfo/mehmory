@@ -1,23 +1,25 @@
 /**
- * Criterion 18: the npm publish job must be **inert** — gated on both a `v*` tag and
- * `secrets.NPM_TOKEN`, neither of which exist yet — without breaking the workflow's
- * ability to load at all.
+ * The publish job targets the owner's **GitHub Packages** registry, not npmjs.org.
+ * Three things have to agree for a `v*` tag to publish, and nothing in the workflow
+ * fails loudly if they drift apart — the publish just lands in the wrong registry or
+ * 401s — so they are pinned here:
  *
- * GitHub does not provide the `secrets` context inside a job-level `if:` — only
- * `github`, `needs`, `vars` and `inputs` are available there (confirmed against
- * GitHub's context-availability documentation:
- * https://docs.github.com/en/actions/learn-github-actions/contexts). A job-level
- * `if: ... && secrets.NPM_TOKEN != ''` doesn't skip the job; it fails the whole
- * workflow to parse, taking `build-tag` — the fix for BLOCKER 2 — down with it. So this
- * test pins the actual GitHub-accepted shape: the job-level `if:` names only the tag
- * ref, and the token check lives in a step-level `if:` reading an `env` var that step's
- * own `env:` block populates from the secret (`env` *is* available in a step-level
- * `if:`; `secrets` still is not).
+ *   1. `package.json` is scoped `@elderfo/*`. GitHub Packages rejects a publish whose
+ *      scope doesn't match the owning account.
+ *   2. `publishConfig.registry` and the workflow's `registry-url` name the same host,
+ *      so a local `pnpm publish` and a tagged CI publish land in the same place — and
+ *      setup-node pins `scope`, without which `registry-url` redirects every dependency
+ *      install in the job at GitHub Packages and breaks `pnpm install`.
+ *   3. The job carries `packages: write` and authenticates with `GITHUB_TOKEN`. The
+ *      default token can publish this repo's own packages, so no `NPM_TOKEN` secret
+ *      exists — and with no secret to test for, the previous version's step-level
+ *      `env`-var dance (a workaround for `secrets` being unavailable in a job-level
+ *      `if:`) is gone. The job-level `if:` names only the tag ref, which *is* an
+ *      allowed context there.
  *
- * No YAML library is added for this (out of scope — package.json is unit L's file, and
- * this workflow's structure is small, fixed, and hand-authored, not generated). The
- * helper below isolates a job's own block by indentation, which is all these
- * assertions need.
+ * No YAML library is added for this (out of scope — this workflow's structure is small,
+ * fixed, and hand-authored, not generated). The helper below isolates a job's own block
+ * by indentation, which is all these assertions need.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,6 +27,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const workflowPath = join(process.cwd(), '.github', 'workflows', 'release.yml');
+const packageJsonPath = join(process.cwd(), 'package.json');
+const REGISTRY = 'https://npm.pkg.github.com';
+const SCOPE = '@elderfo';
 
 function loadWorkflow(): string {
   return readFileSync(workflowPath, 'utf-8');
@@ -58,7 +63,7 @@ function jobBlock(source: string, jobName: string): string {
   return block.join('\n');
 }
 
-describe('release workflow — publish-npm stays inert without breaking build-tag', () => {
+describe('release workflow — publish-npm targets GitHub Packages', () => {
   const source = loadWorkflow();
 
   it('build-tag exists and force-adds the built hook bundles into the tagged tree', () => {
@@ -82,13 +87,45 @@ describe('release workflow — publish-npm stays inert without breaking build-ta
     expect(jobIfLine).not.toMatch(/secrets\./);
   });
 
-  it('the publish step itself is gated on a step-level if: reading an env var populated from the secret', () => {
+  it('publish-npm has packages: write, without which GITHUB_TOKEN cannot publish', () => {
     const block = jobBlock(source, 'publish-npm');
-    const stepStart = block.indexOf('Publish to npm');
-    expect(stepStart, 'the "Publish to npm" step was not found').toBeGreaterThan(-1);
+    expect(block).toMatch(/permissions:\s*\n(?:\s+\w+:\s*\w+\n)*\s*packages:\s*write/);
+  });
+
+  it('the publish step authenticates with GITHUB_TOKEN and needs no NPM_TOKEN secret', () => {
+    const block = jobBlock(source, 'publish-npm');
+    const stepStart = block.indexOf('Publish to GitHub Packages');
+    expect(
+      stepStart,
+      'the "Publish to GitHub Packages" step was not found'
+    ).toBeGreaterThan(-1);
     const stepBlock = block.slice(stepStart);
 
-    expect(stepBlock).toMatch(/if:\s*env\.NPM_TOKEN\s*!=\s*['"]{2}/);
-    expect(stepBlock).toMatch(/NPM_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/);
+    expect(stepBlock).toMatch(/NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}/);
+    // The NPM_TOKEN secret is gone; a leftover reference means the migration is half
+    // applied and the publish would authenticate against the wrong registry.
+    expect(block).not.toMatch(/NPM_TOKEN/);
+  });
+
+  it("setup-node's registry-url matches package.json's publishConfig.registry", () => {
+    const block = jobBlock(source, 'publish-npm');
+    expect(block).toContain(`registry-url: '${REGISTRY}'`);
+
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as {
+      name: string;
+      publishConfig?: { registry?: string };
+    };
+    expect(pkg.publishConfig?.registry).toBe(REGISTRY);
+    // GitHub Packages rejects a publish whose scope doesn't match the owning account.
+    expect(pkg.name.startsWith(`${SCOPE}/`)).toBe(true);
+  });
+
+  it("setup-node pins the scope, so registry-url doesn't redirect dependency installs", () => {
+    const block = jobBlock(source, 'publish-npm');
+    // Without `scope`, setup-node writes a bare `registry=` line and every dependency
+    // resolves against GitHub Packages — the `pnpm install` in this same job then fails
+    // on packages that only exist on npmjs. This is the regression guard for that.
+    expect(block).toContain(`scope: '${SCOPE}'`);
+    expect(block).toMatch(/pnpm install --frozen-lockfile/);
   });
 });
