@@ -235,3 +235,9 @@ Later subtasks register additional codes via `registerErrorCode(code, kind)` in 
 - Worked examples from the spec are test vectors (done-when criterion 5)
 - No pytest/mocha fixtures; one simple setup file per suite
 - Test coverage: every numbered criterion has ≥1 assertion
+- **Always-on context is budgeted, and the budget is a test.** Two things load before the
+  user types anything: the `SessionStart` injection frame (capped at
+  `injection.budget_tokens`, asserted in `test/injection.test.ts`) and the six skill
+  `description` fields (~650 tokens, capped at 800 combined / 160 each, asserted in
+  `test/plugin-skills-layout.test.ts`). Both ceilings are deliberate. Raising one is a
+  decision to make in a commit that says why, not something to discover after the fact.
