@@ -1,0 +1,7 @@
+{"type":"last-prompt","leafUuid":"aa000000-0000-4000-8000-000000000000","sessionId":"real-session"}
+{"type":"mode","mode":"normal","sessionId":"real-session"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"<local-command-caveat>ignore me</local-command-caveat>"},"isMeta":true,"uuid":"aa000000-0000-4000-8000-000000000001","sessionId":"real-session","cwd":"/home/u/proj"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Can you help me refactor this function?"},"uuid":"aa000000-0000-4000-8000-000000000002","sessionId":"real-session","cwd":"/home/u/proj"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Sure."}]},"uuid":"aa000000-0000-4000-8000-000000000003","sessionId":"real-session"}
+{"parentUuid":null,"type":"user","message":{"role":"user","content":[{"type":"text","text":"Let's cache the API responses instead."}]},"uuid":"aa000000-0000-4000-8000-000000000004","sessionId":"real-session"}
+{"parentUuid":null,"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]},"uuid":"aa000000-0000-4000-8000-000000000005","sessionId":"real-session"}

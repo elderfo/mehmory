@@ -49,7 +49,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
     description: 'A user message containing explicit decision language',
     matches: (rec: Record<string, unknown>) => {
       // A decision marker is a user message that contains decision keywords.
-      if (rec.type !== 'message' || rec.role !== 'user') {
+      if (!isUserMessage(rec)) {
         return false;
       }
       const text = extractMessageText(rec);
@@ -69,7 +69,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
     name: 'error_resolution',
     description: 'A user message addressing or resolving an error',
     matches: (record: Record<string, unknown>) => {
-      if (record.type !== 'message' || record.role !== 'user') {
+      if (!isUserMessage(record)) {
         return false;
       }
       const text = extractMessageText(record);
@@ -89,7 +89,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
     name: 'correction_pattern',
     description: 'A user correction or clarification of a previous assistant output',
     matches: (record: Record<string, unknown>) => {
-      if (record.type !== 'message' || record.role !== 'user') {
+      if (!isUserMessage(record)) {
         return false;
       }
       const text = extractMessageText(record);
@@ -110,9 +110,7 @@ export const DISTILL_PATTERNS: Pattern[] = [
   {
     name: 'user_message',
     description: 'A direct user message to capture',
-    matches: (record: Record<string, unknown>) => {
-      return record.type === 'message' && record.role === 'user';
-    },
+    matches: (record: Record<string, unknown>) => isUserMessage(record),
     extract: (record: Record<string, unknown>) => {
       const text = extractMessageText(record);
       return text ? text.slice(0, 500) + (text.length > 500 ? '...' : '') : null;
@@ -121,9 +119,27 @@ export const DISTILL_PATTERNS: Pattern[] = [
 ];
 
 /**
+ * Is this record a user turn?
+ *
+ * Claude Code writes `{type: 'user', message: {role: 'user', content}}` — the record
+ * type IS the role and the payload is nested. The flat `{type: 'message', role: 'user'}`
+ * shape is also accepted because the fixtures and the hook-side callers use it.
+ *
+ * `isMeta` records are hook- and command-injected text (session-start context, slash
+ * command stdout) that the user never typed; distilling them would file the harness's
+ * own output as the user's memory.
+ */
+function isUserMessage(record: Record<string, unknown>): boolean {
+  if (record.isMeta === true) return false;
+  if (record.type === 'user') return true;
+  return record.type === 'message' && record.role === 'user';
+}
+
+/**
  * Extract text content from a message record.
  *
- * Looks for common message text fields.
+ * Looks for common message text fields, then descends into the nested `message`
+ * envelope Claude Code wraps real turns in.
  */
 function extractMessageText(record: Record<string, unknown>): string | null {
   if (typeof record.text === 'string') {
@@ -147,6 +163,10 @@ function extractMessageText(record: Record<string, unknown>): string | null {
       }
     }
     return textBlocks.length > 0 ? textBlocks.join('\n') : null;
+  }
+  // Claude Code's real shape: the turn lives one level down under `message`.
+  if (typeof record.message === 'object' && record.message !== null) {
+    return extractMessageText(record.message as Record<string, unknown>);
   }
   return null;
 }
