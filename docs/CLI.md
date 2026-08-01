@@ -213,3 +213,39 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
 - Within that limit, `--session` reaches **every inbox in the store**, not just the scope you
   would otherwise be in. Session ids are unique, and a session that touched two projects is
   exactly the case where a scoped purge would silently leave a copy behind.
+
+### `mehmory inbox-tx <append|snapshot|clear> [--json]`
+
+The transactional inbox helper (A15), reachable through the CLI so a skill can call the
+`mehmory` binary directly instead of resolving a path through a Claude-Code-specific
+plugin-root variable. Same helper, same transactional guarantees, one more entry point
+(A17) — `hooks/inbox-tx.mjs`, the bundled script skills previously shelled out to, and
+this command both call the same `runInboxTx` implementation in `src/core/inbox-tx.ts`,
+so neither is a second implementation of the other.
+
+Input contract is unchanged: the subcommand is the first argument, and a JSON object goes
+on **stdin**, not through flags — this is the one command whose payload isn't argv, because
+the payload (entry text, a project key, a snapshot id) doesn't belong on a command line a
+shell history might keep.
+
+```bash
+echo '{"inbox":"<path>/inbox.md","key":"<project key>","entries":[{"text":"...","src":"..."}]}' \
+  | mehmory inbox-tx append     # -> {"appended":n,"skipped":m}
+echo '{"inbox":"<path>/inbox.md","key":"<project key>"}' \
+  | mehmory inbox-tx snapshot   # -> {"snapshotId":"...","entries":[...]}
+echo '{"inbox":"<path>/inbox.md","key":"<project key>","snapshotId":"<id>"}' \
+  | mehmory inbox-tx clear      # -> {"removed":n}
+```
+
+Without `--json`, stdout is exactly the result object above on one line — identical to
+`hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the
+other. With `--json`, the result is wrapped in the standard envelope as `data`.
+
+- Bad or missing input (unparseable stdin, a missing field, an unknown subcommand, a
+  malformed or already-cleared `snapshotId`) is a usage error: exit **1**, code `E_USAGE`.
+  This departs from `hooks/inbox-tx.mjs`'s own convention (a bare `inbox-tx: <message>`
+  line on stderr, no code) — the CLI reports the same failures through its own envelope
+  and exit-code conventions instead.
+- This is the one command that never checks `storeExists()` first: the caller supplies the
+  inbox path directly, and a skill snapshotting or clearing an inbox that doesn't exist yet
+  is exactly the case `readInboxEntries` already treats as "no entries", not an error.

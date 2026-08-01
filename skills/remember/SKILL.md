@@ -17,11 +17,9 @@ load. This skill exists for multi-fact saves and for when the user asks in prose
 
 ```bash
 HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
-HELPER="${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs"
 ```
 
-If `$CLAUDE_PLUGIN_ROOT` is unset, locate the helper with
-`find ~ -name inbox-tx.mjs -path '*/hooks/*' 2>/dev/null | head -1`.
+If `mehmory` is not on PATH, install it first (`npm install -g @elderfo/mehmory`).
 
 Read the project key and the current session id from the newest session-state file:
 
@@ -35,7 +33,7 @@ Use its `project_key` for `key` and its `session_id` for `src`. Then append:
 ```bash
 echo '{"inbox":"'"$HOME_DIR"'/projects/<key>/inbox.md","key":"<key>",
        "entries":[{"text":"<the fact, one line>","src":"<session id>"}]}' \
-  | node "$HELPER" append
+  | mehmory inbox-tx append
 ```
 
 Stdout is `{"appended":n,"skipped":m}`; `skipped` means that exact text was already in

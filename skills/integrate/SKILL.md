@@ -10,17 +10,16 @@ Turn raw inbox entries into the wiki. This is editorial work: you decide where a
 belongs, whether it supersedes something already written, and how to say it in one line.
 The only mechanical step — clearing the inbox — goes through a helper, never through Edit.
 
-## 1. Locate the store, the project, and the helper
+## 1. Locate the store and the project
 
 ```bash
 HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
-HELPER="${CLAUDE_PLUGIN_ROOT:-$HOME_DIR/../mehmory}/hooks/inbox-tx.mjs"
 ls "$HOME_DIR"
 ```
 
-If `$HELPER` does not exist, find it before doing anything else
-(`find ~ -name inbox-tx.mjs -path '*/hooks/*' 2>/dev/null | head -1`). **Do not proceed
-without it** — clearing the inbox by hand loses entries captured mid-integrate.
+If `mehmory` is not on PATH, install it before doing anything else
+(`npm install -g @elderfo/mehmory`). **Do not proceed without it** — clearing the inbox
+by hand loses entries captured mid-integrate.
 
 The project key is cached by the hooks in the newest session-state file:
 
@@ -42,7 +41,7 @@ this file), the scope's `index.md`, and the scope's `inbox.md`.
 ## 3. Snapshot the inbox
 
 ```bash
-echo '{"inbox":"<scope>/inbox.md","key":"<project key>"}' | node "$HELPER" snapshot
+echo '{"inbox":"<scope>/inbox.md","key":"<project key>"}' | mehmory inbox-tx snapshot
 ```
 
 Stdout is `{"snapshotId": "...", "entries": [{"id","text","src","ts"}, ...]}`. Keep the
@@ -91,7 +90,7 @@ the mechanical decay pass — leave them where they are.
 ## 7. Clear the inbox transactionally
 
 ```bash
-echo '{"inbox":"<scope>/inbox.md","key":"<key>","snapshotId":"<id>"}' | node "$HELPER" clear
+echo '{"inbox":"<scope>/inbox.md","key":"<key>","snapshotId":"<id>"}' | mehmory inbox-tx clear
 ```
 
 This removes exactly the snapshotted entries and leaves later ones alone. Clear only
