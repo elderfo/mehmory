@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { HOOK_EVENTS } from '../src/core/environment.js';
+import { VERSION } from '../src/cli/package-info.js';
 
 /** The artifact under test. Vitest's cwd is the repo root. */
 export const CLI = join(process.cwd(), 'dist', 'cli.mjs');
@@ -68,7 +69,11 @@ export function fakeInstalledPlugin(
   into?: string
 ): string {
   const home = into ?? createTempDir('mehmory-claude-home');
-  const installPath = join(home, '.claude', 'plugins', 'cache', 'mehmory', 'mehmory', '0.0.1');
+  // Derived from the manifest rather than a literal. `environment.ts` reads only
+  // `installPath` and never the `version` field, so this is inert as far as the code
+  // under test is concerned — but a pinned literal goes stale at every release and
+  // reads as though it means something.
+  const installPath = join(home, '.claude', 'plugins', 'cache', 'mehmory', 'mehmory', VERSION);
   mkdirSync(join(installPath, 'hooks'), { recursive: true });
   writeFileSync(
     join(installPath, 'hooks', 'hooks.json'),
@@ -79,7 +84,7 @@ export function fakeInstalledPlugin(
     join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({
       version: 2,
-      plugins: { 'mehmory@mehmory': [{ scope: 'user', installPath, version: '0.0.1' }] },
+      plugins: { 'mehmory@mehmory': [{ scope: 'user', installPath, version: VERSION }] },
     })
   );
   return home;

@@ -1,6 +1,6 @@
 {
   "name": "@elderfo/mehmory",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "description": "Memory abstraction layer for Claude Code",
   "license": "MIT",
