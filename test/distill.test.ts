@@ -337,6 +337,71 @@ describe('distill stable ids across resume', () => {
     );
     expect(entries[0]?.id).toBe(computeId('session-invoking', 'msg-legacy'));
   });
+  it('drops slash-command envelopes but keeps their arguments', () => {
+    // Claude Code writes these as `type: 'user'` with no `isMeta` flag, so the meta
+    // filter never saw them and the inbox filled with /reload-plugins transcripts.
+    const records: TranscriptRecord[] = [
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<command-name>/reload-plugins</command-name>\n<command-args></command-args>',
+        },
+        uuid: 'msg-cmd',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: '<local-command-stdout>✓ Installed mehmory.</local-command-stdout>' },
+        uuid: 'msg-stdout',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: '<bash-input>pnpm test</bash-input>\n<bash-stdout>ok</bash-stdout>' },
+        uuid: 'msg-bash',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<command-name>/orchestrate</command-name>\n<command-args>build the thing</command-args>',
+        },
+        uuid: 'msg-args',
+      },
+    ];
+
+    const entries = distill(records, 'session-cmd');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.content).toBe('build the thing');
+  });
+
+  it('keeps user prose that shares a record with a command echo', () => {
+    // One record routinely carries both — a /clear echo, then what the user typed after.
+    // Dropping the whole turn on an envelope match would silently eat the prose, and any
+    // turn that merely quotes one of these tag names while discussing it.
+    const records: TranscriptRecord[] = [
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content:
+            '<command-name>/clear</command-name>\n<local-command-stdout></local-command-stdout>\nthe deploy needs the VPN',
+        },
+        uuid: 'msg-mixed',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: 'why does distill drop <command-name> turns?' },
+        uuid: 'msg-quoting',
+      },
+    ];
+
+    const entries = distill(records, 'session-mixed');
+    expect(entries.map(e => e.content)).toEqual([
+      'the deploy needs the VPN',
+      'why does distill drop <command-name> turns?',
+    ]);
+  });
+
   it('applies the user\'s own secrets.patterns, not just the built-ins', () => {
     // The debt run 3 closes: without the threaded options a direct consumer of
     // `./distill/distill` got built-in patterns only, so a pattern the user configured

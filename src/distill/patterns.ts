@@ -125,9 +125,9 @@ export const DISTILL_PATTERNS: Pattern[] = [
  * type IS the role and the payload is nested. The flat `{type: 'message', role: 'user'}`
  * shape is also accepted because the fixtures and the hook-side callers use it.
  *
- * `isMeta` records are hook- and command-injected text (session-start context, slash
- * command stdout) that the user never typed; distilling them would file the harness's
- * own output as the user's memory.
+ * `isMeta` records are hook-injected text (session-start context) that the user never
+ * typed; distilling them would file the harness's own output as the user's memory.
+ * Slash-command records are NOT flagged `isMeta` — `extractMessageText` unwraps those.
  */
 function isUserMessage(record: Record<string, unknown>): boolean {
   if (record.isMeta === true) return false;
@@ -135,13 +135,46 @@ function isUserMessage(record: Record<string, unknown>): boolean {
   return record.type === 'message' && record.role === 'user';
 }
 
+/** Blocks the harness writes into a user turn: tag and content are both machine text. */
+const NOISE_BLOCKS =
+  /<(command-name|command-message|local-command-stdout|local-command-caveat|bash-input|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>/g;
+
+/** `<command-args>` is the exception — the arguments are what the user actually typed. */
+const COMMAND_ARGS_TAGS = /<\/?command-args>/g;
+
 /**
- * Extract text content from a message record.
+ * Strip the harness's slash-command envelope from a user turn.
+ *
+ * `/reload-plugins` echoes, `<local-command-stdout>` and `!`-mode bash blocks are the
+ * harness talking to itself; filing them as memory produces wiki pages built from
+ * command transcripts. The arguments are the exception — `/orchestrate <a whole project
+ * brief>` puts real user intent inside `<command-args>`.
+ *
+ * Blocks are removed in place rather than the whole turn being discarded, because a
+ * single record routinely carries both: a `/clear` echo followed by real prose the user
+ * typed after it. Discarding on any envelope match would silently eat that prose — and
+ * every turn merely quoting one of these tag names while discussing them.
+ *
+ * @returns the user-authored text, or null when nothing but harness text remains
+ */
+function stripCommandEnvelope(text: string): string | null {
+  const stripped = text.replace(NOISE_BLOCKS, '').replace(COMMAND_ARGS_TAGS, '').trim();
+  return stripped === '' ? null : stripped;
+}
+
+/**
+ * Extract user-authored text content from a message record.
  *
  * Looks for common message text fields, then descends into the nested `message`
- * envelope Claude Code wraps real turns in.
+ * envelope Claude Code wraps real turns in, then strips slash-command wrappers.
  */
 function extractMessageText(record: Record<string, unknown>): string | null {
+  const text = extractRawText(record);
+  return text === null ? null : stripCommandEnvelope(text);
+}
+
+/** The field-walking half of `extractMessageText`, before command unwrapping. */
+function extractRawText(record: Record<string, unknown>): string | null {
   if (typeof record.text === 'string') {
     return record.text;
   }
@@ -166,7 +199,7 @@ function extractMessageText(record: Record<string, unknown>): string | null {
   }
   // Claude Code's real shape: the turn lives one level down under `message`.
   if (typeof record.message === 'object' && record.message !== null) {
-    return extractMessageText(record.message as Record<string, unknown>);
+    return extractRawText(record.message as Record<string, unknown>);
   }
   return null;
 }
