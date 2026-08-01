@@ -12,6 +12,7 @@ import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
 import { resolveHost, type Host } from './host.js';
+import { loadConfig } from './config.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
 export interface HookInput {
@@ -78,8 +79,12 @@ export function renderHookOutput(event: string, result: HookResult): string {
  *
  * The invoking harness travels as `process.argv[2]` — each `hooks.json`/config the
  * plugin writes passes it explicitly (A23) — resolved once here via `resolveHost`,
- * recorded on the stats line, and handed to the body as an argument so nothing below
- * has to read it ambiently (A21).
+ * checked against `config.hosts.<host>.enabled` (the per-harness capture toggle,
+ * issue #25), recorded on the stats line, and handed to the body as an argument so
+ * nothing below has to read it ambiently (A21). A disabled harness skips `body`
+ * entirely — no stdin is read, so there is no capture, no injection and no pointer,
+ * the same silence `/mehmory:pause` promises for a single session, but persistent
+ * and scoped to one harness via config instead.
  *
  * @param event - Hook event name, e.g. `SessionStart`
  * @param body - The hook itself; receives parsed stdin, the project key, and the host
@@ -90,24 +95,27 @@ export function runHook(
 ): void {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
+  const config = loadConfig();
   let result: HookResult = {};
   let project = 'unknown';
 
   try {
-    const input = parseHookInput(readStdin());
-    project = resolveProjectKey(input.cwd ?? process.cwd());
-    // Every hook body reaches for session state, and `.state/<id>.json` with an empty
-    // id is `.state/.json` — one shared file every malformed invocation would pollute.
-    // No session id, no session: log it and stay silent (A2).
-    if (input.session_id.trim() === '') {
-      logError({
-        code: 'E_SESSION_STATE',
-        kind: 'informational',
-        what: `${event} hook received no session_id`,
-        consequence: 'The invocation was skipped; no session state was read or written',
-      });
-    } else {
-      result = body(input, project, host);
+    if (config.hosts[host].enabled) {
+      const input = parseHookInput(readStdin());
+      project = resolveProjectKey(input.cwd ?? process.cwd());
+      // Every hook body reaches for session state, and `.state/<id>.json` with an empty
+      // id is `.state/.json` — one shared file every malformed invocation would pollute.
+      // No session id, no session: log it and stay silent (A2).
+      if (input.session_id.trim() === '') {
+        logError({
+          code: 'E_SESSION_STATE',
+          kind: 'informational',
+          what: `${event} hook received no session_id`,
+          consequence: 'The invocation was skipped; no session state was read or written',
+        });
+      } else {
+        result = body(input, project, host);
+      }
     }
   } catch (err) {
     try {

@@ -81,16 +81,24 @@ Running `init` twice changes nothing on disk.
 #### Codex host
 
 Codex has no plugin mechanism for hooks, so `init` writes the configuration itself — two
-files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONFIG.md`):
+files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONFIG.md`),
+plus the six skills:
 
 - **`hooks.json`** gets one entry per Codex lifecycle event mehmory captures:
   `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. There is no `SessionEnd`
   entry, because Codex has no session-end event.
 - **`config.toml`** gets `[features] hooks = true`, which Codex requires before any hook of
   any tool runs. Already on, and it is left exactly as it was.
+- **`skills/`** gets one directory per skill — `mehmory-remember`, `mehmory-integrate`,
+  `mehmory-lint`, `mehmory-onboard-session`, `mehmory-pause`, `mehmory-resume` — each holding
+  a verbatim copy of the same `SKILL.md` Claude Code loads, the flat, prefix-named layout
+  Codex itself uses (see `gstack-*` for the convention this follows). `mehmory doctor`'s
+  `codex.skills` check looks for exactly this. `--uninstall` removes every `mehmory` /
+  `mehmory-*` directory it finds and nothing else — a foreign skill directory under
+  `skills/` is untouched by either direction.
 
-Both files are shared with every other tool that registers a Codex hook, so both edits are
-merges, never rewrites:
+Both `hooks.json` and `config.toml` are shared with every other tool that registers a Codex
+hook, so both edits are merges, never rewrites:
 
 - Entries mehmory did not write are never read, moved or removed — they survive install,
   re-install and uninstall unchanged.

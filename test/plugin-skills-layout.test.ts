@@ -127,4 +127,27 @@ describe('plugin manifest', () => {
     expect(manifest.version).toBe(pkg.version);
     expect(manifest.description.length).toBeGreaterThan(20);
   });
+
+  // Issue #25: measured live against Codex CLI 0.146.0 — `codex plugin marketplace add`
+  // and `codex plugin add` read this exact file, the same `.claude-plugin/` convention
+  // Claude Code uses. There is no second, Codex-specific manifest format to ship; this
+  // locks the one file working for both harnesses so a future edit that breaks the
+  // shape Codex expects (a `plugins[].source` Codex can't resolve, a missing `name`)
+  // fails here instead of silently in the field.
+  it('doubles as the Codex plugin manifest — one marketplace.json, both harnesses', () => {
+    const marketplace = JSON.parse(readFileSync(resolve('.claude-plugin/marketplace.json'), 'utf-8')) as {
+      name: string;
+      plugins: readonly { name: string; source: string; description: string }[];
+    };
+
+    expect(marketplace.name).toBe('mehmory');
+    expect(marketplace.plugins).toHaveLength(1);
+    const [plugin] = marketplace.plugins;
+    expect(plugin?.name).toBe('mehmory');
+    // A relative path Codex resolves against the marketplace root it was pointed at,
+    // not an absolute path or a URL — this is the shape `codex plugin add` accepted
+    // when this was measured.
+    expect(plugin?.source).toBe('./');
+    expect(plugin?.description.length ?? 0).toBeGreaterThan(20);
+  });
 });

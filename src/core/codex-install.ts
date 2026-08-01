@@ -20,7 +20,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWrite, listDir, pathExists, readFile } from './fs.js';
+import { atomicWrite, listDir, pathExists, readFile, removeDir } from './fs.js';
 import { codexHome } from './home.js';
 import { HOOK_EVENTS, type HookConfigKey } from './environment.js';
 import type { MehmoryError } from './errors.js';
@@ -65,26 +65,55 @@ export function codexConfigFile(): string {
 }
 
 /**
- * Directory holding the built hook bundles this binary should point Codex at.
+ * Resolve `<pkg-root>/<name>`, searching up from the running module until `valid`
+ * accepts a candidate.
  *
- * Resolved from the running module rather than from the plugin registry: the CLI and the
- * bundles ship in the same package (`<pkg>/dist/cli.mjs` and `<pkg>/hooks/*.mjs`), so the
- * binary the user just ran is always the right answer, whether it came from npm or from
- * a checkout.
+ * Shared by every "find a sibling directory of this package" lookup below: the CLI, the
+ * hook bundles and the skill sources all ship in the same package (`<pkg>/dist/cli.mjs`,
+ * `<pkg>/hooks/session-start.mjs`, `<pkg>/skills/<name>/SKILL.md`), so the binary the
+ * user just ran is always the right anchor, whether it came from npm or a checkout.
  */
-export function codexHookBundlesDir(): string {
+function resolvePackageDir(name: string, valid: (_candidate: string) => boolean): string {
   const start = dirname(fileURLToPath(import.meta.url));
   let dir = start;
   for (let up = 0; up < 4; up++) {
     dir = dirname(dir);
-    const candidate = join(dir, 'hooks');
-    // The `.mjs` probe matters: `src/hooks/` holds the TypeScript sources under the same
-    // name, and pointing Codex at those would register commands node cannot run.
-    if (CODEX_HOOK_KEYS.every(key => pathExists(join(candidate, bundleName(key))))) {
-      return candidate;
-    }
+    const candidate = join(dir, name);
+    if (valid(candidate)) return candidate;
   }
-  return join(dirname(start), 'hooks');
+  return join(dirname(start), name);
+}
+
+/**
+ * Directory holding the built hook bundles this binary should point Codex at.
+ *
+ * The `.mjs` probe matters: `src/hooks/` holds the TypeScript sources under the same
+ * name, and pointing Codex at those would register commands node cannot run.
+ */
+export function codexHookBundlesDir(): string {
+  return resolvePackageDir('hooks', candidate =>
+    CODEX_HOOK_KEYS.every(key => pathExists(join(candidate, bundleName(key))))
+  );
+}
+
+/** Directory holding the shipped skill sources (`skills/<name>/SKILL.md`). */
+function codexSkillSourceDir(): string {
+  return resolvePackageDir('skills', candidate => pathExists(candidate) && listDir(candidate).length > 0);
+}
+
+/** `$CODEX_HOME/skills` — where Codex looks for flat, prefix-named skill directories. */
+export function codexSkillsDir(): string {
+  return join(codexHome(), 'skills');
+}
+
+/** True for a Codex skill directory name mehmory owns — `mehmory` or `mehmory-*`. */
+function isMehmorySkillDirName(name: string): boolean {
+  return name === 'mehmory' || name.startsWith('mehmory-');
+}
+
+/** Codex skill directory name for one shipped skill: `remember` → `mehmory-remember`. */
+function codexSkillDirName(skillName: string): string {
+  return `mehmory-${skillName}`;
 }
 
 // ─── Results ───
@@ -100,6 +129,8 @@ export interface CodexReport {
   readonly backups: readonly string[];
   /** What happened to `[features] hooks`. Uninstall never turns it off. */
   readonly featureFlag: 'enabled' | 'already-on' | 'untouched';
+  /** Skill directory names installed under `codexSkillsDir()` (empty after uninstall). */
+  readonly skills: readonly string[];
 }
 
 export type CodexResult =
@@ -108,14 +139,131 @@ export type CodexResult =
 
 // ─── Install / uninstall ───
 
-/** Merge mehmory's hook entries into Codex's config and turn the hooks feature on. */
+/**
+ * Merge mehmory's hook entries into Codex's config, turn the hooks feature on, and copy
+ * the six skills into `codexSkillsDir()` — the doctor check `codex.skills` (`E_CODEX_SKILLS_MISSING`)
+ * cannot pass without the latter.
+ */
 export function installCodex(host: InboxHost): CodexResult {
-  return editCodex(doc => withMehmoryHooks(doc, host), true);
+  const wired = editCodex(doc => withMehmoryHooks(doc, host), true);
+  if (!wired.ok) return wired;
+
+  const skills = writeCodexSkills();
+  if (!skills.ok) return skills;
+
+  return {
+    ok: true,
+    report: {
+      ...wired.report,
+      changed: [...wired.report.changed, ...skills.changed],
+      skills: skills.names,
+    },
+  };
 }
 
-/** Remove mehmory's hook entries, leaving every other tool's entries and the flag alone. */
+/**
+ * Remove mehmory's hook entries and skill directories, leaving every other tool's
+ * entries, the feature flag, and any foreign `skills/` directory alone.
+ */
 export function uninstallCodex(): CodexResult {
-  return editCodex(withoutMehmoryHooks, false);
+  const wired = editCodex(withoutMehmoryHooks, false);
+  if (!wired.ok) return wired;
+
+  const removed = removeCodexSkills();
+  if (!removed.ok) return removed;
+
+  return {
+    ok: true,
+    report: { ...wired.report, changed: [...wired.report.changed, ...removed.changed], skills: [] },
+  };
+}
+
+interface SkillWriteResult {
+  readonly ok: true;
+  /** Skill directory names written, e.g. `mehmory-remember`. */
+  readonly names: readonly string[];
+  /** Files actually written — empty when every skill was already up to date. */
+  readonly changed: readonly string[];
+}
+
+interface SkillRemoveResult {
+  readonly ok: true;
+  /** Directories actually removed. */
+  readonly changed: readonly string[];
+}
+
+type SkillResult = SkillWriteResult | { readonly ok: false; readonly error: MehmoryError };
+
+/**
+ * Copy every shipped `skills/<name>/SKILL.md` verbatim into
+ * `codexSkillsDir()/mehmory-<name>/SKILL.md`.
+ *
+ * A copy, not a symlink: the source lives inside the installed package (or a checkout
+ * that may move or be removed independently of `$CODEX_HOME`), so a symlink would go
+ * stale exactly when a `pnpm build`/npm upgrade replaces it. Re-running only rewrites a
+ * skill whose body actually changed, so a plain re-install reports nothing changed.
+ */
+function writeCodexSkills(): SkillResult {
+  const sourceDir = codexSkillSourceDir();
+  if (!pathExists(sourceDir)) {
+    return {
+      ok: false,
+      error: {
+        code: 'E_CODEX_INSTALL',
+        kind: 'actionable',
+        what: `no skill sources found at ${sourceDir}`,
+        consequence: 'no mehmory skill was installed for Codex',
+        fix: 'pnpm build',
+      },
+    };
+  }
+
+  const skillNames = listDir(sourceDir).filter(name => pathExists(join(sourceDir, name, 'SKILL.md')));
+  const changed: string[] = [];
+  const names: string[] = [];
+
+  try {
+    for (const skillName of skillNames) {
+      const body = readFile(join(sourceDir, skillName, 'SKILL.md'));
+      const dirName = codexSkillDirName(skillName);
+      const target = join(codexSkillsDir(), dirName, 'SKILL.md');
+      if (!pathExists(target) || readFile(target) !== body) {
+        atomicWrite(target, body);
+        changed.push(target);
+      }
+      names.push(dirName);
+    }
+  } catch (err) {
+    return { ok: false, error: writeFailed(codexSkillsDir(), err) };
+  }
+
+  return { ok: true, names, changed };
+}
+
+/**
+ * Remove every `mehmory` / `mehmory-*` directory under `codexSkillsDir()`.
+ *
+ * Swept by name rather than by diffing against the shipped skill list, so uninstall
+ * still cleans up a directory left behind by a version whose skill set has since
+ * changed. Anything not matching the reserved prefix — a foreign skill directory —
+ * survives untouched, the same property `uninstallCodex()` holds for `hooks.json`.
+ */
+function removeCodexSkills(): SkillRemoveResult | { readonly ok: false; readonly error: MehmoryError } {
+  const dir = codexSkillsDir();
+  if (!pathExists(dir)) return { ok: true, changed: [] };
+
+  const changed: string[] = [];
+  try {
+    for (const name of listDir(dir)) {
+      if (!isMehmorySkillDirName(name)) continue;
+      const target = join(dir, name);
+      removeDir(target);
+      changed.push(target);
+    }
+  } catch (err) {
+    return { ok: false, error: writeFailed(dir, err) };
+  }
+  return { ok: true, changed };
 }
 
 function editCodex(
@@ -169,6 +317,9 @@ function editCodex(
       events: mehmoryEvents(readJsonObjectOrEmpty(hooksFile)),
       changed,
       backups,
+      // Overwritten by installCodex/uninstallCodex with the real skill directory list —
+      // editCodex() only knows about hooks.json and config.toml.
+      skills: [],
       featureFlag,
     },
   };
@@ -450,13 +601,14 @@ export function probeCodexInstall(): CodexProbe {
 
 /**
  * Codex keeps skills flat under `$CODEX_HOME/skills/`, namespaced by prefix rather than
- * by directory, so mehmory's are `mehmory` / `mehmory-*`.
+ * by directory, so mehmory's are `mehmory` / `mehmory-*` — the same directories
+ * `writeCodexSkills()` writes and `removeCodexSkills()` sweeps.
  */
 function hasCodexSkills(home: string): boolean {
   const dir = join(home, 'skills');
   if (!pathExists(dir)) return false;
   try {
-    return listDir(dir).some(name => name === 'mehmory' || name.startsWith('mehmory-'));
+    return listDir(dir).some(isMehmorySkillDirName);
   } catch {
     return false;
   }
