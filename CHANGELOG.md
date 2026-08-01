@@ -19,6 +19,16 @@ and a test enforces that they match.
   copy of every fact. Build it locally with `pnpm docs:dev`. The site is not part of the
   published package — `files` in `package.json` is unchanged.
 
+### Fixed
+
+- **Slash-command and bash-mode turns are no longer filed as memory.** Claude Code writes
+  them as ordinary `type: 'user'` records with no `isMeta` flag, so distill treated a
+  `/reload-plugins` echo or a `<local-command-stdout>` block as something the user said —
+  an inbox, and eventually wiki pages, built from command transcripts. The envelope blocks
+  are now stripped in place: `<command-args>` survives, because `/orchestrate <a whole
+  project brief>` puts real intent there, and so does prose the user typed after an echo in
+  the same record.
+
 ## [0.1.0] - 2026-08-01
 
 First released version. Everything below shipped across the three build runs that
