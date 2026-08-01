@@ -48,7 +48,7 @@ export const command: Command = {
     }
     const uninstall = parsed.flags.get('uninstall') === true;
 
-    if (requested !== DEFAULT_INBOX_HOST) {
+    if (requested === 'codex') {
       return hostResult(uninstall ? uninstallCodex() : installCodex(requested), requested, uninstall);
     }
     if (uninstall) {
@@ -132,6 +132,7 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
           : `mehmory entries removed from ${report.hooksFile}`,
         // Never turned off: the flag is Codex's, and other tools' hooks depend on it.
         `Codex \`[features] hooks\` left as it is in ${report.configFile}`,
+        'skills removed',
       ]
     : [
         report.changed.length === 0
@@ -141,6 +142,7 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
         report.featureFlag === 'already-on'
           ? 'Codex `[features] hooks` already on'
           : 'Codex `[features] hooks` enabled',
+        `skills: ${report.skills.join(', ')}`,
       ];
 
   for (const path of report.backups) lines.push(`backed up to ${path}`);
@@ -158,6 +160,7 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
       changed: report.changed,
       backups: report.backups,
       featureFlag: report.featureFlag,
+      skills: report.skills,
     },
   };
 }

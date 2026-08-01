@@ -14,8 +14,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { envelopeOf, runCli } from './cli-fixture.js';
 
@@ -255,6 +255,70 @@ describe('mehmory init --host codex', () => {
       expect(existsSync(`${path ?? ''}.mjs`), command).toBe(true);
     }
   });
+
+  const skillsDir = (fixture: Fixture): string => join(fixture.codexHome, 'skills');
+
+  it('installs the six skills as flat, prefix-named directories under $CODEX_HOME/skills', () => {
+    const fixture = codexFixture();
+    expect(init(fixture).status).toBe(0);
+    const names = readdirSync(skillsDir(fixture)).sort();
+    expect(names).toEqual([
+      'mehmory-integrate',
+      'mehmory-lint',
+      'mehmory-onboard-session',
+      'mehmory-pause',
+      'mehmory-remember',
+      'mehmory-resume',
+    ]);
+    for (const name of names) {
+      const skillName = name.replace(/^mehmory-/, '');
+      const installed = readFileSync(join(skillsDir(fixture), name, 'SKILL.md'), 'utf-8');
+      const source = readFileSync(resolve('skills', skillName, 'SKILL.md'), 'utf-8');
+      // Byte-identical to the Claude Code copy — issue #17's whole point (one skill
+      // document, both harnesses) and the reason the description-budget assertions in
+      // plugin-skills-layout.test.ts don't need a second, Codex-side copy: whatever
+      // holds for `skills/<name>/SKILL.md` holds here too, by construction.
+      expect(installed).toBe(source);
+    }
+  });
+
+  it('a foreign skill directory survives install → re-install → uninstall untouched', () => {
+    const fixture = codexFixture();
+    mkdirSync(join(skillsDir(fixture), 'gstack-review'), { recursive: true });
+    writeFileSync(join(skillsDir(fixture), 'gstack-review', 'SKILL.md'), 'not mehmory\n');
+
+    expect(init(fixture).status).toBe(0);
+    expect(init(fixture).status).toBe(0);
+    expect(init(fixture, '--uninstall').status).toBe(0);
+
+    expect(readdirSync(skillsDir(fixture))).toEqual(['gstack-review']);
+    expect(readFileSync(join(skillsDir(fixture), 'gstack-review', 'SKILL.md'), 'utf-8')).toBe('not mehmory\n');
+  });
+
+  it('uninstall removes every mehmory-* skill directory and nothing else', () => {
+    const fixture = codexFixture();
+    expect(init(fixture).status).toBe(0);
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(existsSync(skillsDir(fixture))).toBe(true);
+    expect(readdirSync(skillsDir(fixture))).toEqual([]);
+  });
+
+  it('a re-install rewrites nothing when the skill bodies are already current', () => {
+    const fixture = codexFixture();
+    expect(init(fixture).status).toBe(0);
+    const second = envelopeOf(init(fixture, '--json'))['data'] as Record<string, unknown>;
+    // `changed` covers hooks.json/config.toml only by the time this assertion runs
+    // above (see the idempotent-install test); this asserts the skill half of the same
+    // property — the six directories are reported every time, not just on first write.
+    expect((second['skills'] as string[]).sort()).toEqual([
+      'mehmory-integrate',
+      'mehmory-lint',
+      'mehmory-onboard-session',
+      'mehmory-pause',
+      'mehmory-remember',
+      'mehmory-resume',
+    ]);
+  });
 });
 
 describe('mehmory doctor — the Codex surface', () => {
@@ -348,5 +412,23 @@ describe('mehmory doctor — the Codex surface', () => {
     const fixture = codexFixture({ config: '[features]\nhooks = true\n' });
     mkdirSync(join(fixture.codexHome, 'skills', 'mehmory-integrate'), { recursive: true });
     expect(findings(fixture.codexHome).get('codex.skills')).toMatchObject({ level: 'ok' });
+  });
+
+  it('`mehmory init --host codex` alone is enough to turn codex.skills ok — the acceptance test for issue #25', () => {
+    const fixture = codexFixture({ config: '[features]\nhooks = true\n' });
+    expect(findings(fixture.codexHome).get('codex.skills')).toMatchObject({
+      level: 'warn',
+      code: 'E_CODEX_SKILLS_MISSING',
+    });
+    expect(init(fixture).status).toBe(0);
+    expect(findings(fixture.codexHome).get('codex.skills')).toMatchObject({
+      level: 'ok',
+      message: 'mehmory skills installed for Codex',
+    });
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(findings(fixture.codexHome).get('codex.skills')).toMatchObject({
+      level: 'warn',
+      code: 'E_CODEX_SKILLS_MISSING',
+    });
   });
 });
