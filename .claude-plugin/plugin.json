@@ -1,6 +1,6 @@
 {
   "name": "mehmory",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Memory abstraction layer for Claude Code: deterministic capture hooks plus model-driven skills over a markdown wiki in ~/.mehmory.",
   "author": {
     "name": "Christopher Freddy Getsfred"
