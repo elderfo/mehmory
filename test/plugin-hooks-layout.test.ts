@@ -16,12 +16,12 @@ interface HookMatcher {
   hooks: HookCommand[];
 }
 
-const EXPECTED: Record<string, { matcher?: string; script: string }> = {
-  SessionStart: { matcher: 'startup|resume|compact', script: 'session-start.mjs' },
-  UserPromptSubmit: { script: 'user-prompt-submit.mjs' },
-  Stop: { script: 'stop.mjs' },
-  PreCompact: { script: 'pre-compact.mjs' },
-  SessionEnd: { script: 'session-end.mjs' },
+const EXPECTED: Record<string, { matcher?: string; script: string; host: string }> = {
+  SessionStart: { matcher: 'startup|resume|compact', script: 'session-start.mjs', host: 'claude-code' },
+  UserPromptSubmit: { script: 'user-prompt-submit.mjs', host: 'claude-code' },
+  Stop: { script: 'stop.mjs', host: 'claude-code' },
+  PreCompact: { script: 'pre-compact.mjs', host: 'claude-code' },
+  SessionEnd: { script: 'session-end.mjs', host: 'claude-code' },
 };
 
 function readRegistry(): Record<string, HookMatcher[]> {
@@ -47,7 +47,7 @@ describe('plugin hooks layout', () => {
       expect(entry?.hooks, event).toHaveLength(1);
       expect(entry?.hooks[0]?.type, event).toBe('command');
       expect(entry?.hooks[0]?.command, event).toBe(
-        `node \${CLAUDE_PLUGIN_ROOT}/hooks/${expected.script}`
+        `node \${CLAUDE_PLUGIN_ROOT}/hooks/${expected.script} ${expected.host}`
       );
       expect(existsSync(join(HOOKS_DIR, expected.script)), expected.script).toBe(true);
     }

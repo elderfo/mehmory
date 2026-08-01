@@ -43,9 +43,14 @@ export interface SessionState {
   paused: boolean;
 }
 
+/** Session ids come from the harness; flattened to characters safe in a filename. */
+function sanitizeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
 /** Path of a session's state file. Session ids are sanitized into a flat filename. */
 export function sessionStatePath(sessionId: string): string {
-  return statePath(`${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`);
+  return statePath(`${sanitizeSessionId(sessionId)}.json`);
 }
 
 /** A session that has captured nothing yet. */
@@ -129,6 +134,30 @@ export function deleteSessionState(sessionId: string): void {
   } catch {
     // Fail-open: a stale file is swept later.
   }
+}
+
+/**
+ * Marker recorded once `finalizeSession` (issue #16) has completed for a session, so a
+ * retried or duplicate SessionEnd invocation can tell "already finalized" apart from "a
+ * session that never wrote state" — `deleteSessionState` removes the file the marker
+ * would otherwise share, so the cursor's absence alone cannot mean "done".
+ *
+ * Deliberately a top-level `.state/*.json` with a `session_id` field, same shape
+ * `sweepSessionState` already looks for: it ages out on the same schedule as ordinary
+ * session state without any dedicated sweep code.
+ */
+function finalizedMarkerPath(sessionId: string): string {
+  return statePath(`${sanitizeSessionId(sessionId)}.finalized.json`);
+}
+
+/** True once this session's `finalizeSession` call has already run to completion. */
+export function isSessionFinalized(sessionId: string): boolean {
+  return pathExists(finalizedMarkerPath(sessionId));
+}
+
+/** Record that this session's finalization completed, so a retry becomes a no-op. */
+export function markSessionFinalized(sessionId: string): void {
+  atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
 }
 
 /**

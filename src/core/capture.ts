@@ -7,14 +7,23 @@
  * in this module so it is testable in-process and reusable by run 3's CLI.
  */
 
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { appendRecord, listDir, mkdir, pathExists, readFile, stat } from './fs.js';
 import { withProjectLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
-import { advanceSessionCursor, readSessionState } from './session.js';
+import {
+  advanceSessionCursor,
+  deleteSessionState,
+  isPaused,
+  isSessionFinalized,
+  markSessionFinalized,
+  readSessionState,
+} from './session.js';
+import { commitPaths } from './git.js';
+import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { buildInjection } from './injection.js';
@@ -323,4 +332,66 @@ export function staleSessionStartWarning(project: string): string | undefined {
   const at = last ? Date.parse(last.ts) : NaN;
   if (!Number.isNaN(at) && Date.now() - at < WARNING_DRAIN_STALE_MS) return undefined;
   return pendingWarnings()[0];
+}
+
+// ─── Session finalization (SessionEnd → next SessionStart, issue #16) ───
+
+/** Outcome of `finalizeSession`, surfaced to the adapter's stats line. */
+export interface FinalizeSessionResult {
+  readonly capturedEntries: number;
+}
+
+/**
+ * Final-delta handling for one session's end (A12): distill whatever the transcript
+ * still holds, enqueue it as a durable write (SessionEnd runs in a dying process, so the
+ * *write* — not the distill — is what defers to the next SessionStart), log the
+ * outcome, commit the touched paths, and drop the session's state. The session-end
+ * adapter is reduced to calling this and shaping the result into stats.
+ *
+ * Idempotent: a marker recorded on a successful run (`markSessionFinalized`) makes
+ * every later call for the same session id a no-op, so a retried or duplicate
+ * SessionEnd invocation can never double-queue a job, double-log, or double-commit.
+ *
+ * Arguments only — no ambient config or environment read (A21); the caller loads
+ * config once (or accepts this default) and passes it through. Never throws: every
+ * step it calls is already fail-open, and an uncaught exception here still lands in
+ * `runHook`'s outer boundary (A2, A8).
+ */
+export function finalizeSession(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  project: string,
+  config: MehmoryConfig = loadConfig()
+): FinalizeSessionResult {
+  if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
+
+  if (!config.hooks.session_end.enabled || isPaused(sessionId)) {
+    deleteSessionState(sessionId);
+    markSessionFinalized(sessionId);
+    return { capturedEntries: 0 };
+  }
+
+  const entries = distillDelta(sessionId, transcriptPath, config);
+  if (entries.length > 0) {
+    enqueueJob(distillJobPayload(project, entries), 'distill-final');
+  }
+
+  appendLogEntry(
+    project,
+    'session-end',
+    `${String(entries.length)} entries queued for integration (session ${sessionId})`
+  );
+
+  const home = mehmoryHome();
+  const paths = scopePaths(project);
+  const touched = [paths.logFile, paths.inboxFile]
+    .filter(pathExists)
+    .map(path => relative(home, path));
+  if (touched.length > 0 && pathExists(join(home, '.git'))) {
+    commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
+  }
+
+  deleteSessionState(sessionId);
+  markSessionFinalized(sessionId);
+  return { capturedEntries: entries.length };
 }

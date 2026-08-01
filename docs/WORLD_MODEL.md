@@ -346,3 +346,22 @@ it** — fixing the rule scope is explicitly out of scope for run 3.
 **Licensing note.** `package.json` declared `license: MIT` before this run but shipped no
 `LICENSE` file to back it — an undeclared gap, not a deliberate choice. Run 3 adds
 `LICENSE` (MIT, confirmed by the user this run).
+
+## Architectural Decisions — Run 4
+
+Established in run 4 (Codex-host prefactor). Binding on later run-4 units.
+
+### A23. Host is declared and threaded, never detected
+
+Each harness's hook configuration passes its host as an argument on the command it
+invokes; a single core module resolves it and threads it to callers. Environment
+detection exists only as a fallback for a hand-written configuration. mehmory writes
+both hook configurations itself, so it can always declare rather than infer. Extends
+A21 (config is threaded, never ambient).
+
+### A24. The transcript reader is the normalization boundary
+
+Above the reader, distillation takes exactly one input type and is harness-blind, so the
+distill patterns and their normative fixtures do not fork (A7). Below it, each harness's
+on-disk shape is a parse detail and reader selection is by host. Adding a third harness
+is a new reader, not a new distiller.

@@ -11,6 +11,7 @@ import { readStdin } from './fs.js';
 import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
+import { resolveHost } from './host.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
 export interface HookInput {
@@ -75,6 +76,10 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * line is written even for a failed invocation — a hook that dies every time is
  * exactly what the instrumentation exists to make visible.
  *
+ * The invoking harness travels as `process.argv[2]` — each `hooks.json`/config the
+ * plugin writes passes it explicitly (A23) — resolved once here via `resolveHost` and
+ * recorded on the stats line, never read ambiently by the body itself.
+ *
  * @param event - Claude Code event name, e.g. `SessionStart`
  * @param body - The hook itself; receives parsed stdin and the resolved project key
  */
@@ -83,6 +88,7 @@ export function runHook(
   body: (_input: HookInput, _project: string) => HookResult
 ): void {
   const started = Date.now();
+  const host = resolveHost(process.argv[2]);
   let result: HookResult = {};
   let project = 'unknown';
 
@@ -120,7 +126,7 @@ export function runHook(
   }
 
   try {
-    recordStat({ project, hook: event, ms: Date.now() - started, ...result.stats });
+    recordStat({ project, hook: event, host, ms: Date.now() - started, ...result.stats });
   } catch {
     // Instrumentation must never be the thing that breaks a hook.
   }

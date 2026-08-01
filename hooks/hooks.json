@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs claude-code"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs claude-code"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs claude-code"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.mjs"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.mjs claude-code"
           }
         ]
       }
@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.mjs"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.mjs claude-code"
           }
         ]
       }

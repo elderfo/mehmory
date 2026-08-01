@@ -4,7 +4,9 @@ import { beforeEach, afterEach } from 'vitest';
 import { createTempDir, cleanupTempDir, isHermeticHome } from './helpers.js';
 
 const originalHome = process.env.MEHMORY_HOME;
+const originalCodexHome = process.env.CODEX_HOME;
 let setupTempDir: string;
+let setupCodexTempDir: string;
 
 // Git exports these to hook processes. Tests that shell out to git (identity,
 // commitPaths, initStore) would otherwise inherit the *outer* repository's index
@@ -38,25 +40,45 @@ beforeEach(() => {
   // Set MEHMORY_HOME to a temp directory for each test
   setupTempDir = createTempDir('mehmory-test');
   process.env.MEHMORY_HOME = setupTempDir;
+
+  // CODEX_HOME gets the same hermetic guard as MEHMORY_HOME, ahead of any Codex code
+  // existing yet: no test may ever touch the real ~/.codex once Codex readers/hooks
+  // land in a later unit.
+  setupCodexTempDir = createTempDir('mehmory-test-codex');
+  process.env.CODEX_HOME = setupCodexTempDir;
 });
 
 afterEach(() => {
-  // A test that unsets MEHMORY_HOME, or repoints it at the real store, would have
-  // every subsequent test in the file touching ~/.mehmory. Checked before cleanup so
-  // the failure names the offending test (criterion 21). Subprocess tests must build
-  // their child env with `hermeticEnv()` — this process's guard cannot see a child.
+  // A test that unsets MEHMORY_HOME/CODEX_HOME, or repoints either at its real store,
+  // would have every subsequent test in the file touching the real thing. Checked
+  // before cleanup so the failure names the offending test (criterion 21). Subprocess
+  // tests must build their child env with `hermeticEnv()` — this process's guard
+  // cannot see a child.
   const current = process.env.MEHMORY_HOME;
+  const currentCodex = process.env.CODEX_HOME;
 
   cleanupTempDir(setupTempDir);
+  cleanupTempDir(setupCodexTempDir);
   if (originalHome) {
     process.env.MEHMORY_HOME = originalHome;
   } else {
     delete process.env.MEHMORY_HOME;
   }
+  if (originalCodexHome) {
+    process.env.CODEX_HOME = originalCodexHome;
+  } else {
+    delete process.env.CODEX_HOME;
+  }
 
   if (!isHermeticHome(current)) {
     throw new Error(
       `MEHMORY_HOME left as ${current ?? '(unset)'} — tests must not touch the real store. ` +
+        'Restore it before the test ends.'
+    );
+  }
+  if (!isHermeticHome(currentCodex, '.codex')) {
+    throw new Error(
+      `CODEX_HOME left as ${currentCodex ?? '(unset)'} — tests must not touch ~/.codex. ` +
         'Restore it before the test ends.'
     );
   }
