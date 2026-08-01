@@ -101,9 +101,16 @@ you've ever run a session with mehmory active — the cold-start path. Defaults:
 ### `mehmory search <query> [--project [<key>]|--global|--all] [--limit N] [--json]`
 
 Scans **pages, archive, and log** across the selected scopes and returns ranked hits as
-`{path, scope, score, snippet}`. `--limit` defaults to 10, capped at 100. The scan itself is
-bounded by a file cap (default 2000 files); past the cap, the newest files are scanned, a
-`warnings` entry says so, and the command still succeeds rather than failing.
+`{path, scope, score, snippet, stale}`. `--limit` defaults to 10, capped at 100. The scan
+itself is bounded by a file cap (default 2000 files); past the cap, the newest files are
+scanned, a `warnings` entry says so, and the command still succeeds rather than failing.
+
+**Demoted hits are ranked down, never hidden.** A page older than `decay.archive_days` is
+scored ×0.7; anything under `archive/` is scored ×0.5, because archival is an explicit
+"this aged out" act and a stronger signal than drifting past the horizon. Both come back
+with `stale: true` and print a `[stale]` marker. `log.md` is never demoted — it records what
+happened and cannot go out of date. Nothing is ever dropped for age: a stale answer still
+beats no answer, and silent exclusion would hide a valid memory with no way to notice.
 
 - Exit 0 with results.
 - Exit 0 with an empty result set — a query that matches nothing is not an error.
@@ -141,8 +148,11 @@ store is itself one of the findings it reports, with `mehmory init` as the named
 ### `mehmory status [--json]`
 
 A one-screen summary for the resolved scope: scope name and resolved key, page count, index
-line count, inbox entry count and age of the oldest entry, last integrate, last commit, and
-any pending warnings. Warnings are read via `peekWarnings()` — non-destructively. Running
+line count **and how many of those lines are demoted below the `## Archive` divider**, the
+count of pages moved out to `archive/`, inbox entry count and age of the oldest entry, last
+integrate, last commit, and any pending warnings. The two decay counts are here so aging is
+visible without reading `index.md` by hand — a growing `demoted` number is the cue that
+pages are falling off the front of the wiki. Warnings are read via `peekWarnings()` — non-destructively. Running
 `status` does not consume the warning channel that the next `SessionStart` also reads; run it
 as many times as you like without losing that signal.
 

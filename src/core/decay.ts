@@ -18,11 +18,12 @@ import { failOpen } from './errors.js';
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
-  FRONTMATTER_DIVIDER,
+  pageAgeDays,
   parseIndexLine,
+  readFrontmatter,
 } from '../schema/format.js';
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+export { readFrontmatter } from '../schema/format.js';
 
 /** What a decay pass changed. Page names include the `.md` extension. */
 export interface DecayResult {
@@ -32,29 +33,6 @@ export interface DecayResult {
   archived: string[];
   /** True when index.md was rewritten. */
   rewroteIndex: boolean;
-}
-
-/** Read a page's frontmatter as a flat key→value map (values are raw strings). */
-export function readFrontmatter(contents: string): Record<string, string> {
-  const lines = contents.split('\n');
-  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
-
-  const fields: Record<string, string> = {};
-  for (const line of lines.slice(1)) {
-    if (line.trim() === FRONTMATTER_DIVIDER) break;
-    const separator = line.indexOf(':');
-    if (separator < 0) continue;
-    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-  return fields;
-}
-
-/** Age of a page in days from its `updated` frontmatter; null when absent/unparseable. */
-function ageDays(contents: string, now: number): number | null {
-  const updated = readFrontmatter(contents)['updated'];
-  if (!updated) return null;
-  const parsed = Date.parse(updated);
-  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
 }
 
 /**
@@ -112,7 +90,7 @@ export function decayPass(
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
         const decayClass = fields['decay'] ?? 'default';
-        const age = ageDays(contents, now);
+        const age = pageAgeDays(contents, now);
         const updatedAt = Date.parse(fields['updated'] ?? '');
 
         if (decayClass !== 'default' || age === null) {

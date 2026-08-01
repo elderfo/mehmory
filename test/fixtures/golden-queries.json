@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "description": "Golden retrieval set for mehmory. A fixed miniature wiki plus the queries a user would actually type at it, each naming the page that should come back. Recall@K over this set is how a retrieval change is judged: run it before and after, and the numbers say whether the change helped. Queries marked \"paraphrase\": true use none of the target page's vocabulary — grep structurally cannot answer them, and they are here to measure exactly how much of the set keyword matching leaves on the table.",
+  "pages": {
+    "deploy.md": "# Deploy\n\n- Production deploys run from CI on merge to main.\n- The deploy job builds a container, pushes it, then rolls the service.\n- A failed deploy rolls back automatically; nothing manual is needed.\n",
+    "rollback.md": "# Rollback\n\n- Rollback reverts to the previous container tag.\n- Trigger it from the CI dashboard, not from a laptop.\n",
+    "database.md": "# Database\n\n- Postgres 16, one primary, one read replica.\n- Migrations run as a separate job before the service rolls.\n- Never run a migration by hand against production.\n",
+    "testing.md": "# Testing\n\n- Vitest for unit tests, one suite per module.\n- The full suite is the pre-commit gate; CI runs the same command.\n",
+    "auth.md": "# Auth\n\n- Sessions are signed cookies, not JWTs.\n- The decision to drop JWTs was about revocation: a cookie session can be killed server-side.\n",
+    "release-build.md": "# Release build\n\n- `pnpm build` emits ESM only.\n- Optimization and minification are on in release, off in dev.\n",
+    "onboarding.md": "# Onboarding\n\n- New machines need Node 22 and pnpm.\n- Ask for repo access before the first day, it takes a while.\n",
+    "incident-2026-06.md": "# Incident, June 2026\n\n- Cause: a migration held a lock during peak traffic.\n- Fix: migrations now run in a maintenance window.\n",
+    "styling.md": "# Styling\n\n- Design tokens live in one file; never hard-code a hex value.\n- Spacing is a 4px scale.\n",
+    "secrets.md": "# Secrets\n\n- Secrets come from the vault at boot, never from a checked-in file.\n- A leaked credential is rotated first and investigated second.\n"
+  },
+  "queries": [
+    { "id": "deploy-direct", "query": "how does deploy work", "expect": "deploy.md" },
+    { "id": "rollback-direct", "query": "how do I roll back a bad release", "expect": "rollback.md" },
+    { "id": "db-version", "query": "what postgres version do we run", "expect": "database.md" },
+    { "id": "migration-safety", "query": "can I run a migration by hand", "expect": "database.md" },
+    { "id": "test-runner", "query": "which test runner does this project use", "expect": "testing.md" },
+    { "id": "auth-mechanism", "query": "are sessions cookies or jwts", "expect": "auth.md" },
+    { "id": "auth-rationale", "query": "why did we drop jwts", "expect": "auth.md" },
+    { "id": "build-output", "query": "does the build emit esm or cjs", "expect": "release-build.md" },
+    { "id": "onboarding-node", "query": "what node version for a new machine", "expect": "onboarding.md" },
+    { "id": "incident-cause", "query": "what caused the june incident", "expect": "incident-2026-06.md" },
+    { "id": "styling-tokens", "query": "where do design tokens live", "expect": "styling.md" },
+    { "id": "secrets-policy", "query": "where do secrets come from", "expect": "secrets.md" },
+
+    {
+      "id": "paraphrase-release",
+      "query": "how do I ship to production",
+      "expect": "deploy.md",
+      "paraphrase": true,
+      "notes": "\"ship\" and \"production\" — the page says deploy. The canonical FTS miss."
+    },
+    {
+      "id": "paraphrase-undo",
+      "query": "the new version is broken, how do I undo it",
+      "expect": "rollback.md",
+      "paraphrase": true,
+      "notes": "\"undo\" for rollback."
+    },
+    {
+      "id": "paraphrase-compile",
+      "query": "what do the compile settings look like",
+      "expect": "release-build.md",
+      "paraphrase": true,
+      "notes": "memhub's own example: \"compile settings\" against a page filed under build."
+    },
+    {
+      "id": "paraphrase-outage",
+      "query": "why did the site go down in the summer",
+      "expect": "incident-2026-06.md",
+      "paraphrase": true,
+      "notes": "\"go down\" for incident, \"summer\" for June."
+    }
+  ]
+}

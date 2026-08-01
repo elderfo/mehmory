@@ -14,11 +14,45 @@ There are **14** config groups. Each is listed with its keys, real defaults, and
 key is actually read anywhere in the codebase — "not honored" means the key exists in the
 schema and can be set, but nothing currently reads it, so setting it changes nothing.
 
+## Which of these can you change freely?
+
+The store is per machine, so nothing here is shared with a team — but the keys still split
+into two kinds, and the difference matters when you go back to a memory six months later.
+
+**Content-shaping — changing these changes what your memory ends up containing.** Turn one
+down and the wiki you have a year from now is a different wiki; the effect is invisible on
+the day you change it and unrecoverable afterwards, because the material was never captured.
+Change these deliberately, and prefer to note *why* somewhere your future self will find:
+
+| Key | What a change actually does |
+|---|---|
+| `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. |
+| `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
+| `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
+| `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
+| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move. |
+| `injection.budget_tokens` | The always-on context cap. Lowering it truncates what every session starts with. |
+
+**Preference — safe to tune to taste, reversible, affects only this machine's ergonomics.**
+Get one wrong and you notice immediately, and setting it back undoes the damage:
+`inbox.nudge_entries` / `nudge_bytes`, `match.jaccard` / `cache_ttl_ms`,
+`session_state.max_age_days`, `lock.*`, `queue.*`, `log.rotation_size_mb`,
+`warning.rate_limit_ms`, `identity.aliases`.
+
+The rule behind the split: a preference key changes how mehmory *behaves at you*; a
+content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
+
 ## `injection`
 
 ```json
 { "injection": { "budget_tokens": 800 } }
 ```
+
+This budget governs **stored memory only**. `SessionStart` also emits a fixed
+`<mehmory-routing>` block of about 80 tokens telling the model how to use that memory
+(follow pointers before grepping, what `(stale)` means, how to capture). It sits outside
+`budget_tokens` on purpose — a large wiki must not crowd out the lines explaining what to
+do with it — and is capped by its own test rather than by this key.
 
 - `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
   index content. At the default 800, the split is identity 200 / project 200 / index 400;
@@ -31,10 +65,18 @@ schema and can be set, but nothing currently reads it, so setting it changes not
 ```
 
 - `enabled` — turns the mechanical decay pass on or off.
-- `archive_days` — index pages older than this move below the Archive divider.
-- `purge_days` — index pages older than this move into `archive/`.
+- `archive_days` — index pages older than this move below the Archive divider. **Also the
+  staleness horizon for retrieval** (A22): past it, a page is scored ×0.7 in both
+  `matchPages` and `search` and comes back flagged `stale`. Raising this makes retrieval
+  trust old pages for longer; it does not make them disappear either way.
+- `purge_days` — index pages older than this move into `archive/`. Archived pages stay
+  searchable, scored ×0.5 — lower than the staleness demotion, because archival is an
+  explicit act rather than mere drift.
 
-  All three **honored** (`decay.ts`).
+  All three **honored** (`decay.ts`, and `archive_days` additionally by `match.ts` /
+  `search.ts`). Neither demotion multiplier is configurable: they are calibration
+  constants in `schema/format.ts`, and `archive_days` already controls when demotion
+  starts. Nothing is ever excluded from retrieval for age.
 
 ## `secrets`
 

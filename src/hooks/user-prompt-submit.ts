@@ -50,10 +50,16 @@ runHook('UserPromptSubmit', (input, project) => {
   // is a prompt whose answer lives in global while the project scope is populated;
   // upgrade path is run 3's FTS index, which can rank both scopes in one query.
   const pagesDir = pathExists(paths.pagesDir) ? paths.pagesDir : join(paths.globalDir, 'pages');
-  const pages = matchPages(prompt, pagesDir, MAX_POINTERS);
+  const pages = matchPages(prompt, pagesDir, MAX_POINTERS, {
+    staleAfterDays: config.decay.archive_days,
+  });
   rememberTopic(input.session_id, tokens);
 
-  const lines = pages.map(page => `relevant: ${page}`);
+  // A stale pointer is still offered — demoted in ranking, and labeled so the model
+  // knows to treat it as possibly out of date rather than silently trusting it.
+  const lines = pages.map(
+    page => `relevant: ${page.path}${page.stale ? ' (stale)' : ''}`
+  );
   const warning = staleSessionStartWarning(project);
   if (warning !== undefined) lines.push(`mehmory: ${warning}`);
 

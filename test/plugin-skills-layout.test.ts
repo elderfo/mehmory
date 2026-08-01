@@ -9,8 +9,15 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { estimateTokens, INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 
 const SKILLS = ['integrate', 'lint', 'onboard-session', 'remember', 'pause', 'resume'];
+
+/** Combined ceiling for the always-on skill descriptions — the injection budget. */
+const SKILL_DESCRIPTION_BUDGET_TOKENS = INJECTION_BUDGET_TOKENS;
+
+/** Ceiling for any single description, so one skill cannot eat the shared budget. */
+const SKILL_DESCRIPTION_TOKENS = 160;
 
 /** Minimal YAML-ish frontmatter reader — the frontmatter is flat `key: value` only. */
 function frontmatter(body: string): Record<string, string> {
@@ -52,6 +59,33 @@ describe('plugin skills layout', () => {
     for (const [name, body] of bodies) {
       expect(frontmatter(body)['description'], name).toContain('~/.mehmory');
     }
+  });
+
+  // ─── Always-on cost ───
+  //
+  // Skill *bodies* load only when a skill is invoked, but every `description` is in
+  // context from the first turn of every session, in every repo where the plugin is
+  // installed — the same always-on channel as the injection frame, and the only part of
+  // mehmory's context cost that nothing was measuring. A budget nobody enforces is a
+  // budget that drifts: this is the enforcement half of the cap.
+  //
+  // Numbers: the six descriptions cost ~650 tokens today. The ceiling is set at the
+  // injection budget (800) rather than at today's number, so ordinary rewording is free
+  // and a new skill or a doubled description is not. Per-skill cap bounds any single
+  // offender. Raise either deliberately, in a commit that says why — that is the point.
+  it('every skill description stays inside the per-skill always-on budget', () => {
+    for (const [name, body] of bodies) {
+      const tokens = estimateTokens(frontmatter(body)['description'] ?? '');
+      expect(tokens, `skills/${name} description`).toBeLessThanOrEqual(SKILL_DESCRIPTION_TOKENS);
+    }
+  });
+
+  it('the skill descriptions together stay inside the always-on budget', () => {
+    const total = [...bodies.values()].reduce(
+      (sum, body) => sum + estimateTokens(frontmatter(body)['description'] ?? ''),
+      0
+    );
+    expect(total).toBeLessThanOrEqual(SKILL_DESCRIPTION_BUDGET_TOKENS);
   });
 
   it('every bundled script a SKILL.md references exists after the build', () => {

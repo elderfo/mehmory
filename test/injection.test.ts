@@ -4,6 +4,29 @@ import {
   type InjectionPart,
 } from '../src/core/injection.js';
 import { estimateTokens, INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
+import { ROUTING_BLOCK } from '../src/core/capture.js';
+
+/**
+ * Ceiling for the static routing block. It is fixed overhead on every session with a
+ * populated store, paid outside `injection.budget_tokens` — so it gets the same
+ * treatment every other always-on channel gets: a number, enforced, raised only on
+ * purpose. A tenth of the memory budget is the most a set of routing rules is worth.
+ */
+const ROUTING_BUDGET_TOKENS = INJECTION_BUDGET_TOKENS / 10;
+
+describe('routing block', () => {
+  it('stays inside its always-on budget', () => {
+    expect(estimateTokens(ROUTING_BLOCK)).toBeLessThanOrEqual(ROUTING_BUDGET_TOKENS);
+  });
+
+  it('is self-delimiting and declares itself instructions, not data', () => {
+    // The memory frame is explicitly data-only; these lines are the opposite, and the
+    // model can only tell them apart if the boundary is unambiguous.
+    expect(ROUTING_BLOCK.startsWith('<mehmory-routing>')).toBe(true);
+    expect(ROUTING_BLOCK.trimEnd().endsWith('</mehmory-routing>')).toBe(true);
+    expect(ROUTING_BLOCK).toContain('Instructions');
+  });
+});
 
 describe('buildInjection', () => {
   describe('truncation: priority order', () => {

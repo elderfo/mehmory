@@ -69,11 +69,16 @@ export const command: Command = {
     let hits: SearchHit[] = [];
     for (const target of targets) {
       const files = scopeFiles(target.dir);
-      const scan = searchScope(query, target.label, {
-        pagesDir: files.pagesDir,
-        archiveDir: join(target.dir, ARCHIVE_DIR),
-        logFile: files.logFile,
-      });
+      const scan = searchScope(
+        query,
+        target.label,
+        {
+          pagesDir: files.pagesDir,
+          archiveDir: join(target.dir, ARCHIVE_DIR),
+          logFile: files.logFile,
+        },
+        { staleAfterDays: ctx.config.decay.archive_days }
+      );
       hits.push(...scan.hits);
       warnings.push(...scan.warnings);
     }
@@ -91,7 +96,10 @@ export const command: Command = {
     const lines =
       hits.length === 0
         ? [`no hits for \`${query}\` in ${scopeLabel(scope)}`]
-        : hits.map(hit => `${hit.path} (${hit.scope})  score=${String(hit.score)}\n  ${hit.snippet}`);
+        : hits.map(
+            hit =>
+              `${hit.path} (${hit.scope})${hit.stale ? ' [stale]' : ''}  score=${String(hit.score)}\n  ${hit.snippet}`
+          );
 
     return {
       exit: EXIT.OK,
