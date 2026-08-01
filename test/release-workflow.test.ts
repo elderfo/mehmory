@@ -7,7 +7,9 @@
  *   1. `package.json` is scoped `@elderfo/*`. GitHub Packages rejects a publish whose
  *      scope doesn't match the owning account.
  *   2. `publishConfig.registry` and the workflow's `registry-url` name the same host,
- *      so a local `pnpm publish` and a tagged CI publish land in the same place.
+ *      so a local `pnpm publish` and a tagged CI publish land in the same place — and
+ *      setup-node pins `scope`, without which `registry-url` redirects every dependency
+ *      install in the job at GitHub Packages and breaks `pnpm install`.
  *   3. The job carries `packages: write` and authenticates with `GITHUB_TOKEN`. The
  *      default token can publish this repo's own packages, so no `NPM_TOKEN` secret
  *      exists — and with no secret to test for, the previous version's step-level
@@ -27,6 +29,7 @@ import { join } from 'node:path';
 const workflowPath = join(process.cwd(), '.github', 'workflows', 'release.yml');
 const packageJsonPath = join(process.cwd(), 'package.json');
 const REGISTRY = 'https://npm.pkg.github.com';
+const SCOPE = '@elderfo';
 
 function loadWorkflow(): string {
   return readFileSync(workflowPath, 'utf-8');
@@ -114,6 +117,15 @@ describe('release workflow — publish-npm targets GitHub Packages', () => {
     };
     expect(pkg.publishConfig?.registry).toBe(REGISTRY);
     // GitHub Packages rejects a publish whose scope doesn't match the owning account.
-    expect(pkg.name.startsWith('@elderfo/')).toBe(true);
+    expect(pkg.name.startsWith(`${SCOPE}/`)).toBe(true);
+  });
+
+  it("setup-node pins the scope, so registry-url doesn't redirect dependency installs", () => {
+    const block = jobBlock(source, 'publish-npm');
+    // Without `scope`, setup-node writes a bare `registry=` line and every dependency
+    // resolves against GitHub Packages — the `pnpm install` in this same job then fails
+    // on packages that only exist on npmjs. This is the regression guard for that.
+    expect(block).toContain(`scope: '${SCOPE}'`);
+    expect(block).toMatch(/pnpm install --frozen-lockfile/);
   });
 });

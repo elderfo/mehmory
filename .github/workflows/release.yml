@@ -68,11 +68,19 @@ jobs:
         with:
           version: 9
 
+      # `scope` is not optional here. Given `registry-url` alone, setup-node writes a
+      # bare `registry=` line into the .npmrc it points NPM_CONFIG_USERCONFIG at, which
+      # redirects *every* dependency resolution — including the `pnpm install` below —
+      # at GitHub Packages, where the public devDependencies do not exist. With `scope`
+      # it writes `@elderfo:registry=` instead, so installs keep using npmjs and only
+      # this package's scope resolves to GitHub Packages. The auth token line is written
+      # for the registry host either way, so publishing still authenticates.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
           registry-url: 'https://npm.pkg.github.com'
+          scope: '@elderfo'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
