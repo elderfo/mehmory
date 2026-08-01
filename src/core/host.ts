@@ -5,12 +5,24 @@
  * configuration that has not been updated to pass the argument yet.
  */
 
-/** The harness a hook invocation runs under. Free-form: a new harness's own value
- * passes straight through without any change to this module. */
-export type Host = string;
+import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
+
+/**
+ * The harness a hook invocation runs under. Re-exported from `src/schema/format.ts` —
+ * that module owns the closed set of harness literals (A4: it is the one place format
+ * constants live), so this module, `src/transcript/host.ts`, and inbox serialization all
+ * agree on the same type and the same literal values by construction, not by
+ * coincidence.
+ */
+export type Host = InboxHost;
 
 /** Value used when nothing else identifies the host — the only harness before #18. */
 export const DEFAULT_HOST: Host = 'claude-code';
+
+/** True when `value` is one of the closed set of known harness literals. */
+function isKnownHost(value: string): value is Host {
+  return (INBOX_HOSTS as readonly string[]).includes(value);
+}
 
 /**
  * Resolve which harness invoked this hook.
@@ -19,11 +31,14 @@ export const DEFAULT_HOST: Host = 'claude-code';
  * the command line) — authoritative whenever present, since mehmory writes every hook
  * configuration itself and can always declare rather than infer (A23). Falls back to
  * environment detection only for a hand-written configuration that omits it, and never
- * fails the hook (A2): an empty or missing argument still resolves to something usable.
+ * fails the hook (A2): an empty, missing, or unrecognized argument still resolves to
+ * something usable rather than throwing — an unrecognized value is treated the same as
+ * an absent one, not as an error, so a typo in a hook configuration degrades to the
+ * environment fallback instead of crashing the hook.
  */
 export function resolveHost(arg: string | undefined): Host {
   const trimmed = arg?.trim();
-  if (trimmed) return trimmed;
+  if (trimmed && isKnownHost(trimmed)) return trimmed;
   return detectHostFromEnvironment();
 }
 

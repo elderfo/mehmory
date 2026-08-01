@@ -342,15 +342,29 @@ export interface FinalizeSessionResult {
 }
 
 /**
+ * Substring embedded in a session's `log.md` line, stable across a retried
+ * `finalizeSession` call — the log line's own committed content is the idempotency
+ * signal for "was this session's end already logged and committed", independent of
+ * whether `markSessionFinalized` itself went on to succeed (see `finalizeSession`).
+ */
+function sessionEndLogTag(sessionId: string): string {
+  return `(session ${sessionId})`;
+}
+
+/**
  * Final-delta handling for one session's end (A12): distill whatever the transcript
  * still holds, enqueue it as a durable write (SessionEnd runs in a dying process, so the
  * *write* — not the distill — is what defers to the next SessionStart), log the
  * outcome, commit the touched paths, and drop the session's state. The session-end
  * adapter is reduced to calling this and shaping the result into stats.
  *
- * Idempotent: a marker recorded on a successful run (`markSessionFinalized`) makes
- * every later call for the same session id a no-op, so a retried or duplicate
- * SessionEnd invocation can never double-queue a job, double-log, or double-commit.
+ * Idempotent two ways: a marker recorded on a successful run (`markSessionFinalized`)
+ * makes every later call for the same session id a no-op; and — because that marker
+ * write can itself fail *after* the distill/log/commit work already landed, in which
+ * case `isSessionFinalized` alone can't tell "done" from "never started" — the
+ * distill/log/commit block is additionally guarded by checking whether this session's
+ * `log.md` line was already committed. That guard is what stops a retry from
+ * re-reading a reset cursor and double-appending the log line / double-committing.
  *
  * Arguments only — no ambient config or environment read (A21); the caller loads
  * config once (or accepts this default) and passes it through. Never throws: every
@@ -371,27 +385,34 @@ export function finalizeSession(
     return { capturedEntries: 0 };
   }
 
-  const entries = distillDelta(sessionId, transcriptPath, config);
-  if (entries.length > 0) {
-    enqueueJob(distillJobPayload(project, entries), 'distill-final');
-  }
-
-  appendLogEntry(
-    project,
-    'session-end',
-    `${String(entries.length)} entries queued for integration (session ${sessionId})`
-  );
-
   const home = mehmoryHome();
   const paths = scopePaths(project);
-  const touched = [paths.logFile, paths.inboxFile]
-    .filter(pathExists)
-    .map(path => relative(home, path));
-  if (touched.length > 0 && pathExists(join(home, '.git'))) {
-    commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
+  const alreadyLogged =
+    pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId));
+
+  let capturedEntries = 0;
+  if (!alreadyLogged) {
+    const entries = distillDelta(sessionId, transcriptPath, config);
+    if (entries.length > 0) {
+      enqueueJob(distillJobPayload(project, entries), 'distill-final');
+    }
+
+    appendLogEntry(
+      project,
+      'session-end',
+      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId)}`
+    );
+
+    const touched = [paths.logFile, paths.inboxFile]
+      .filter(pathExists)
+      .map(path => relative(home, path));
+    if (touched.length > 0 && pathExists(join(home, '.git'))) {
+      commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
+    }
+    capturedEntries = entries.length;
   }
 
   deleteSessionState(sessionId);
   markSessionFinalized(sessionId);
-  return { capturedEntries: entries.length };
+  return { capturedEntries };
 }
