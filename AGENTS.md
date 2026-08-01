@@ -59,10 +59,19 @@ mehmory/
 ├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
 ├── .claude-plugin/            # run 2: plugin.json manifest (C); run-3: marketplace metadata (X)
+├── site/                      # VitePress marketing + docs site, deployed to GitHub Pages.
+│   │                           # Hype/landing content only — deep reference stays in docs/*.md
+│   │                           # and is linked out to, never mirrored here.
+│   ├── .vitepress/config.mts  # nav, sidebar, `base: '/mehmory/'`, local search
+│   ├── index.md               # home layout: hero + feature grid
+│   ├── why.md                 # the pitch, including the honest-limits section
+│   ├── quickstart.md          # condensed README "First 5 minutes"
+│   └── how-it-works.md        # three planes, retrieval trade-off, context budget
 ├── .github/
 │   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR),
 │                               # release.yml (v* tag → build → force-add hooks/*.mjs into the
-│                               # tagged tree; npm publish job inert this run) (X)
+│                               # tagged tree; npm publish job inert this run) (X);
+│                               # pages.yml (site/** on main → vitepress build → Pages deploy)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
@@ -178,6 +187,9 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 - `pnpm test` — Run vitest
 - `pnpm typecheck` — Run tsc strict mode
 - `pnpm prepare` — Install Husky hooks (runs on `pnpm install`)
+- `pnpm docs:dev` — Run the marketing/docs site locally (VitePress dev server)
+- `pnpm docs:build` — Build the site (→ site/.vitepress/dist)
+- `pnpm docs:preview` — Serve the built site
 
 ## Conventions
 

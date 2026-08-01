@@ -1,0 +1,72 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+      # A vitepress bump or a docs:* script change also changes the built site.
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+
+# Scoped per job, not workflow-wide: `build` runs `pnpm install` and a VitePress build —
+# third-party code — and has no business holding the Pages write or OIDC token scopes that
+# only the deploy job needs.
+permissions: {}
+
+# One deploy at a time; a queued run supersedes an older one rather than cancelling
+# a deploy midway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing after checkout needs git auth, and the build step runs dependency code
+          # in this workspace — don't leave the job token in .git/config for it to find.
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm docs:build
+
+      # No `actions/configure-pages` step: it calls the Pages API, which would force this
+      # job's token up to `pages: write`, and its only output we could use is `base_path`
+      # — which VitePress gets from the hardcoded `base` in site/.vitepress/config.mts.
+      # Pages must be set to "Source: GitHub Actions" in repository settings for the
+      # deploy job to succeed.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

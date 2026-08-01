@@ -6,6 +6,8 @@ project's memory is a git-backed directory of markdown at `~/.mehmory` that a Cl
 session reads and writes with ordinary file operations. No embeddings, no MCP server, no
 external services.
 
+Website: <https://elderfo.github.io/mehmory/> — the pitch, the quickstart, and how it works.
+
 See `docs/CLI.md` for the full command reference, `docs/CONFIG.md` for every config key,
 `docs/TROUBLESHOOTING.md` for error messages, `docs/PRIVACY.md` for the secret filter's
 limits and how deletion works, and `docs/UPGRADE.md` for `schema_version` drift.
