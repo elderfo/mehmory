@@ -36,7 +36,9 @@ mehmory/
 │   ├── schema/
 │   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A); run-3: index-line format constant (L)
 │   ├── transcript/
-│   │   └── reader.ts          # JSONL transcript reader, incremental parsing (D)
+│   │   ├── reader.ts          # Claude Code JSONL transcript reader, incremental parsing (D)
+│   │   ├── codex.ts           # Codex rollout reader: event envelope → normalized record
+│   │   └── host.ts            # readSession(path, host) — the only harness branch there is
 │   ├── distill/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
 │   │   └── distill.ts         # Record → inbox entry distillation (D)
