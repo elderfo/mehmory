@@ -11,8 +11,8 @@ import {
 } from '../src/schema/format.js';
 
 describe('format constants', () => {
-  it('exports FORMAT_VERSION = 1', () => {
-    expect(FORMAT_VERSION).toBe(1);
+  it('exports FORMAT_VERSION = 2', () => {
+    expect(FORMAT_VERSION).toBe(2);
   });
 
   it('exports PAGE_TYPES enumeration', () => {

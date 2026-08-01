@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   INBOX_ENTRY_PATTERN,
   inboxEntryId,
   parseInboxEntries,
   serializeInboxEntry,
   type InboxEntry,
+  type InboxHost,
 } from '../src/schema/format.js';
 import {
   appendInboxEntries,
@@ -22,9 +24,16 @@ function inboxFile(name = 'inbox.md'): string {
   return join(mehmoryHome(), 'projects', 'acme', name);
 }
 
-function entry(text: string, seed: string, src = 'session-a'): InboxEntry {
-  return { id: inboxEntryId(seed), text, src, ts: '2026-07-29T12:00:00.000Z' };
+function entry(
+  text: string,
+  seed: string,
+  src = 'session-a',
+  host: InboxHost = 'claude-code'
+): InboxEntry {
+  return { id: inboxEntryId(seed), text, src, host, ts: '2026-07-29T12:00:00.000Z' };
 }
+
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'inbox');
 
 describe('inbox entry format (A14)', () => {
   it('round-trips a plain entry', () => {
@@ -72,6 +81,51 @@ describe('inbox entry format (A14)', () => {
     expect(inboxEntryId('abc')).toMatch(/^[0-9a-f]{16}$/);
     expect(inboxEntryId('abc')).toBe(inboxEntryId('abc'));
     expect(inboxEntryId('abc')).not.toBe(inboxEntryId('abd'));
+  });
+});
+
+describe('inbox entry host (issue #20, FORMAT_VERSION 2)', () => {
+  it('round-trips a codex-captured entry', () => {
+    const original = entry('captured via codex', 'seed-codex', 'session-a', 'codex');
+    const line = serializeInboxEntry(original);
+
+    expect(line).toContain('host=codex');
+    expect(parseInboxEntries(line)).toEqual([original]);
+  });
+
+  it('defaults an entry with no host to claude-code on serialize', () => {
+    const noHost: InboxEntry = {
+      id: inboxEntryId('seed-nohost'),
+      text: 'no host supplied',
+      src: 'session-a',
+      ts: '2026-07-29T12:00:00.000Z',
+    };
+    const line = serializeInboxEntry(noHost);
+
+    expect(line).toContain('host=claude-code');
+    expect(parseInboxEntries(line)[0]?.host).toBe('claude-code');
+  });
+
+  it('parses a FORMAT_VERSION 1 fixture line (no host=) and attributes it to claude-code', () => {
+    const content = readFile(join(fixtureDir, 'previous-format.md'));
+    const parsed = parseInboxEntries(content);
+
+    expect(parsed).toEqual([
+      {
+        id: '00000000000000a1',
+        text: 'staging deploys need the VPN',
+        src: 'session-old',
+        host: 'claude-code',
+        ts: '2026-06-01T09:00:00.000Z',
+      },
+      {
+        id: '00000000000000a2',
+        text: 'use postgres for the ledger',
+        src: 'session-old',
+        host: 'claude-code',
+        ts: '2026-06-01T09:05:00.000Z',
+      },
+    ]);
   });
 });
 
