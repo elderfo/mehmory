@@ -14,6 +14,8 @@ export default [
       '.deliver',
       '.scratch',
       '.swarm',
+      '.work',
+      '.research',
       'hooks',
       // VitePress build output and cache for the marketing/docs site. Only the generated
       // trees are ignored — `site/.vitepress/config.mts` is left visible, though nothing
