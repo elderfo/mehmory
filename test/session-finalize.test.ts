@@ -51,7 +51,7 @@ describe('finalizeSession', () => {
   it('distills, queues, logs, commits, and drops session state', () => {
     const transcript = writeTranscript([{ text: 'We decided to ship the plugin unbundled.' }]);
 
-    const result = finalizeSession('s1', transcript, key);
+    const result = finalizeSession('s1', transcript, key, 'claude-code');
 
     expect(result.capturedEntries).toBe(1);
     expect(existsSync(sessionStatePath('s1'))).toBe(false);
@@ -63,11 +63,11 @@ describe('finalizeSession', () => {
   it('is a no-op on a second call for the same session (issue #16)', () => {
     const transcript = writeTranscript([{ text: 'We decided to ship the plugin unbundled.' }]);
 
-    const first = finalizeSession('s1', transcript, key);
+    const first = finalizeSession('s1', transcript, key, 'claude-code');
     const afterFirst = snapshotStore();
     const logAfterFirst = gitLog();
 
-    const second = finalizeSession('s1', transcript, key);
+    const second = finalizeSession('s1', transcript, key, 'claude-code');
     const afterSecond = snapshotStore();
     const logAfterSecond = gitLog();
 
@@ -80,10 +80,10 @@ describe('finalizeSession', () => {
   it('is a no-op when there is nothing to distill (empty transcript)', () => {
     const transcript = writeTranscript([]);
 
-    finalizeSession('s2', transcript, key);
+    finalizeSession('s2', transcript, key, 'claude-code');
     const afterFirst = snapshotStore();
 
-    finalizeSession('s2', transcript, key);
+    finalizeSession('s2', transcript, key, 'claude-code');
     const afterSecond = snapshotStore();
 
     expect(afterSecond).toEqual(afterFirst);
@@ -101,12 +101,12 @@ describe('finalizeSession', () => {
       throw new Error('simulated marker write failure');
     });
 
-    expect(() => finalizeSession(sessionId, transcript, key)).toThrow('simulated marker write failure');
+    expect(() => finalizeSession(sessionId, transcript, key, 'claude-code')).toThrow('simulated marker write failure');
 
     // The failure was transient (as most write failures are); it clears and the
     // SessionEnd hook is retried, the same way a harness would retry.
     markSpy.mockRestore();
-    const retried = finalizeSession(sessionId, transcript, key);
+    const retried = finalizeSession(sessionId, transcript, key, 'claude-code');
 
     const logLines = readFileSync(scopePaths(key).logFile, 'utf-8')
       .split('\n')

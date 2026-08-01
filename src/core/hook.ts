@@ -11,7 +11,7 @@ import { readStdin } from './fs.js';
 import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
-import { resolveHost } from './host.js';
+import { resolveHost, type Host } from './host.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
 export interface HookInput {
@@ -77,15 +77,16 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * exactly what the instrumentation exists to make visible.
  *
  * The invoking harness travels as `process.argv[2]` — each `hooks.json`/config the
- * plugin writes passes it explicitly (A23) — resolved once here via `resolveHost` and
- * recorded on the stats line, never read ambiently by the body itself.
+ * plugin writes passes it explicitly (A23) — resolved once here via `resolveHost`,
+ * recorded on the stats line, and handed to the body as an argument so nothing below
+ * has to read it ambiently (A21).
  *
- * @param event - Claude Code event name, e.g. `SessionStart`
- * @param body - The hook itself; receives parsed stdin and the resolved project key
+ * @param event - Hook event name, e.g. `SessionStart`
+ * @param body - The hook itself; receives parsed stdin, the project key, and the host
  */
 export function runHook(
   event: string,
-  body: (_input: HookInput, _project: string) => HookResult
+  body: (_input: HookInput, _project: string, _host: Host) => HookResult
 ): void {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
@@ -106,7 +107,7 @@ export function runHook(
         consequence: 'The invocation was skipped; no session state was read or written',
       });
     } else {
-      result = body(input, project);
+      result = body(input, project, host);
     }
   } catch (err) {
     try {

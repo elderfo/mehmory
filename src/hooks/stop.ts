@@ -40,7 +40,7 @@ function blockReason(key: string, sessionId: string): string {
   ].join(' ');
 }
 
-runHook('Stop', (input, project) => {
+runHook('Stop', (input, project, host) => {
   if (input.stop_hook_active === true) return {};
 
   const config = loadConfig();
@@ -49,7 +49,7 @@ runHook('Stop', (input, project) => {
   const count = incrementStopCount(input.session_id);
   if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
 
-  const captured = captureDelta(input.session_id, input.transcript_path, project, config);
+  const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
   resetStopCount(input.session_id);
 
   return {

@@ -22,7 +22,7 @@ const REMEMBER_PREFIX = /^remember:\s*/i;
 /** Pointer lines offered per prompt. */
 const MAX_POINTERS = 3;
 
-runHook('UserPromptSubmit', (input, project) => {
+runHook('UserPromptSubmit', (input, project, host) => {
   const config = loadConfig();
   if (!config.hooks.user_prompt_submit.enabled || isPaused(input.session_id)) return {};
 
@@ -33,7 +33,7 @@ runHook('UserPromptSubmit', (input, project) => {
   if (remember) {
     const text = prompt.slice(remember[0].length);
     if (!text.trim()) return {};
-    const entry = rememberEntry(text, input.session_id);
+    const entry = rememberEntry(text, input.session_id, host);
     const { appended } = appendInboxEntries(paths.inboxFile, [entry], project);
     return { context: 'mehmory: captured to inbox', stats: { captured_entries: appended } };
   }
