@@ -8,7 +8,7 @@
  */
 
 import { mehmoryHome } from '../core/home.js';
-import { loadConfig, type MehmoryConfig } from '../core/config.js';
+import type { MehmoryConfig } from '../core/config.js';
 import { pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
 import { isPaused, sweepSessionState } from '../core/session.js';
@@ -64,8 +64,7 @@ function maintenance(
   return finalized;
 }
 
-runHook('SessionStart', (input, project, host) => {
-  const config = loadConfig();
+runHook('SessionStart', (input, project, host, config) => {
   if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
 
   const justInitialized = !storeExists() && initStore().ok;

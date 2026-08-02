@@ -16,15 +16,13 @@
  * the next session start (issue #24).
  */
 
-import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { logError } from '../core/errors.js';
 import { pathExists } from '../core/fs.js';
 import { isPaused, resetStopCount } from '../core/session.js';
 import { captureDelta } from '../core/capture.js';
 
-runHook('PreCompact', (input, project, host) => {
-  const config = loadConfig();
+runHook('PreCompact', (input, project, host, config) => {
   if (!config.hooks.pre_compact.enabled || isPaused(input.session_id)) return {};
 
   const transcript = input.transcript_path;

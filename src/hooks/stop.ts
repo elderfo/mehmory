@@ -9,7 +9,6 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
 import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
@@ -41,10 +40,9 @@ function blockReason(key: string, sessionId: string, host: InboxHost): string {
   ].join(' ');
 }
 
-runHook('Stop', (input, project, host) => {
+runHook('Stop', (input, project, host, config) => {
   if (input.stop_hook_active === true) return {};
 
-  const config = loadConfig();
   if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
 
   const count = incrementStopCount(input.session_id);

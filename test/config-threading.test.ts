@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
@@ -302,5 +302,30 @@ describe('config is threaded, not re-read on the hot path', () => {
     // Restore a hermetic home for the setup.ts afterEach guard.
     process.env.MEHMORY_HOME = empty;
     expect(hermeticEnv().MEHMORY_HOME).toBe(empty);
+  });
+
+  // Regression for F5-1/F5-2 (PR review, run 5): two earlier rounds threaded config
+  // into some hooks and missed others, because `= loadConfig()` type-checks whether or
+  // not a call site passes the argument — nothing here forces the compiler to catch a
+  // reintroduced ambient read. `runHook` loads config once to check the per-harness
+  // toggle and hands that object to every adapter (src/core/hook.ts); an adapter that
+  // calls `loadConfig()` again duplicates the disk read on every hook invocation and
+  // can disagree with the toggle `runHook` already evaluated. This can't be asserted by
+  // running a hook and diffing output — a second read of the same unchanged file
+  // returns the same config, so the observable behavior is identical either way. What
+  // *is* checkable is the source itself: none of the five `runHook`-based adapters
+  // should reference `loadConfig` at all once the fix lands.
+  it('no runHook-based hook adapter calls loadConfig itself', () => {
+    const adapters = [
+      'pre-compact.ts',
+      'session-end.ts',
+      'session-start.ts',
+      'stop.ts',
+      'user-prompt-submit.ts',
+    ];
+    for (const file of adapters) {
+      const source = readFileSync(join(process.cwd(), 'src', 'hooks', file), 'utf-8');
+      expect(source, file).not.toMatch(/\bloadConfig\b/);
+    }
   });
 });

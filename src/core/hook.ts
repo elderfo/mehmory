@@ -1,7 +1,7 @@
 /**
  * Hook entrypoint plumbing (A12): stdin JSON in, stdout JSON out, always exit 0.
  *
- * Every `src/hooks/*.ts` file is `runHook('<Event>', (input, project) => …)` and
+ * Every `src/hooks/*.ts` file is `runHook('<Event>', (input, project, host, config) => …)` and
  * nothing else. This module owns the parts that are identical across all five: reading
  * stdin, resolving the project key, timing the invocation, writing the stats line, and
  * swallowing every error so a broken memory store can never break a session (A2, U8).
@@ -12,7 +12,7 @@ import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
 import { resolveHost, type Host } from './host.js';
-import { loadConfig } from './config.js';
+import { loadConfig, type MehmoryConfig } from './config.js';
 import { rememberSessionOrigin } from './session.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
@@ -92,17 +92,21 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * plugin writes passes it explicitly (A23) — resolved once here via `resolveHost`,
  * checked against `config.hosts.<host>.enabled` (the per-harness capture toggle,
  * issue #25), recorded on the stats line, and handed to the body as an argument so
- * nothing below has to read it ambiently (A21). A disabled harness skips `body`
- * entirely — no stdin is read, so there is no capture, no injection and no pointer,
- * the same silence `/mehmory:pause` promises for a single session, but persistent
- * and scoped to one harness via config instead.
+ * nothing below has to read it ambiently (A21). The config loaded to evaluate that
+ * toggle is the same object handed to `body` — an adapter reading `loadConfig()` again
+ * would not only cost a second disk read on every invocation, it could disagree with
+ * the toggle this function just checked. A disabled harness skips `body` entirely — no
+ * stdin is read, so there is no capture, no injection and no pointer, the same silence
+ * `/mehmory:pause` promises for a single session, but persistent and scoped to one
+ * harness via config instead.
  *
  * @param event - Hook event name, e.g. `SessionStart`
- * @param body - The hook itself; receives parsed stdin, the project key, and the host
+ * @param body - The hook itself; receives parsed stdin, the project key, the host, and
+ *   the already-loaded config
  */
 export function runHook(
   event: string,
-  body: (_input: HookInput, _project: string, _host: Host) => HookResult
+  body: (_input: HookInput, _project: string, _host: Host, _config: MehmoryConfig) => HookResult
 ): void {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
@@ -128,7 +132,7 @@ export function runHook(
         // Where this session's material lives and who wrote it, so the next session start
         // can finalize it even if this session never reports an end (issue #24).
         rememberSessionOrigin(input.session_id, input.transcript_path, host);
-        result = body(input, project, host);
+        result = body(input, project, host, config);
       }
     }
   } catch (err) {
