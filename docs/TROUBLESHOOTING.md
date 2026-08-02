@@ -269,6 +269,26 @@ the inbox when the next session starts, not when the session ended. If that sess
 one of the day, the entries land tomorrow. `mehmory status` will show the inbox without them
 until then. Starting any session — in any project — is enough to flush it.
 
+## Unverified: whether Codex trusts a freshly written hook on first run
+
+Codex's `config.toml` can carry `[hooks.state.<event>.<hash>] trusted_hash` entries — a
+trust record keyed by the hash of the hook command Codex has previously seen and approved for
+that event. A hook entry `mehmory init --host codex` writes is brand new, so it has no such
+record.
+
+**Whether Codex prompts for trust, or silently refuses to run an untrusted hook, on its first
+invocation is unverified on Codex CLI 0.146.0.** This is not measurable without touching a
+real user's `~/.codex` configuration and living through Codex's interactive trust flow (if any)
+by hand — the same wall that stops the `PreCompact` payload from being measured, below. Do not
+read this as "it works" or as "it doesn't": neither claim is made here.
+
+**The one-command check, if you want to know for your own install:** run
+`mehmory init --host codex`, then start a Codex session in a project and watch for mehmory's
+routing block in the first turn's context. If it's there, the hook ran; if it's silently
+absent and `mehmory doctor` still reports the wiring as `ok`, Codex most likely declined to run
+an untrusted hook rather than mehmory failing — check `$CODEX_HOME/config.toml` for a
+`trusted_hash` entry under the relevant event to tell the two apart.
+
 ### The `PreCompact` caveat
 
 mehmory registers a `PreCompact` hook on Codex, and on Claude Code it does what it says: capture

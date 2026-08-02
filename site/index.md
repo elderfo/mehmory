@@ -4,7 +4,7 @@ layout: home
 hero:
   name: mehmory
   text: Your project's memory, in markdown
-  tagline: A deliberately "meh"-tier improvement in Claude Code memory and continuity, built from boring parts. Git-backed markdown at ~/.mehmory. No embeddings, no MCP server, no cloud.
+  tagline: A deliberately "meh"-tier improvement in memory and continuity for Claude Code and Codex CLI, built from boring parts. Git-backed markdown at ~/.mehmory. No embeddings, no MCP server, no cloud.
   actions:
     - theme: brand
       text: Quickstart

@@ -2,7 +2,7 @@
 
 ## The problem
 
-Every Claude Code session starts from zero.
+Every Claude Code or Codex CLI session starts from zero.
 
 You spend the first twenty minutes re-explaining the architecture, the deploy story, why
 that one module is weird, and the decision you already made twice. Then `/clear` lands, or
@@ -17,8 +17,8 @@ notes. Retrieval quality nobody measures, in a store nobody can open.
 
 Your project's memory is a directory of markdown files in a git repo at `~/.mehmory`.
 
-That's the whole storage layer. A Claude Code session reads it and writes it with ordinary
-file operations. You can `cat` it, grep it, edit it in your editor, `git diff` it, and revert
+That's the whole storage layer. A Claude Code or Codex CLI session reads it and writes it with
+ordinary file operations. You can `cat` it, grep it, edit it in your editor, `git diff` it, and revert
 a bad write with `git revert`. When memory is a text file, "what does it think it knows?" is
 answerable in one command instead of being an act of faith.
 
@@ -73,7 +73,13 @@ limits are documented rather than oversold.
   gets built by the first `/mehmory:integrate`. The session where "it already knows my
   project" comes true is the second one. Anything claiming otherwise is overselling it.
 - **Integration is in-session work.** It costs tokens, because judgment costs tokens.
-- **Claude Code only.** The hook and skill seams are Claude Code's.
+- **`onboard`'s transcript backfill is Claude Code only.** It mines `~/.claude/projects/*/`;
+  there's no equivalent transcript history to mine on Codex, so a Codex project starts from
+  the hooks capturing forward, same as a fresh Claude Code project would.
+- **Codex's hook-trust behavior on first run is unverified.** Codex CLI can require an
+  explicit trust decision before running a freshly written hook; whether that gates mehmory's
+  first Codex invocation is not something this project could measure without a real user's
+  configuration. See the troubleshooting doc.
 
 <div class="tip custom-block" style="padding-top: 8px">
 

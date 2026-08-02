@@ -209,6 +209,31 @@ describe('mehmory init --host codex', () => {
     expect(commands(fixture)).toEqual([]);
   });
 
+  it('uninstall reformats a foreign hooks.json that is not already canonical 2-space JSON, but keeps every entry (D11)', () => {
+    // The byte-identical guarantee above holds only under the documented assumption that
+    // Codex itself wrote the file, which means canonical 2-space JSON. A hand-edited file
+    // (here: 4-space indent) is content-correct after uninstall — nothing removed, nothing
+    // invented — but is NOT byte-identical: renderHooksDoc() always re-serializes at 2-space,
+    // so the file gets backed up and reformatted around a removal that touched nothing of
+    // its own. See docs/CLI.md and docs/TROUBLESHOOTING.md for the user-facing note.
+    const fourSpace = JSON.stringify(
+      { hooks: { PreToolUse: [{ hooks: [{ command: '/usr/local/bin/other-tool hook', type: 'command' }] }] } },
+      null,
+      4
+    );
+    const fixture = codexFixture({ hooks: fourSpace });
+    const run = init(fixture, '--uninstall', '--json');
+    expect(run.status).toBe(0);
+    const data = envelopeOf(run)['data'] as Record<string, unknown>;
+    expect(data['changed']).toEqual([fixture.hooksFile]);
+    expect(data['backups']).toEqual([`${fixture.hooksFile}.mehmory.bak`]);
+    // Content correctness: the foreign entry is untouched.
+    expect(hooksDoc(fixture)).toEqual(JSON.parse(fourSpace));
+    // Byte identity does not hold: the file was rewritten at 2-space indent.
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).not.toBe(fourSpace);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(JSON.stringify(JSON.parse(fourSpace), null, 2));
+  });
+
   it('uninstall never turns the Codex hooks feature off — other tools depend on it', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     expect(init(fixture).status).toBe(0);

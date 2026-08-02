@@ -113,6 +113,12 @@ hook, so both edits are merges, never rewrites:
   mehmory could not read would silently unregister whoever else owns entries in it.
 - The `config.toml` edit is a line edit. Your models, MCP servers, per-project trust levels
   and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
+- **`hooks.json` byte-identity holds only under one assumption: the file was already in
+  canonical 2-space JSON, the shape Codex itself writes.** Content correctness (no entry
+  mehmory did not write is ever touched) holds unconditionally either way. But
+  `hooks.json`'s edits re-serialize the whole document, so a hand-edited file in a different
+  indent style comes back reformatted around a change that otherwise touched nothing of its
+  own — see `docs/PRIVACY.md` for the user-facing version of this note.
 
 Uninstall removes only mehmory's entries, prunes the events and groups that empty out as a
 result, and **never turns the hooks feature back off** — the flag is Codex's, and other
@@ -225,6 +231,12 @@ Aggregates only fields that actually exist in `stats.jsonl`: per-hook invocation
 `ms` p50/p95, injection token p50/p95, pointers offered, and captured entries — plus inbox
 age (from `inbox.md`'s mtime) and integrate cadence (from `log.md`). Nothing is synthesized
 for a metric the store doesn't record.
+
+Also broken down **per harness** (issue #14 story 39): every `stats.jsonl` record carries
+`host`, so the report includes an invocation count and a captured-entry count for each
+harness seen — `claude-code`, `codex`, or both, whichever actually wrote records in the
+selected scope. Text output adds one indented line per harness under `captured`; `--json`
+carries the same data as `data.hosts: [{host, count, capturedEntries}]`.
 
 ### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
 

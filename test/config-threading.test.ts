@@ -18,6 +18,7 @@ import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import {
+  additionalContext,
   errorsLog,
   keyFor,
   outputJson,
@@ -25,6 +26,7 @@ import {
   runHook,
   seedStore,
   statsLines,
+  writeCodexRollout,
 } from './hook-fixture.js';
 
 /** Overwrite the store's config.json (initStore writes an empty one). */
@@ -209,6 +211,77 @@ describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
 
   it('captures normally for both harnesses on the untouched default', () => {
     expect(remember('codex').stdout).toContain('captured to inbox');
+  });
+});
+
+describe('hosts.<host>.enabled reaches injection too, not only capture (D10)', () => {
+  // The suite above only exercised the toggle against capture. Injection is a separate
+  // code path (SessionStart's context frame, UserPromptSubmit's pointer nudge) and needs
+  // its own proof that a disabled harness gets neither.
+  const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
+  const DEPLOY_PAGE = `---
+updated: 2026-07-01
+type: procedure
+---
+
+# Deployment runbook
+
+- deployment runs through the fly.io pipeline
+`;
+
+  let cwd: string;
+  let key: string;
+  let rollout: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = keyFor(cwd);
+    seedStore(key, { pages: { 'deployment.md': DEPLOY_PAGE } });
+    rollout = writeCodexRollout([{ text: 'we use fly.io' }], CODEX_SESSION);
+  });
+
+  it('suppresses session-start injection when codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'session-start',
+      { session_id: CODEX_SESSION, transcript_path: rollout, cwd, hook_event_name: 'SessionStart' },
+      { cwd, args: ['codex', '--mehmory'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'SessionStart', host: 'codex' });
+  });
+
+  it('suppresses prompt-submit pointer injection when codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'user-prompt-submit',
+      {
+        session_id: CODEX_SESSION,
+        transcript_path: rollout,
+        cwd,
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'how does deployment work?',
+      },
+      { cwd, args: ['codex', '--mehmory'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+  });
+
+  it('converse: claude-code still injects when only codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'session-start',
+      { session_id: CODEX_SESSION, transcript_path: rollout, cwd, hook_event_name: 'SessionStart' },
+      { cwd, args: ['claude-code'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toContain('<mehmory-memory>');
   });
 });
 

@@ -54,7 +54,7 @@ Lines below a `## Archive` heading are pages the mechanical decay pass demoted; 
 `inbox.md` is a normal markdown file you can read and edit, but each captured entry is a **single line** ending in an HTML comment that carries its machine identity:
 
 ```
-- staging deploys need the VPN <!--mehmory id=... src=... ts=...-->
+- staging deploys need the VPN <!--mehmory id=... src=... host=claude-code ts=...-->
 ```
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
