@@ -282,7 +282,7 @@ That trailing comment is invisible when the markdown is rendered and is what let
 - Editing or rewording the **text** of an entry is fine.
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
-- Do not hand-write new entries; the id is a hash. Use \`/mehmory:remember\`, or the \`remember:\` prompt prefix.
+- Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.
 
 Any line that does not match the entry format — headings, your own notes — is left alone by every tool.
 

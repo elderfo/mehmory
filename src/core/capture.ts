@@ -417,9 +417,9 @@ function sessionEndLogTag(sessionId: string): string {
  *
  * Arguments only — no ambient config or environment read (A21); the caller loads
  * config once (or accepts this default) and passes it through. Throws only what
- * `markSessionFinalized`/`deleteSessionState` throw on a failed state write; the
- * distill, log and commit steps are each fail-open, and `finalizePendingSessions` and
- * `runHook` both bound anything that escapes (A2, A8).
+ * `markSessionFinalized` throws on a failed state write — `deleteSessionState` swallows
+ * its own failure; the distill, log and commit steps are each fail-open, and
+ * `finalizePendingSessions` and `runHook` both bound anything that escapes (A2, A8).
  */
 export function finalizeSession(
   sessionId: string,
