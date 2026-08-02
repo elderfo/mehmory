@@ -60,7 +60,9 @@ export const command: Command = {
       errors: findings
         .filter(f => f.level === 'error')
         .map(f => ({
-          code: `E_DOCTOR_${f.check.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+          // A check that names a documented cause reports under that cause's registry
+          // code; everything else keeps the derived `E_DOCTOR_<CHECK>` shape.
+          code: f.code ?? `E_DOCTOR_${f.check.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
           what: f.message,
           consequence: 'The check failed',
           ...(f.fix !== undefined ? { fix: f.fix } : {}),

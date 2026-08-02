@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { logError, type MehmoryError } from './errors.js';
 import { readFile, pathExists } from './fs.js';
+import type { InboxHost } from '../schema/format.js';
 
 /** Per-hook switch. An object rather than a bare boolean so run 3 can add per-hook
  * bounds (timeouts, budgets) without another config shape change. */
@@ -38,6 +39,15 @@ export interface MehmoryConfig {
     readonly pre_compact: HookToggle;
     readonly session_end: HookToggle;
   };
+  /**
+   * Per-harness capture toggle (issue #25). Off for a harness means every hook it
+   * invokes skips capture, injection and pointers entirely for that harness — the
+   * gradual-adoption switch for running mehmory on Codex without also touching how it
+   * behaves in Claude Code, or vice versa. `Record<InboxHost, …>` rather than a literal
+   * `{ 'claude-code': …; codex: … }` shape, so a third harness added to `INBOX_HOSTS`
+   * gets a key here by construction instead of by a second edit going stale.
+   */
+  readonly hosts: Record<InboxHost, HookToggle>;
   readonly inbox: {
     /** Entries in inbox.md at or above which SessionStart nudges to integrate. */
     readonly nudge_entries: number;
@@ -116,6 +126,10 @@ const DEFAULTS: MehmoryConfig = {
     stop: { enabled: true },
     pre_compact: { enabled: true },
     session_end: { enabled: true },
+  },
+  hosts: {
+    'claude-code': { enabled: true },
+    codex: { enabled: true },
   },
   inbox: {
     nudge_entries: 10,

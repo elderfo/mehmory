@@ -141,6 +141,58 @@ uncommitted state.* Fix: `git -C <resolved store home> commit -a`. This is the o
 failure mode with a real remedy: the delete already happened, so re-running `purge` is not
 the fix — committing the pending removal is.
 
+## E_CODEX_INSTALL (actionable)
+
+`mehmory init --host codex` could not read or write a file under `$CODEX_HOME`. Consequence:
+*the file was left exactly as it is, so no hook registration was changed.* Fix: `$EDITOR
+<the named file>` when it does not parse, `ls -l <its directory>` when the write itself
+failed.
+
+The refusal is deliberate. `~/.codex/hooks.json` is shared with every other tool that
+registers a Codex hook, so a file mehmory cannot parse is left alone rather than replaced —
+overwriting it would silently unregister whoever else owns entries in it. Fix the JSON (or
+move the file aside) and re-run the install.
+
+## E_CODEX_HARNESS_MISSING (actionable)
+
+`$CODEX_HOME/hooks.json` holds mehmory's hook entries, but there is no `config.toml` there —
+Codex is not configured at that location. Consequence: *those entries run nothing.* Fix:
+`mehmory init --host codex --uninstall`.
+
+Usually means Codex was uninstalled, or `CODEX_HOME` now points somewhere else. If Codex is
+still installed elsewhere, set `CODEX_HOME` to that directory and run the install there
+instead of the uninstall above.
+
+## E_CODEX_HOOKS_DISABLED (actionable)
+
+Codex's `[features] hooks` flag is `false` or unset in `$CODEX_HOME/config.toml`.
+Consequence: *no hook fires at all* — not mehmory's, and not any other tool's. Fix:
+`mehmory init --host codex`, which turns the flag on without touching the rest of the file.
+
+This is the first thing to check when Codex sessions capture nothing: the hooks can be
+perfectly registered and still never run, because the flag gates all of them.
+
+## E_CODEX_HOOKS_UNWIRED (actionable)
+
+`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the four Codex events
+mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`) — or the file
+does not parse, in which case nothing at all is registered. Consequence: *those events
+capture and inject nothing under Codex.* Fix: `mehmory init --host codex`, or `$EDITOR
+$CODEX_HOME/hooks.json` when `doctor` reports the file as unparseable.
+
+`mehmory doctor` names the specific events that are missing, so a partial wiring — one hook
+hand-deleted, or an install interrupted — reads as such rather than as "not installed".
+
+## E_CODEX_SKILLS_MISSING (actionable)
+
+No `mehmory` or `mehmory-*` skill directory under `$CODEX_HOME/skills/`. Consequence:
+*nothing integrates what Codex captures* — the judgment-work commands (integrate, lint,
+onboard) are unavailable there. Fix: `mehmory init --host codex`.
+
+Reported as a **warning**, not an error: the hooks are what capture and inject, and they
+keep working. What you will notice instead is the inbox filling up and never being merged
+into the wiki.
+
 ## CLI-level codes (not in `ERROR_KINDS`)
 
 These three shapes are raised by `src/cli/` and never by a library function, so they are
@@ -176,3 +228,82 @@ confirmation is two invocations (see `docs/CLI.md` and `docs/PRIVACY.md`).
 `doctor` already prints; the remedy is whatever that finding's `fix` names. They are generated
 from the check list, which is why they are described as a shape here rather than enumerated —
 `mehmory doctor` is the authoritative list, and `docs/CLI.md` documents the checks themselves.
+
+## Not an error: the stop nudge never appears under `codex exec`
+
+In an interactive Codex TUI session the Stop hook's once-per-threshold nudge renders as
+`Stop hook (blocked) feedback: …`, the model answers it, and Stop re-fires with
+`stop_hook_active: true` — the same loop-guard cycle as Claude Code.
+
+Under `codex exec` (non-interactive) it does not. Codex accepts the block, but a non-interactive
+run has no follow-up turn to put it in: the run simply ends. Measured against Codex CLI 0.146.0.
+
+**Nothing is lost.** The nudge is the second of two layers. The first — distilling the session's
+transcript delta into the inbox — is deterministic, needs nothing from the model, and runs before
+the block is emitted, so a `codex exec` run captures exactly what an interactive one does. What
+you do not get is the model volunteering the reasoning that never reached the transcript.
+
+This is a property of non-interactive execution, not a bug, and mehmory does not work around it:
+the alternatives (writing the nudge to stderr, blocking a run that cannot answer) would either
+be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
+for it in the prompt — `remember:` works there like anywhere else.
+
+## Not an error: a Codex session is finalized by the *next* session, not by its own end
+
+Codex has no session-end event. Claude Code fires `SessionEnd`, mehmory distills the last
+stretch of the transcript there, and the next `SessionStart` writes it to the inbox. Under Codex
+that first half never happens — nothing tells mehmory the session is over, including when the
+session is over because the terminal was closed or the process was killed.
+
+So finalization moves to the front of the next session instead. Every hook invocation records
+which transcript the session is reading and which harness is reading it; a session whose state is
+still on disk, has no finalization marker, and has sat untouched for 30 minutes is treated as
+abandoned, and the next `SessionStart` in any project distills its remaining delta, files it,
+logs one `session-end` line, commits, and marks it finalized. The marker is what makes this safe
+to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
+is skipped, so nothing is written or committed twice. The 30-minute idle window is what keeps a
+second terminal from retiring a session that is merely quiet.
+
+**Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
+the inbox when the next session starts, not when the session ended. If that session was the last
+one of the day, the entries land tomorrow. `mehmory status` will show the inbox without them
+until then. Starting any session — in any project — is enough to flush it.
+
+## Unverified: whether Codex trusts a freshly written hook on first run
+
+Codex's `config.toml` can carry `[hooks.state.<event>.<hash>] trusted_hash` entries — a
+trust record keyed by the hash of the hook command Codex has previously seen and approved for
+that event. A hook entry `mehmory init --host codex` writes is brand new, so it has no such
+record.
+
+**Whether Codex prompts for trust, or silently refuses to run an untrusted hook, on its first
+invocation is unverified on Codex CLI 0.146.0.** This is not measurable without touching a
+real user's `~/.codex` configuration and living through Codex's interactive trust flow (if any)
+by hand — the same wall that stops the `PreCompact` payload from being measured, below. Do not
+read this as "it works" or as "it doesn't": neither claim is made here.
+
+**The one-command check, if you want to know for your own install:** run
+`mehmory init --host codex`, then start a Codex session in a project and watch for mehmory's
+routing block in the first turn's context. If it's there, the hook ran; if it's silently
+absent and `mehmory doctor` still reports the wiring as `ok`, Codex most likely declined to run
+an untrusted hook rather than mehmory failing — check `$CODEX_HOME/config.toml` for a
+`trusted_hash` entry under the relevant event to tell the two apart.
+
+### The `PreCompact` caveat
+
+mehmory registers a `PreCompact` hook on Codex, and on Claude Code it does what it says: capture
+everything since the last capture, just before the context is compacted.
+
+On Codex CLI 0.146.0 that hook is **unverified**. The event exists in the binary, and there is
+evidence it has fired on some machines, but no run in this project's measurement work ever
+produced one — a `codex exec` run fires `SessionStart`, `UserPromptSubmit` and `Stop` and never
+compacts. Its payload has therefore never been observed, so the hook assumes nothing about it: it
+checks for a readable `transcript_path` (the one field every measured Codex event does carry) and,
+on any payload it does not recognize, logs `E_TRANSCRIPT_PARSE` and does nothing at all rather
+than acting on guessed field names.
+
+The consequence is that on Codex, compaction is not a capture point you should count on. The
+next-session-start path above is what the design relies on, and it does not depend on `PreCompact`
+firing, on its payload, or on compaction happening at all. Deliberately, `PreCompact` also never
+finalizes a session: a compaction is not an ending, and retiring the session there would leave
+everything after the compaction with no route into the inbox.

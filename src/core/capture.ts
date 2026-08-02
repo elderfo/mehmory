@@ -7,20 +7,30 @@
  * in this module so it is testable in-process and reusable by run 3's CLI.
  */
 
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { appendRecord, listDir, mkdir, pathExists, readFile, stat } from './fs.js';
 import { withProjectLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
-import { advanceSessionCursor, readSessionState } from './session.js';
+import {
+  advanceSessionCursor,
+  deleteSessionState,
+  isPaused,
+  isSessionFinalized,
+  listPendingSessions,
+  markSessionFinalized,
+  readSessionState,
+} from './session.js';
+import { commitPaths } from './git.js';
+import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { buildInjection } from './injection.js';
 import { estimateTokens } from './tokens.js';
-import { inboxEntryId, type InboxEntry } from '../schema/format.js';
-import { readTranscript } from '../transcript/reader.js';
+import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
+import { readSession } from '../transcript/host.js';
 import { distill } from '../distill/distill.js';
 
 /** Absolute paths of the files a hook reads or writes for one project scope. */
@@ -116,6 +126,22 @@ export const ROUTING_BLOCK = [
 ].join('\n');
 
 /**
+ * How a user invokes one of mehmory's skills under `host`.
+ *
+ * Slash commands are a Claude Code plugin feature. Codex installs the same six skills as
+ * flat, prefix-named directories under `$CODEX_HOME/skills/` and has no slash commands at
+ * all, so telling a Codex user to run `/mehmory:integrate` names something that does not
+ * exist. The host is already threaded into every hook body (A21/A23) — this is the one
+ * thing the user actually reads, so it is the one thing that has to be shaped by it.
+ *
+ * The `remember:` prefix deliberately is *not* host-shaped: it is delivered by the
+ * UserPromptSubmit hook, which mehmory wires on both harnesses.
+ */
+export function skillRef(host: InboxHost, skill: string): string {
+  return host === 'codex' ? `the mehmory-${skill} skill` : `/mehmory:${skill}`;
+}
+
+/**
  * Compose the SessionStart injection for a scope: identity + project + index, budget-
  * truncated by `buildInjection` to `config.injection.budget_tokens`, wrapped in an
  * explicit data-only frame so the model reads injected memory as facts rather than as
@@ -181,12 +207,18 @@ export interface CaptureResult {
  * reset each other. Text is redacted here as well as inside `distill` — this module is
  * the write boundary, and criterion 14 puts the filter at every one of them.
  *
+ * `host` selects the on-disk reader (`readSession`) *and* is stamped on every entry, so
+ * a Codex rollout is parsed as one and attributed as one. It is a required argument
+ * rather than a defaulted one on purpose: a silent default is exactly how a Codex
+ * capture would mis-attribute itself with no type error (issue #20).
+ *
  * Never throws: an absent or unreadable transcript yields an empty delta plus an
  * `errors.log` entry.
  */
 export function distillDelta(
   sessionId: string,
   transcriptPath: string | undefined,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry[] {
   if (!transcriptPath) return [];
@@ -194,7 +226,7 @@ export function distillDelta(
   return failOpen(
     () => {
       const cursor = readSessionState(sessionId).cursor;
-      const { records, skipped, endOffset } = readTranscript(transcriptPath, cursor.offset);
+      const { records, skipped, endOffset } = readSession(transcriptPath, host, cursor.offset);
 
       const total = records.length + skipped;
       if (total > 0 && (skipped / total) * 100 > config.distill.max_loss_percent) {
@@ -211,6 +243,7 @@ export function distillDelta(
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
+        host,
         ts,
       }));
 
@@ -232,9 +265,10 @@ export function captureDelta(
   sessionId: string,
   transcriptPath: string | undefined,
   key: string,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): CaptureResult {
-  const entries = distillDelta(sessionId, transcriptPath, config);
+  const entries = distillDelta(sessionId, transcriptPath, host, config);
   if (entries.length === 0) return { appended: 0, entries };
   const { appended } = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
   return { appended, entries };
@@ -244,11 +278,12 @@ export function captureDelta(
 export function rememberEntry(
   text: string,
   sessionId: string,
+  host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry {
   const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
-  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, ts };
+  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, host, ts };
 }
 
 /** Append one `## <iso> <op> | <summary>` line to a scope's log.md (spec log format). */
@@ -304,7 +339,21 @@ export function applyDistillJob(
       typeof e['src'] === 'string' &&
       typeof e['ts'] === 'string'
     ) {
-      entries.push({ id: e['id'], text: redact(e['text'], config.secrets), src: e['src'], ts: e['ts'] });
+      // The queued payload is JSON round-tripped, so `host` survives as a plain string:
+      // narrow it back rather than dropping it, or a Codex session's deferred entries
+      // would land attributed to Claude Code by the serializer's default.
+      const rawHost = e['host'];
+      const host =
+        typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
+          ? (rawHost as InboxHost)
+          : undefined;
+      entries.push({
+        id: e['id'],
+        text: redact(e['text'], config.secrets),
+        src: e['src'],
+        ...(host !== undefined ? { host } : {}),
+        ts: e['ts'],
+      });
     }
   }
   if (entries.length === 0) return 0;
@@ -323,4 +372,151 @@ export function staleSessionStartWarning(project: string): string | undefined {
   const at = last ? Date.parse(last.ts) : NaN;
   if (!Number.isNaN(at) && Date.now() - at < WARNING_DRAIN_STALE_MS) return undefined;
   return pendingWarnings()[0];
+}
+
+// ─── Session finalization (SessionEnd → next SessionStart, issue #16) ───
+
+/** Outcome of `finalizeSession`, surfaced to the adapter's stats line. */
+export interface FinalizeSessionResult {
+  readonly capturedEntries: number;
+}
+
+/**
+ * Substring embedded in a session's `log.md` line, stable across a retried
+ * `finalizeSession` call — the log line's own committed content is the idempotency
+ * signal for "was this session's end already logged and committed", independent of
+ * whether `markSessionFinalized` itself went on to succeed (see `finalizeSession`).
+ */
+function sessionEndLogTag(sessionId: string): string {
+  return `(session ${sessionId})`;
+}
+
+/**
+ * Final-delta handling for one session's end (A12): distill whatever the transcript
+ * still holds, enqueue it as a durable write (SessionEnd runs in a dying process, so the
+ * *write* — not the distill — is what defers to the next SessionStart), log the
+ * outcome, commit the touched paths, and drop the session's state. The session-end
+ * adapter is reduced to calling this and shaping the result into stats.
+ *
+ * Idempotent two ways: a marker recorded on a successful run (`markSessionFinalized`)
+ * makes every later call for the same session id a no-op; and — because that marker
+ * write can itself fail *after* the distill/log/commit work already landed, in which
+ * case `isSessionFinalized` alone can't tell "done" from "never started" — the
+ * distill/log/commit block is additionally guarded by checking whether this session's
+ * `log.md` line was already committed. That guard is what stops a retry from
+ * re-reading a reset cursor and double-appending the log line / double-committing.
+ *
+ * Not gated by `hooks.session_end.enabled`. That toggle governs the SessionEnd *hook*,
+ * so it is checked in the SessionEnd adapter like every other hook checks its own —
+ * and only there. This function is also the recovery path `finalizePendingSessions`
+ * drives from SessionStart, which for Codex (no session-end event at all) is the only
+ * route the session's tail has into the inbox. Gating it here made the toggle delete
+ * un-distilled material instead of deferring it: a disabled event must capture nothing,
+ * never destroy anything. `isPaused` still short-circuits, because discarding the
+ * session's tail is what `/mehmory:pause` explicitly promises.
+ *
+ * Arguments only — no ambient config or environment read (A21); the caller loads
+ * config once (or accepts this default) and passes it through. Throws only what
+ * `markSessionFinalized` throws on a failed state write — `deleteSessionState` swallows
+ * its own failure; the distill, log and commit steps are each fail-open, and
+ * `finalizePendingSessions` and `runHook` both bound anything that escapes (A2, A8).
+ */
+export function finalizeSession(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  project: string,
+  host: InboxHost,
+  config: MehmoryConfig = loadConfig()
+): FinalizeSessionResult {
+  if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
+
+  if (isPaused(sessionId)) {
+    deleteSessionState(sessionId);
+    markSessionFinalized(sessionId);
+    return { capturedEntries: 0 };
+  }
+
+  const home = mehmoryHome();
+  const paths = scopePaths(project);
+  const alreadyLogged =
+    pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId));
+
+  let capturedEntries = 0;
+  if (!alreadyLogged) {
+    const entries = distillDelta(sessionId, transcriptPath, host, config);
+    if (entries.length > 0) {
+      enqueueJob(distillJobPayload(project, entries), 'distill-final');
+    }
+
+    appendLogEntry(
+      project,
+      'session-end',
+      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId)}`
+    );
+
+    const touched = [paths.logFile, paths.inboxFile]
+      .filter(pathExists)
+      .map(path => relative(home, path));
+    if (touched.length > 0 && pathExists(join(home, '.git'))) {
+      commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
+    }
+    capturedEntries = entries.length;
+  }
+
+  deleteSessionState(sessionId);
+  markSessionFinalized(sessionId);
+  return { capturedEntries };
+}
+
+/**
+ * Finalize every session left pending — state on disk, no finalization marker, idle long
+ * enough to be abandoned — at the next session start (issue #24).
+ *
+ * Codex has no session-end event at all, so for a Codex session this is not a fallback:
+ * it is the only route the last stretch of the session has into the inbox. A Claude Code
+ * session killed before SessionEnd fires is the same shape, and recovers the same way.
+ * Either way the work goes through `finalizeSession` — one operation, one marker, so a
+ * session already finalized by its own SessionEnd is skipped and nothing is written twice.
+ *
+ * The current session is excluded by id: it is the one session on disk that is provably
+ * still running.
+ *
+ * The recorded host and project key win over the running session's, because the pending
+ * session may well come from the other harness or another project directory; the
+ * arguments are only the fallback for state written before either was recorded.
+ *
+ * Each session is finalized inside its own `failOpen`, not the sweep as a whole: one
+ * session whose state write fails must not abandon the rest of that start, nor report
+ * `finalized: 0` for the ones that already completed.
+ *
+ * @returns number of sessions finalized
+ */
+export function finalizePendingSessions(
+  currentSessionId: string,
+  project: string,
+  host: InboxHost,
+  config: MehmoryConfig = loadConfig()
+): number {
+  const pending = failOpen(() => listPendingSessions(), [], 'E_SESSION_STATE');
+
+  let finalized = 0;
+  for (const state of pending) {
+    if (state.session_id === currentSessionId) continue;
+    const ok = failOpen(
+      () => {
+        finalizeSession(
+          state.session_id,
+          state.transcript_path,
+          state.project_key ?? project,
+          state.host ?? host,
+          config
+        );
+        return true;
+      },
+      false,
+      'E_SESSION_STATE'
+    );
+    if (ok) finalized++;
+  }
+  return finalized;
 }

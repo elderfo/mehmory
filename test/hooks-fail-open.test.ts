@@ -106,7 +106,9 @@ describe('hooks fail open', () => {
 
       expect(run.status).toBe(0);
       expect(run.stderr).toBe('');
-      expect(run.stdout).toBe('');
+      // Stop answers `{}` on every path, including this one — a harness that parses
+      // Stop output unconditionally must not meet silence (D9).
+      expect(run.stdout).toBe(hook === 'stop' ? '{}' : '');
       expect(existsSync(join(mehmoryHome(), '.state', '.json'))).toBe(false);
       expect(errorsLog()).toContain('E_SESSION_STATE');
     });

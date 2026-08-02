@@ -1,0 +1,24 @@
+[
+  {
+    "id": "1b432df4ab252d319f0b7a86e67bfa2900cf0592631964b7b740afb21c201221",
+    "pattern": "user_message",
+    "content": "Add https://github.com/anthropics/claude-plugins-official/tree/main/plugins/commit-commands these commands as skills that codex can use.",
+    "source": {
+      "sessionId": "bb000000-0000-4000-8000-000000000000",
+      "recordUuid": "8ff4cd94a8c096f69f8e9f355dd522b2",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "d8c6b3903f964d4d01e3fa033fcf04232e47b8ae1f6be42558df2d8147dadd2e",
+    "pattern": "decision_marker",
+    "content": "Decision: Will the commit commands be recognized as individual skills?",
+    "source": {
+      "sessionId": "bb000000-0000-4000-8000-000000000000",
+      "recordUuid": "6d288406d80cc9748dc23545629c078d",
+      "recordType": "message",
+      "lineNumber": 2
+    }
+  }
+]

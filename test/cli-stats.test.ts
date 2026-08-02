@@ -49,6 +49,22 @@ describe('percentile arithmetic', () => {
     expect(report.pointersOffered).toBe(2);
     expect(report.capturedEntries).toBe(4);
   });
+
+  it('breaks captures down by harness (issue #14 story 39)', () => {
+    const ts = '2026-07-01T00:00:00.000Z';
+    const records: StatRecord[] = [
+      { ts, project: 'p', hook: 'Stop', ms: 1, host: 'claude-code', captured_entries: 3 },
+      { ts, project: 'p', hook: 'Stop', ms: 1, host: 'claude-code', captured_entries: 2 },
+      { ts, project: 'p', hook: 'Stop', ms: 1, host: 'codex', captured_entries: 5 },
+      { ts, project: 'p', hook: 'SessionStart', ms: 1 }, // no captured_entries: still counts a call
+    ];
+    const report = summarize(records);
+
+    expect(report.hosts).toEqual([
+      { host: 'claude-code', count: 2, capturedEntries: 5 },
+      { host: 'codex', count: 1, capturedEntries: 5 },
+    ]);
+  });
 });
 
 describe('mehmory stats', () => {
@@ -77,6 +93,32 @@ describe('mehmory stats', () => {
     expect(run.stdout).toContain('pointers   3 offered');
     // The other project's 999 ms record must not leak into this scope.
     expect(run.stdout).not.toContain('999');
+  });
+
+  it('reports captures per harness in both text and --json (issue #14 story 39)', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    const key = String(
+      (envelopeOf(runCli(['status', '--json'], { cwd }))['data'] as Record<string, unknown>)['key']
+    );
+    writeStats([
+      stat(key, 'Stop', 1, { host: 'claude-code', captured_entries: 2 }),
+      stat(key, 'Stop', 1, { host: 'codex', captured_entries: 5 }),
+    ]);
+
+    const run = runCli(['stats'], { cwd });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('claude-code');
+    expect(run.stdout).toContain('codex');
+
+    const data = envelopeOf(runCli(['stats', '--json'], { cwd }))['data'] as Record<
+      string,
+      unknown
+    >;
+    expect(data['hosts']).toEqual([
+      { host: 'claude-code', count: 1, capturedEntries: 2 },
+      { host: 'codex', count: 1, capturedEntries: 5 },
+    ]);
   });
 
   it('`--all` spans every project', () => {

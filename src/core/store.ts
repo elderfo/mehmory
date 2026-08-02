@@ -274,7 +274,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 \`inbox.md\` is a normal markdown file you can read and edit, but each captured entry is a **single line** ending in an HTML comment that carries its machine identity:
 
 \`\`\`
-- staging deploys need the VPN <!--mehmory id=... src=... ts=...-->
+- staging deploys need the VPN <!--mehmory id=... src=... host=claude-code ts=...-->
 \`\`\`
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
@@ -282,7 +282,7 @@ That trailing comment is invisible when the markdown is rendered and is what let
 - Editing or rewording the **text** of an entry is fine.
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
-- Do not hand-write new entries; the id is a hash. Use \`/mehmory:remember\`, or the \`remember:\` prompt prefix.
+- Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.
 
 Any line that does not match the entry format — headings, your own notes — is left alone by every tool.
 

@@ -55,7 +55,14 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
 
 ## Commands
 
-### `mehmory init`
+### `mehmory init [--host <name>] [--uninstall]`
+
+`--host` selects the harness to wire mehmory into: `claude-code` (the default) or `codex`.
+`--uninstall` reverses the wiring, and requires a non-default `--host` — Claude Code installs
+and removes mehmory through its own plugin system, so there is nothing there for `init` to
+undo.
+
+#### Default host
 
 Idempotent. Calls the library's `initStore()`, which creates the store layout, `git init`s it,
 and — when absent — writes `~/.mehmory/.gitignore` (containing `.state/`) and an **empty**
@@ -70,6 +77,54 @@ and — when absent — writes `~/.mehmory/.gitignore` (containing `.state/`) an
   where slash commands do nothing.
 
 Running `init` twice changes nothing on disk.
+
+#### Codex host
+
+Codex has no plugin mechanism for hooks, so `init` writes the configuration itself — two
+files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONFIG.md`),
+plus the six skills:
+
+- **`hooks.json`** gets one entry per Codex lifecycle event mehmory captures:
+  `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. There is no `SessionEnd`
+  entry, because Codex has no session-end event.
+- **`config.toml`** gets `[features] hooks = true`, which Codex requires before any hook of
+  any tool runs. Already on, and it is left exactly as it was.
+- **`skills/`** gets one directory per skill — `mehmory-remember`, `mehmory-integrate`,
+  `mehmory-lint`, `mehmory-onboard-session`, `mehmory-pause`, `mehmory-resume` — each holding
+  a verbatim copy of the same `SKILL.md` Claude Code loads, the flat, prefix-named layout
+  Codex itself uses (see `gstack-*` for the convention this follows). `mehmory doctor`'s
+  `codex.skills` check looks for exactly this. `--uninstall` removes every `mehmory` /
+  `mehmory-*` directory it finds and nothing else — a foreign skill directory under
+  `skills/` is untouched by either direction.
+
+Both `hooks.json` and `config.toml` are shared with every other tool that registers a Codex
+hook, so both edits are merges, never rewrites:
+
+- Entries mehmory did not write are never read, moved or removed — they survive install,
+  re-install and uninstall unchanged.
+- Mehmory's own entries are identified by a marker token on the command they run, not by
+  the path of the script, so upgrading mehmory replaces the previous entry instead of
+  leaving a stale duplicate. Re-running the install is idempotent: no duplicates, and a
+  second run with nothing to change writes no bytes at all.
+- Every file is copied to `<file>.mehmory.bak` immediately before it is modified. A run
+  that changes nothing takes no backup.
+- A `hooks.json` that does not parse is **refused**, not overwritten: exit **3** with
+  `E_CODEX_INSTALL`, and the file is left byte-for-byte as it was. Overwriting a file
+  mehmory could not read would silently unregister whoever else owns entries in it.
+- The `config.toml` edit is a line edit. Your models, MCP servers, per-project trust levels
+  and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
+- **`hooks.json` byte-identity holds only under one assumption: the file was already in
+  canonical 2-space JSON, the shape Codex itself writes.** Content correctness (no entry
+  mehmory did not write is ever touched) holds unconditionally either way. But
+  `hooks.json`'s edits re-serialize the whole document, so a hand-edited file in a different
+  indent style comes back reformatted around a change that otherwise touched nothing of its
+  own — see `docs/PRIVACY.md` for the user-facing version of this note.
+
+Uninstall removes only mehmory's entries, prunes the events and groups that empty out as a
+result, and **never turns the hooks feature back off** — the flag is Codex's, and other
+tools' hooks depend on it.
+
+Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
 
 ### `mehmory onboard [--project [<key>]|--global] [--dry-run] [--sessions N] [--max-bytes N] [--projects N] [--resume]`
 
@@ -140,6 +195,20 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - `schema_version` drift (see `docs/UPGRADE.md`).
 - Config parseability.
 - KPI budget violations against the amended numbers in the spec's KPI table.
+- The Codex surface, four checks, each carrying a real error code documented in
+  `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
+
+  | Check | Code | What it means |
+  |---|---|---|
+  | `codex.harness` | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED` | Codex's `[features] hooks` is off or unset, so no hook fires at all |
+  | `codex.hooks` | `E_CODEX_HOOKS_UNWIRED` | one or more Codex events carry no mehmory entry, so those events capture nothing |
+  | `codex.skills` | `E_CODEX_SKILLS_MISSING` | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+
+  All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
+  a Claude-Code-only user gets no findings about a harness they don't run. They appear as
+  soon as either `$CODEX_HOME/config.toml` or a mehmory entry in `$CODEX_HOME/hooks.json`
+  exists.
 
 Every finding with a real remedy carries a copy-paste command. Exit 0 (all `ok`), 5 (only
 `warn` findings), or 6 (at least one `error` finding). `doctor` never exits 2 — an absent
@@ -162,6 +231,12 @@ Aggregates only fields that actually exist in `stats.jsonl`: per-hook invocation
 `ms` p50/p95, injection token p50/p95, pointers offered, and captured entries — plus inbox
 age (from `inbox.md`'s mtime) and integrate cadence (from `log.md`). Nothing is synthesized
 for a metric the store doesn't record.
+
+Also broken down **per harness** (issue #14 story 39): every `stats.jsonl` record carries
+`host`, so the report includes an invocation count and a captured-entry count for each
+harness seen — `claude-code`, `codex`, or both, whichever actually wrote records in the
+selected scope. Text output adds one indented line per harness under `captured`; `--json`
+carries the same data as `data.hosts: [{host, count, capturedEntries}]`.
 
 ### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
 
@@ -213,3 +288,39 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
 - Within that limit, `--session` reaches **every inbox in the store**, not just the scope you
   would otherwise be in. Session ids are unique, and a session that touched two projects is
   exactly the case where a scoped purge would silently leave a copy behind.
+
+### `mehmory inbox-tx <append|snapshot|clear> [--json]`
+
+The transactional inbox helper (A15), reachable through the CLI so a skill can call the
+`mehmory` binary directly instead of resolving a path through a Claude-Code-specific
+plugin-root variable. Same helper, same transactional guarantees, one more entry point
+(A17) — `hooks/inbox-tx.mjs`, the bundled script skills previously shelled out to, and
+this command both call the same `runInboxTx` implementation in `src/core/inbox-tx.ts`,
+so neither is a second implementation of the other.
+
+Input contract is unchanged: the subcommand is the first argument, and a JSON object goes
+on **stdin**, not through flags — this is the one command whose payload isn't argv, because
+the payload (entry text, a project key, a snapshot id) doesn't belong on a command line a
+shell history might keep.
+
+```bash
+echo '{"inbox":"<path>/inbox.md","key":"<project key>","entries":[{"text":"...","src":"..."}]}' \
+  | mehmory inbox-tx append     # -> {"appended":n,"skipped":m}
+echo '{"inbox":"<path>/inbox.md","key":"<project key>"}' \
+  | mehmory inbox-tx snapshot   # -> {"snapshotId":"...","entries":[...]}
+echo '{"inbox":"<path>/inbox.md","key":"<project key>","snapshotId":"<id>"}' \
+  | mehmory inbox-tx clear      # -> {"removed":n}
+```
+
+Without `--json`, stdout is exactly the result object above on one line — identical to
+`hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the
+other. With `--json`, the result is wrapped in the standard envelope as `data`.
+
+- Bad or missing input (unparseable stdin, a missing field, an unknown subcommand, a
+  malformed or already-cleared `snapshotId`) is a usage error: exit **1**, code `E_USAGE`.
+  This departs from `hooks/inbox-tx.mjs`'s own convention (a bare `inbox-tx: <message>`
+  line on stderr, no code) — the CLI reports the same failures through its own envelope
+  and exit-code conventions instead.
+- This is the one command that never checks `storeExists()` first: the caller supplies the
+  inbox path directly, and a skill snapshotting or clearing an inbox that doesn't exist yet
+  is exactly the case `readInboxEntries` already treats as "no entries", not an error.

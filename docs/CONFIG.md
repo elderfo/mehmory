@@ -10,7 +10,7 @@ deep-merges your file over the defaults below.
 location is `$MEHMORY_HOME` when that environment variable is set. If you've set it, read
 every `~/.mehmory/...` path below as `$MEHMORY_HOME/...` instead.
 
-There are **14** config groups. Each is listed with its keys, real defaults, and whether the
+There are **15** config groups. Each is listed with its keys, real defaults, and whether the
 key is actually read anywhere in the codebase — "not honored" means the key exists in the
 schema and can be set, but nothing currently reads it, so setting it changes nothing.
 
@@ -26,7 +26,8 @@ Change these deliberately, and prefer to note *why* somewhere your future self w
 
 | Key | What a change actually does |
 |---|---|
-| `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. |
+| `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never *destroys* material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how Codex, which has no session-end event, captures every session's tail. |
+| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
 | `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
 | `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
 | `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
@@ -132,6 +133,29 @@ can add per-hook keys without another shape change). **Honored** — every hook 
 `hooks.<name>.enabled` before doing anything. `mehmory doctor` warns, naming the key, whenever
 a hook is found disabled.
 
+## `hosts`
+
+```json
+{
+  "hosts": {
+    "claude-code": { "enabled": true },
+    "codex": { "enabled": true }
+  }
+}
+```
+
+Per-harness on/off switch, so you can adopt the Codex side gradually — turn capture on for one
+harness while leaving the other exactly as it is. Off for a harness means **every** hook that
+harness invokes skips capture, injection and pointers entirely: no inbox writes, no context
+injection, nothing recorded beyond the stats line that a hook fired at all. Unlike `hooks.*`,
+which is per lifecycle event, this key is per harness — the two combine, so `hooks.stop.enabled:
+false` still turns Stop off everywhere even if both harnesses are individually on.
+
+**Honored** (`src/core/hook.ts`) — `runHook()` resolves the invoking harness and checks
+`hosts.<host>.enabled` before reading stdin or calling into the hook body, the same choke point
+every event (`session_start`, `user_prompt_submit`, `stop`, `pre_compact`, `session_end`) runs
+through.
+
 ## `inbox`
 
 ```json
@@ -231,3 +255,21 @@ a hook is found disabled.
 Not a `config.json` key — an environment variable that overrides the store's location for
 every command and hook. Every path example in this document, and in every other doc in this
 set, should be read relative to `$MEHMORY_HOME` when it's set, not literally `~/.mehmory`.
+
+## `CODEX_HOME`
+
+Also not a `config.json` key — the environment variable Codex itself uses for its
+configuration directory, honored by `mehmory init --host codex` and by `mehmory doctor`'s
+Codex checks. Unset, both read `~/.codex`.
+
+Two files there are mehmory's business, and **neither belongs to mehmory**:
+
+| File | What mehmory does to it |
+|---|---|
+| `$CODEX_HOME/hooks.json` | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched. |
+| `$CODEX_HOME/config.toml` | Sets `[features] hooks = true`, which Codex requires before any hook runs. Nothing else in the file is read or rewritten, and uninstall never turns it back off. |
+
+Before either file is modified it is copied to `<file>.mehmory.bak`. A run that changes
+nothing takes no backup, so that copy always holds the state from just before the last real
+change. See `docs/CLI.md` for the merge rules and `docs/TROUBLESHOOTING.md` for the
+`E_CODEX_*` codes `doctor` reports against these paths.

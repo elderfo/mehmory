@@ -95,12 +95,21 @@ describe('plugin skills layout', () => {
         if (m[1]) referenced.add(m[1]);
       }
     }
-    // A skill set that references nothing would pass vacuously; integrate must use one.
-    expect(referenced).toContain('inbox-tx.mjs');
     for (const script of referenced) {
       expect(existsSync(resolve('hooks', script)), `hooks/${script} missing — run pnpm build`).toBe(
         true
       );
+    }
+  });
+
+  // Issue #17: the inbox helper is reachable through `mehmory inbox-tx`, so skills call
+  // the binary instead of resolving a path through the Claude-Code-specific plugin-root
+  // variable. Asserted with teeth (not a vacuous pass) — at least one skill must use it.
+  it('skills reach the inbox helper through the CLI, not a plugin-root variable', () => {
+    const usesCli = [...bodies.values()].some(body => body.includes('mehmory inbox-tx'));
+    expect(usesCli).toBe(true);
+    for (const [name, body] of bodies) {
+      expect(body, name).not.toContain('CLAUDE_PLUGIN_ROOT');
     }
   });
 });
@@ -117,5 +126,28 @@ describe('plugin manifest', () => {
     expect(manifest.name).toBe('mehmory');
     expect(manifest.version).toBe(pkg.version);
     expect(manifest.description.length).toBeGreaterThan(20);
+  });
+
+  // Issue #25: measured live against Codex CLI 0.146.0 — `codex plugin marketplace add`
+  // and `codex plugin add` read this exact file, the same `.claude-plugin/` convention
+  // Claude Code uses. There is no second, Codex-specific manifest format to ship; this
+  // locks the one file working for both harnesses so a future edit that breaks the
+  // shape Codex expects (a `plugins[].source` Codex can't resolve, a missing `name`)
+  // fails here instead of silently in the field.
+  it('doubles as the Codex plugin manifest — one marketplace.json, both harnesses', () => {
+    const marketplace = JSON.parse(readFileSync(resolve('.claude-plugin/marketplace.json'), 'utf-8')) as {
+      name: string;
+      plugins: readonly { name: string; source: string; description: string }[];
+    };
+
+    expect(marketplace.name).toBe('mehmory');
+    expect(marketplace.plugins).toHaveLength(1);
+    const [plugin] = marketplace.plugins;
+    expect(plugin?.name).toBe('mehmory');
+    // A relative path Codex resolves against the marketplace root it was pointed at,
+    // not an absolute path or a URL — this is the shape `codex plugin add` accepted
+    // when this was measured.
+    expect(plugin?.source).toBe('./');
+    expect(plugin?.description.length ?? 0).toBeGreaterThan(20);
   });
 });

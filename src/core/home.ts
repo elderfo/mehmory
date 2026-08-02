@@ -10,6 +10,15 @@ export function mehmoryHome(): string {
   return join(homedir(), '.mehmory');
 }
 
+/** Root of the Codex CLI's configuration. Honors CODEX_HOME, else ~/.codex. Never creates it. */
+export function codexHome(): string {
+  const envHome = process.env.CODEX_HOME;
+  if (envHome) {
+    return envHome;
+  }
+  return join(homedir(), '.codex');
+}
+
 /** Construct a path under <home>/.state/ */
 export function statePath(...segments: string[]): string {
   return join(mehmoryHome(), '.state', ...segments);

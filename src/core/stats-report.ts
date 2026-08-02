@@ -30,6 +30,14 @@ export interface HookAggregate {
   readonly msP95: number;
 }
 
+/** Per-harness roll-up (issue #14 story 39). Every hook record carries `host` (A21/A23). */
+export interface HostAggregate {
+  readonly host: string;
+  readonly count: number;
+  /** Sum of `captured_entries` for this harness. */
+  readonly capturedEntries: number;
+}
+
 /** Everything `mehmory stats` reports from `stats.jsonl`. */
 export interface StatsReport {
   readonly records: number;
@@ -41,6 +49,8 @@ export interface StatsReport {
   readonly pointersOffered: number;
   /** Sum of `captured_entries` across every hook that captures. */
   readonly capturedEntries: number;
+  /** Same records as `hooks`, split by harness instead of by hook name. */
+  readonly hosts: readonly HostAggregate[];
 }
 
 /**
@@ -96,6 +106,7 @@ export function aggregateStats(filter: StatsFilter = {}): StatsReport {
 /** Roll up records already read (doctor reads once and asks several questions). */
 export function summarize(records: readonly StatRecord[]): StatsReport {
   const byHook = new Map<string, number[]>();
+  const byHost = new Map<string, { count: number; capturedEntries: number }>();
   const injected: number[] = [];
   let pointersOffered = 0;
   let capturedEntries = 0;
@@ -111,6 +122,14 @@ export function summarize(records: readonly StatRecord[]): StatsReport {
     if (typeof pointers === 'number') pointersOffered += pointers;
     const captured = record['captured_entries'];
     if (typeof captured === 'number') capturedEntries += captured;
+
+    const host = record['host'];
+    if (typeof host === 'string') {
+      const entry = byHost.get(host) ?? { count: 0, capturedEntries: 0 };
+      entry.count += 1;
+      if (typeof captured === 'number') entry.capturedEntries += captured;
+      byHost.set(host, entry);
+    }
   }
 
   const hooks: HookAggregate[] = [...byHook.entries()]
@@ -122,6 +141,10 @@ export function summarize(records: readonly StatRecord[]): StatsReport {
     }))
     .sort((a, b) => a.hook.localeCompare(b.hook));
 
+  const hosts: HostAggregate[] = [...byHost.entries()]
+    .map(([host, agg]) => ({ host, count: agg.count, capturedEntries: agg.capturedEntries }))
+    .sort((a, b) => a.host.localeCompare(b.host));
+
   const p50 = percentile(injected, 0.5);
   const p95 = percentile(injected, 0.95);
 
@@ -132,5 +155,6 @@ export function summarize(records: readonly StatRecord[]): StatsReport {
     ...(p95 !== undefined ? { injectedTokensP95: p95 } : {}),
     pointersOffered,
     capturedEntries,
+    hosts,
   };
 }

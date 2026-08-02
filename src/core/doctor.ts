@@ -10,7 +10,8 @@
 import { join } from 'node:path';
 import { mehmoryHome, statePath } from './home.js';
 import { pathExists, readFile, stat } from './fs.js';
-import { failOpen } from './errors.js';
+import { failOpen, type ErrorCode } from './errors.js';
+import { probeCodexInstall, type CodexProbe } from './codex-install.js';
 import { readInboxEntries } from './inbox.js';
 import { resolveProjectKey } from './identity.js';
 import { TEMPLATE_SCHEMA_VERSION } from './store.js';
@@ -29,6 +30,15 @@ export interface Finding {
   readonly message: string;
   /** A runnable copy-paste command, when one exists (U10). */
   readonly fix?: string;
+  /**
+   * Registry code this finding reports as, when it has one.
+   *
+   * Most checks don't: their `E_DOCTOR_<CHECK>` envelope code is derived from `check`
+   * and documented as a shape. A check that names a specific, documented failure —
+   * the Codex checks do — carries the real code instead, so `docs/TROUBLESHOOTING.md`
+   * has one entry per cause rather than a generic one per check name.
+   */
+  readonly code?: ErrorCode;
 }
 
 /**
@@ -62,7 +72,7 @@ export function runDoctor(
   requiredNode: string,
   cwd: string = process.cwd()
 ): readonly Finding[] {
-  const findings: Finding[] = [checkNode(requiredNode), ...checkPlugin()];
+  const findings: Finding[] = [checkNode(requiredNode), ...checkPlugin(), ...checkCodex()];
 
   const home = mehmoryHome();
   if (!pathExists(join(home, 'global', 'identity.md'))) {
@@ -144,6 +154,99 @@ function checkPlugin(): readonly Finding[] {
       message: `plugin installed at ${probe.installPath ?? '(unknown)'}, all ${String(expected.length)} hooks registered`,
     },
   ];
+}
+
+/** The one command that fixes every Codex wiring finding below. */
+const CODEX_INSTALL_COMMAND = 'mehmory init --host codex';
+
+/**
+ * The Codex surface: harness present, feature flag, mehmory entries wired, skills.
+ *
+ * Silent when neither Codex nor a mehmory Codex install is on this machine — the
+ * overwhelmingly common case is a Claude-Code-only user, and four findings about a
+ * harness they do not run would be noise, not diagnosis. Detection is `config.toml`
+ * (Codex has been run here) or mehmory's own entries in `hooks.json` (mehmory was
+ * installed here), so the checks appear exactly when they can mean something.
+ */
+function checkCodex(): readonly Finding[] {
+  const probe = probeCodexInstall();
+  if (!probe.harnessPresent && probe.wiredEvents.length === 0 && !probe.hooksFileBroken) {
+    return [];
+  }
+  return [
+    checkCodexHarness(probe),
+    checkCodexFeatureFlag(probe),
+    checkCodexWiring(probe),
+    checkCodexSkills(probe),
+  ];
+}
+
+function checkCodexHarness(probe: CodexProbe): Finding {
+  if (probe.harnessPresent) {
+    return { check: 'codex.harness', level: 'ok', message: `Codex configured at ${probe.codexHome}` };
+  }
+  return {
+    check: 'codex.harness',
+    level: 'error',
+    code: 'E_CODEX_HARNESS_MISSING',
+    message: `mehmory is wired into ${probe.hooksFile} but there is no Codex configuration at ${probe.codexHome}, so those entries run nothing`,
+    fix: `${CODEX_INSTALL_COMMAND} --uninstall`,
+  };
+}
+
+function checkCodexFeatureFlag(probe: CodexProbe): Finding {
+  if (probe.hooksFeature === true) {
+    return { check: 'codex.hooks_flag', level: 'ok', message: 'Codex `[features] hooks` is on' };
+  }
+  return {
+    check: 'codex.hooks_flag',
+    level: 'error',
+    code: 'E_CODEX_HOOKS_DISABLED',
+    message: `Codex \`[features] hooks\` is ${probe.hooksFeature === false ? 'false' : 'unset'} in ${probe.configFile}, so no hook fires at all`,
+    fix: CODEX_INSTALL_COMMAND,
+  };
+}
+
+function checkCodexWiring(probe: CodexProbe): Finding {
+  if (probe.hooksFileBroken) {
+    return {
+      check: 'codex.hooks',
+      level: 'error',
+      code: 'E_CODEX_HOOKS_UNWIRED',
+      message: `${probe.hooksFile} does not parse, so no hook of any tool is registered`,
+      fix: `$EDITOR ${probe.hooksFile}`,
+    };
+  }
+  if (probe.missingEvents.length > 0) {
+    return {
+      check: 'codex.hooks',
+      level: 'error',
+      code: 'E_CODEX_HOOKS_UNWIRED',
+      message: `no mehmory entry in ${probe.hooksFile} for ${probe.missingEvents.join(', ')}, so those events capture nothing`,
+      fix: CODEX_INSTALL_COMMAND,
+    };
+  }
+  return {
+    check: 'codex.hooks',
+    level: 'ok',
+    message: `mehmory wired into ${probe.wiredEvents.join(', ')}`,
+  };
+}
+
+function checkCodexSkills(probe: CodexProbe): Finding {
+  if (probe.skillsInstalled) {
+    return { check: 'codex.skills', level: 'ok', message: 'mehmory skills installed for Codex' };
+  }
+  // A warning, not an error: capture and injection are the hooks' job and keep working.
+  // What is lost is the judgment work — integrate, lint, onboard — which is why the
+  // inbox will fill up and never be merged.
+  return {
+    check: 'codex.skills',
+    level: 'warn',
+    code: 'E_CODEX_SKILLS_MISSING',
+    message: `no mehmory skill installed under ${join(probe.codexHome, 'skills')}, so nothing integrates what Codex captures`,
+    fix: CODEX_INSTALL_COMMAND,
+  };
 }
 
 function checkGit(home: string): readonly Finding[] {

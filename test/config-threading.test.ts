@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
@@ -17,7 +17,17 @@ import { buildScopeInjection } from '../src/core/capture.js';
 import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
-import { errorsLog, keyFor, outputJson, runHook, seedStore } from './hook-fixture.js';
+import {
+  additionalContext,
+  errorsLog,
+  keyFor,
+  outputJson,
+  readIfPresent,
+  runHook,
+  seedStore,
+  statsLines,
+  writeCodexRollout,
+} from './hook-fixture.js';
 
 /** Overwrite the store's config.json (initStore writes an empty one). */
 function writeConfig(config: Record<string, unknown>): void {
@@ -155,10 +165,123 @@ describe('stop.capture_threshold reaches the Stop hook', () => {
     expect(loadConfig().stop.capture_threshold).toBe(2);
 
     const first = runHook('stop', { session_id: 's1' }, { cwd });
-    expect(first.stdout).toBe('');
+    expect(first.stdout).toBe('{}');
 
     const second = runHook('stop', { session_id: 's1' }, { cwd });
     expect(outputJson(second)['decision']).toBe('block');
+  });
+});
+
+describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
+  let cwd: string;
+  let key: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = keyFor(cwd);
+    seedStore(key);
+  });
+
+  const remember = (host: string): ReturnType<typeof runHook> =>
+    runHook(
+      'user-prompt-submit',
+      { session_id: 's1', prompt: 'remember: a durable decision from this session' },
+      { cwd, args: [host] }
+    );
+
+  it('a disabled harness captures nothing and stays silent, but still records a stat', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = remember('codex');
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe('');
+    expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+  });
+
+  it('leaves the other harness capturing normally', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = remember('claude-code');
+    expect(run.status).toBe(0);
+    expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toContain(
+      'a durable decision'
+    );
+  });
+
+  it('captures normally for both harnesses on the untouched default', () => {
+    expect(remember('codex').stdout).toContain('captured to inbox');
+  });
+});
+
+describe('hosts.<host>.enabled reaches injection too, not only capture (D10)', () => {
+  // The suite above only exercised the toggle against capture. Injection is a separate
+  // code path (SessionStart's context frame, UserPromptSubmit's pointer nudge) and needs
+  // its own proof that a disabled harness gets neither.
+  const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
+  const DEPLOY_PAGE = `---
+updated: 2026-07-01
+type: procedure
+---
+
+# Deployment runbook
+
+- deployment runs through the fly.io pipeline
+`;
+
+  let cwd: string;
+  let key: string;
+  let rollout: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = keyFor(cwd);
+    seedStore(key, { pages: { 'deployment.md': DEPLOY_PAGE } });
+    rollout = writeCodexRollout([{ text: 'we use fly.io' }], CODEX_SESSION);
+  });
+
+  it('suppresses session-start injection when codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'session-start',
+      { session_id: CODEX_SESSION, transcript_path: rollout, cwd, hook_event_name: 'SessionStart' },
+      { cwd, args: ['codex', '--mehmory'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'SessionStart', host: 'codex' });
+  });
+
+  it('suppresses prompt-submit pointer injection when codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'user-prompt-submit',
+      {
+        session_id: CODEX_SESSION,
+        transcript_path: rollout,
+        cwd,
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'how does deployment work?',
+      },
+      { cwd, args: ['codex', '--mehmory'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+  });
+
+  it('converse: claude-code still injects when only codex is disabled', () => {
+    writeConfig({ hosts: { codex: { enabled: false } } });
+
+    const run = runHook(
+      'session-start',
+      { session_id: CODEX_SESSION, transcript_path: rollout, cwd, hook_event_name: 'SessionStart' },
+      { cwd, args: ['claude-code'] }
+    );
+    expect(run.status).toBe(0);
+    expect(additionalContext(run)).toContain('<mehmory-memory>');
   });
 });
 
@@ -179,5 +302,30 @@ describe('config is threaded, not re-read on the hot path', () => {
     // Restore a hermetic home for the setup.ts afterEach guard.
     process.env.MEHMORY_HOME = empty;
     expect(hermeticEnv().MEHMORY_HOME).toBe(empty);
+  });
+
+  // Regression for F5-1/F5-2 (PR review, run 5): two earlier rounds threaded config
+  // into some hooks and missed others, because `= loadConfig()` type-checks whether or
+  // not a call site passes the argument — nothing here forces the compiler to catch a
+  // reintroduced ambient read. `runHook` loads config once to check the per-harness
+  // toggle and hands that object to every adapter (src/core/hook.ts); an adapter that
+  // calls `loadConfig()` again duplicates the disk read on every hook invocation and
+  // can disagree with the toggle `runHook` already evaluated. This can't be asserted by
+  // running a hook and diffing output — a second read of the same unchanged file
+  // returns the same config, so the observable behavior is identical either way. What
+  // *is* checkable is the source itself: none of the five `runHook`-based adapters
+  // should reference `loadConfig` at all once the fix lands.
+  it('no runHook-based hook adapter calls loadConfig itself', () => {
+    const adapters = [
+      'pre-compact.ts',
+      'session-end.ts',
+      'session-start.ts',
+      'stop.ts',
+      'user-prompt-submit.ts',
+    ];
+    for (const file of adapters) {
+      const source = readFileSync(join(process.cwd(), 'src', 'hooks', file), 'utf-8');
+      expect(source, file).not.toMatch(/\bloadConfig\b/);
+    }
   });
 });

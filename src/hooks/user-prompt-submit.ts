@@ -8,7 +8,6 @@
  */
 
 import { join } from 'node:path';
-import { loadConfig } from '../core/config.js';
 import { pathExists } from '../core/fs.js';
 import { runHook } from '../core/hook.js';
 import { appendInboxEntries } from '../core/inbox.js';
@@ -22,8 +21,7 @@ const REMEMBER_PREFIX = /^remember:\s*/i;
 /** Pointer lines offered per prompt. */
 const MAX_POINTERS = 3;
 
-runHook('UserPromptSubmit', (input, project) => {
-  const config = loadConfig();
+runHook('UserPromptSubmit', (input, project, host, config) => {
   if (!config.hooks.user_prompt_submit.enabled || isPaused(input.session_id)) return {};
 
   const prompt = input.prompt ?? '';
@@ -33,7 +31,7 @@ runHook('UserPromptSubmit', (input, project) => {
   if (remember) {
     const text = prompt.slice(remember[0].length);
     if (!text.trim()) return {};
-    const entry = rememberEntry(text, input.session_id);
+    const entry = rememberEntry(text, input.session_id, host, config);
     const { appended } = appendInboxEntries(paths.inboxFile, [entry], project);
     return { context: 'mehmory: captured to inbox', stats: { captured_entries: appended } };
   }

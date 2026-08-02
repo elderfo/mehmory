@@ -6,7 +6,7 @@
 mehmory/
 ├── src/
 │   ├── core/
-│   │   ├── home.ts            # Store root path, env overrides (A)
+│   │   ├── home.ts            # Store root path, env overrides (A); run-4: codexHome() ($CODEX_HOME, default ~/.codex)
 │   │   ├── errors.ts          # Typed errors, logging, fail-open (A)
 │   │   ├── fs.ts              # Atomic writes, append (C)
 │   │   ├── lock.ts            # Project-level locking (C)
@@ -25,7 +25,10 @@ mehmory/
 │   │   ├── stats.ts           # run 2: stats.jsonl writer (A)
 │   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
 │   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
-│   │   └── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
+│   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
+│   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
+│   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
+│   │   └── inbox-tx.ts        # run-4: transactional inbox helper logic shared by hooks/inbox-tx.mjs and `mehmory inbox-tx` (A15, A17)
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
 │   │   ├── session-start.ts
 │   │   ├── user-prompt-submit.ts
@@ -36,7 +39,9 @@ mehmory/
 │   ├── schema/
 │   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A); run-3: index-line format constant (L)
 │   ├── transcript/
-│   │   └── reader.ts          # JSONL transcript reader, incremental parsing (D)
+│   │   ├── reader.ts          # Claude Code JSONL transcript reader, incremental parsing (D)
+│   │   ├── codex.ts           # Codex rollout reader: event envelope → normalized record
+│   │   └── host.ts            # readSession(path, host) — the only harness branch there is
 │   ├── distill/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
 │   │   └── distill.ts         # Record → inbox entry distillation (D)
@@ -53,7 +58,9 @@ mehmory/
 │           ├── stats.ts       # (C1)
 │           ├── search.ts      # (S)
 │           ├── onboard.ts     # (C2)
-│           └── purge.ts       # (C2)
+│           ├── purge.ts       # (C2)
+│           └── inbox-tx.ts    # run-4: `mehmory inbox-tx` — same append/snapshot/clear contract as
+│                               # hooks/inbox-tx.mjs, via src/core/inbox-tx.ts (issue #17)
 ├── hooks/                     # run 2: plugin hook dir — committed hooks.json plus
 │                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
 ├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
@@ -77,8 +84,17 @@ mehmory/
 │   ├── home.test.ts           # home module tests
 │   ├── errors.test.ts         # errors module tests with worked examples
 │   ├── format.test.ts         # format constants tests
-│   ├── docs-consistency.test.ts # run 3: docs ↔ binary, both directions (Integration)
-│   └── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
+│   ├── docs-consistency.test.ts # run 3: docs ↔ binary, both directions (Integration); run-4:
+│   │                           # Codex surface covered in both directions too
+│   ├── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
+│   ├── host.test.ts           # run-4: src/core/host.ts resolution
+│   ├── hooks-host.test.ts     # run-4: hook adapters branch on the resolved host, not env-sniff
+│   ├── hooks-codex.test.ts    # run-4: hook adapters against Codex-shaped payloads
+│   ├── transcript-codex.test.ts # run-4: Codex rollout reader normalization
+│   ├── cli-init-codex.test.ts # run-4: `mehmory init --host codex` install/uninstall
+│   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
+│   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
+│   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
 ├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L)
@@ -243,7 +259,8 @@ Error codes follow the `E_<SCREAMING_SNAKE>` pattern. At minimum, runs 1–3 pro
 - `E_LOCK_TIMEOUT` (informational) — Lock held >5s, proceeded without it
 - `E_DISTILL_LOSSY` (informational) — Unparseable transcript lines
 
-Later subtasks register additional codes via `registerErrorCode(code, kind)` in `src/core/errors.ts`.
+Later subtasks register additional codes by adding a key to the flat `ERROR_KINDS` object in
+`src/core/errors.ts` — there is no `registerErrorCode` function.
 
 ## Testing Strategy
 

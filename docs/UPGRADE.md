@@ -39,3 +39,12 @@ train you to ignore the warning entirely by the time a real template drift shows
 
 There is no automatic migration step in v1. `doctor`'s warning is the entire upgrade signal
 you get; treat it as a nudge to go read the diff, not as an error that needs suppressing.
+
+## `FORMAT_VERSION` history
+
+- **2** (issue #20) — inbox entries carry a `host=` field recording which harness
+  captured them (`claude-code` or `codex`), between `src=` and `ts=` in the trailing
+  comment. Entries already in your store from before this change have no `host=`
+  field; they are **not** rewritten, and the parser still reads them, attributing them
+  to `claude-code`. No action needed.
+- **1** — initial single-line inbox entry format (A14).

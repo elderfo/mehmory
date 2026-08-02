@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 
 /** Format version, bumped when the template or structure changes deliberately (U1). */
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 /** Page type enumeration for frontmatter. */
 export const PAGE_TYPES = ['decision', 'procedure', 'entity', 'preference', 'gotcha'] as const;
@@ -137,17 +137,34 @@ export function formatIndexLine(slug: string, summary: string): string {
 export const INBOX_ENTRY_ID_LENGTH = 16;
 
 /**
- * Normative single-line inbox entry serialization (A14):
+ * The closed set of harnesses that can capture an inbox entry (measured against
+ * `.research/codex-spike/VERDICT.md`: mehmory runs under exactly these two). Not a
+ * general provenance system — a fixed enum, matching what the rest of the effort
+ * threads through hook and CLI arguments.
+ */
+export const INBOX_HOSTS = ['claude-code', 'codex'] as const;
+export type InboxHost = (typeof INBOX_HOSTS)[number];
+
+/** Host attributed to entries written before the `host=` field existed (FORMAT_VERSION 1). */
+export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
+
+/**
+ * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 2):
  *
- *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> ts=<iso8601>-->`
+ *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex> ts=<iso8601>-->`
  *
  * The text is human-readable markdown; the trailing HTML comment carries machine
  * identity and is invisible in rendered markdown. Exactly one line per entry, so a
  * single O_APPEND write is atomic (run-1 amendment 2) and snapshot-clear can remove
  * entries by exact line match.
+ *
+ * `host` sits between `src` and `ts` and is optional in the *pattern* — entries
+ * written under FORMAT_VERSION 1 have no `host=` segment at all, and the transactional
+ * helper that builds entries pre-dates host-threading too. `parseInboxEntries` fills
+ * the gap with `DEFAULT_INBOX_HOST`; `serializeInboxEntry` always emits the field.
  */
 export const INBOX_ENTRY_PATTERN =
-  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*) ts=(\S+)-->$/;
+  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))? ts=(\S+)-->$/;
 
 /** One parsed inbox entry. */
 export interface InboxEntry {
@@ -157,6 +174,13 @@ export interface InboxEntry {
   readonly text: string;
   /** Session id the entry was captured from (record-embedded, not the invoking hook's). */
   readonly src: string;
+  /**
+   * Harness that captured the entry. Optional on construction — callers that predate
+   * host-threading (e.g. `inbox-tx.ts`) omit it, and `serializeInboxEntry` defaults it
+   * to `DEFAULT_INBOX_HOST`. Always present, concretely, on anything `parseInboxEntries`
+   * returns.
+   */
+  readonly host?: InboxHost;
   /** ISO-8601 capture timestamp. */
   readonly ts: string;
 }
@@ -184,7 +208,8 @@ export function serializeInboxEntry(entry: InboxEntry): string {
     .replace(/\n/g, '\\n')
     .replace(/-->/g, '--\\>')
     .trim();
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} ts=${entry.ts}-->`;
+  const host = entry.host ?? DEFAULT_INBOX_HOST;
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
 }
 
 /**
@@ -196,14 +221,22 @@ export function parseInboxEntries(content: string): InboxEntry[] {
   for (const line of content.split('\n')) {
     const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
     if (!m) continue;
-    const [, text, id, src, ts] = m;
+    const [, text, id, src, rawHost, ts] = m;
     if (text === undefined || id === undefined || src === undefined || ts === undefined) {
       continue;
     }
+    // Tolerant of a pre-host (FORMAT_VERSION 1) line, and of a host value outside the
+    // current closed set (a future harness's entry read by older code) — both fall
+    // back to the default rather than being dropped.
+    const host: InboxHost =
+      rawHost !== undefined && (INBOX_HOSTS as readonly string[]).includes(rawHost)
+        ? (rawHost as InboxHost)
+        : DEFAULT_INBOX_HOST;
     entries.push({
       id,
       text: text.replace(/--\\>/g, '-->').replace(/\\n/g, '\n'),
       src,
+      host,
       ts,
     });
   }

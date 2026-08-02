@@ -21,9 +21,18 @@ import { appendInboxEntries } from './inbox.js';
 import { atomicWrite, remove } from './fs.js';
 import { redact } from './redact.js';
 import type { MehmoryConfig } from './config.js';
-import { inboxEntryId, type InboxEntry } from '../schema/format.js';
-import { readTranscript } from '../transcript/reader.js';
+import { inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
+import { readSession } from '../transcript/host.js';
 import { distill } from '../distill/distill.js';
+
+/**
+ * Host every onboard-mined entry is attributed to, and the reader that parses it.
+ *
+ * Not a parameter: onboard scans `~/.claude/projects` and nothing else, so every
+ * session it can find was written by Claude Code by construction. Mining Codex rollouts
+ * would mean a second discovery path, not a second value here.
+ */
+const ONBOARD_HOST: InboxHost = 'claude-code';
 
 /** Transcript directories to scan before the rest are reported unscanned. */
 export const DEFAULT_PROJECT_SCAN = 50;
@@ -286,12 +295,13 @@ export function onboardStub(label: string): string {
 function distillSession(session: TranscriptSession, config: MehmoryConfig): InboxEntry[] {
   return failOpen(
     () => {
-      const { records } = readTranscript(session.file);
+      const { records } = readSession(session.file, ONBOARD_HOST);
       const ts = new Date().toISOString();
       return distill(records, session.id, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
+        host: ONBOARD_HOST,
         ts,
       }));
     },

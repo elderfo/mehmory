@@ -90,6 +90,11 @@ export const command: Command = {
     );
     lines.push(`pointers   ${String(report.pointersOffered)} offered`);
     lines.push(`captured   ${String(report.capturedEntries)} entries`);
+    for (const host of report.hosts) {
+      lines.push(
+        `  ${host.host.padEnd(18)} ${String(host.count).padStart(5)} calls   ${String(host.capturedEntries)} captured`
+      );
+    }
     // Suffix only under `--all`, where the record counts above span every key in
     // stats.jsonl but these two can only read directories that still exist.
     const onDisk = scope.kind === 'all' ? ' (projects on disk)' : '';

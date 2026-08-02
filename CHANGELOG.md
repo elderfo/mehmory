@@ -9,8 +9,20 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
 ### Added
 
+- **Codex CLI support, alongside Claude Code.** mehmory is a two-harness memory layer now,
+  not a Claude-Code-only plugin: `mehmory init --host codex [--uninstall]` wires the same
+  four capture hooks and the six skills into `$CODEX_HOME`, reading and writing
+  `hooks.json`/`config.toml` as merge-only edits so entries owned by other tools are never
+  touched. There is **one** plugin manifest (`.claude-plugin/plugin.json` +
+  `marketplace.json`) serving both harnesses — Codex's `plugin marketplace add`/`plugin add`
+  read the same files Claude Code does, so a second manifest was deliberately not created.
+  A per-harness `hosts.claude-code.enabled` / `hosts.codex.enabled` config toggle lets you
+  adopt the Codex side gradually. Redaction and `purge` reach content from either harness
+  identically — there is one store, not one per harness.
 - **Project website** — a VitePress site under `site/`, deployed to GitHub Pages on every
   push that touches it. Carries the pitch, a five-minute quickstart, and a "how it works"
   walkthrough of the three planes, the retrieval trade-off, and the context budget. Deep
@@ -28,6 +40,18 @@ and a test enforces that they match.
   are now stripped in place: `<command-args>` survives, because `/orchestrate <a whole
   project brief>` puts real intent there, and so does prose the user typed after an echo in
   the same record.
+
+### Known limitations
+
+- **Whether Codex trusts a freshly written mehmory hook on first run is unverified** on
+  Codex CLI 0.146.0 — `config.toml`'s `trusted_hash` mechanism was not measurable without a
+  real user configuration. See `docs/TROUBLESHOOTING.md`.
+- **The `PreCompact` hook's payload on Codex is unverified**; finalization relies on the
+  next-session-start path instead of on `PreCompact` firing.
+- **The Stop nudge does not render under `codex exec`** (non-interactive) — capture still
+  happens, but a non-interactive run has no follow-up turn to show the nudge in.
+- `mehmory onboard` mines only `~/.claude/projects/*/`; there is no Codex-transcript
+  equivalent to backfill from.
 
 ## [0.1.0] - 2026-08-01
 
@@ -73,5 +97,6 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/elderfo/mehmory/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/elderfo/mehmory/releases/tag/v0.1.0

@@ -7,7 +7,7 @@
     {
       "name": "mehmory",
       "source": "./",
-      "description": "Memory abstraction layer for Claude Code: deterministic capture hooks plus model-driven skills over a markdown wiki in ~/.mehmory."
+      "description": "Memory abstraction layer for Claude Code and Codex CLI: deterministic capture hooks plus model-driven skills over a markdown wiki in ~/.mehmory."
     }
   ]
 }

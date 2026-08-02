@@ -20,6 +20,7 @@ import {
   rmSync,
   unlinkSync,
   realpathSync,
+  chmodSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
@@ -167,17 +168,43 @@ export function createLockExclusive(path: string): boolean {
 /**
  * Write contents atomically: write to a temp file in the same directory,
  * then rename into place. Creates parent directories.
+ *
+ * The rename carries the *temp* file's permissions, so without this the destination's
+ * mode is silently replaced by whatever the umask gives — a 0600 file rewritten in place
+ * comes back 0644. Codex's `config.toml` is 0600 and holds `[mcp_servers.*.env]` API
+ * keys, so preserving the destination's mode is a security property, not a nicety.
+ *
+ * @param mode - Permissions to force. Omit to keep the destination's existing mode; a
+ *               file that does not exist yet still gets the umask default, so existing
+ *               callers are unaffected.
  */
-export function atomicWrite(path: string, contents: string): void {
+export function atomicWrite(path: string, contents: string, mode?: number): void {
   const dir = dirname(path);
   mkdir(dir);
 
   // Write to temp file with random suffix
   const tempPath = path + '.tmp-' + Math.random().toString(36).slice(2, 8);
-  writeFileSync(tempPath, contents, 'utf-8');
+  const target = mode ?? existingMode(path);
+  if (target !== undefined) {
+    writeFileSync(tempPath, contents, { encoding: 'utf-8', mode: target });
+    // umask can still mask bits out of the mode passed to writeFileSync,
+    // so force the exact target mode rather than trust the create-time result.
+    chmodSync(tempPath, target);
+  } else {
+    writeFileSync(tempPath, contents, 'utf-8');
+  }
 
   // Atomic rename on POSIX
   rename(tempPath, path);
+}
+
+/** Permission bits of an existing file, or undefined when it does not exist. */
+function existingMode(path: string): number | undefined {
+  try {
+    return statSync(path).mode & 0o777;
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Append-safe record ───
