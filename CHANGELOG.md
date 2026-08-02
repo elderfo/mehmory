@@ -15,13 +15,21 @@ and a test enforces that they match.
   `user_message` catch-all that matched every user turn unconditionally, so the keyword
   patterns above it only chose a label — nothing anywhere in the pipeline decided whether a
   turn was worth keeping. Menu picks and acknowledgements (`A`, `yes`, `Ship it`) were filed
-  as memory; one store held seven consecutive one-letter entries. A turn now has to carry
-  three words, or thirty characters, to reach the inbox. The character threshold is the
-  escape hatch for a substantial single token — a pasted URL, a spaceless log line.
+  as memory; one store held seven consecutive one-letter entries. A turn now needs eight
+  characters to reach the inbox. The floor deliberately errs toward keeping: it lets some
+  multi-word ephemera through rather than risk discarding the user's own words, since a junk
+  entry is visible and deletable at integrate time and a dropped fact leaves no signal.
 - **Harness notification blocks are stripped like the other machine text.**
   `<task-notification>` and `<system-reminder>` joined the slash-command and bash envelopes
   in the noise filter. Without them a single agent-completion notice was filed verbatim, and
   a run that dispatched several subagents wrote a near-identical entry for each.
+- **The noise filter no longer misses a differently-spelled tag, nor eats prose around one.**
+  It matched only a bare lowercase tag, so `<Task-Notification>`, `<task-notification id="1">`
+  and a block truncated before its closing tag all passed through and were filed verbatim —
+  machine text that later gets re-injected into a session. Matching is now case-insensitive,
+  tolerates attributes, and discards an unterminated block. It is also anchored to the start
+  of a line, so a turn that quotes a tag name inline while discussing it keeps its prose
+  instead of having everything between the two mentions deleted.
 
 ## [0.2.0] - 2026-08-01
 

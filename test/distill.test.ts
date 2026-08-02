@@ -349,7 +349,7 @@ describe('distill stable ids across resume', () => {
     // The `user_message` pattern matches every user turn unconditionally, so without a
     // floor there is no retention decision anywhere in the pipeline and menu picks land
     // in the inbox. One real store held seven consecutive one-letter entries.
-    const thin = ['A', 'yes', 'agreed', 'Ship it', 'confirm', 'code .', 'Commit everythin'];
+    const thin = ['A', 'yes', 'agreed', 'Ship it', 'confirm', 'code .'];
     const records: TranscriptRecord[] = thin.map((text, i) => ({
       type: 'message',
       role: 'user',
@@ -360,8 +360,23 @@ describe('distill stable ids across resume', () => {
     expect(distill(records, 'session-thin')).toEqual([]);
   });
 
-  it('keeps a substantial single-token turn the word floor would reject', () => {
-    // A pasted URL or a spaceless log line is one "word" but is not noise.
+  it('keeps short turns in scripts that do not separate words with spaces', () => {
+    // A word count would read each of these as a single "word" and drop a complete
+    // durable fact. Losing the user's own words is the worse failure: a junk entry is
+    // visible and deletable at integrate time, a dropped fact leaves no signal at all.
+    const cjk = ['デプロイにはVPNが必要です', '部署需要先连接VPN'];
+    const records: TranscriptRecord[] = cjk.map((text, i) => ({
+      type: 'message',
+      role: 'user',
+      text,
+      uuid: `msg-cjk-${String(i)}`,
+    }));
+
+    expect(distill(records, 'session-cjk').map(e => e.content)).toEqual(cjk);
+  });
+
+  it('keeps a substantial single-token turn', () => {
+    // A pasted URL or a spaceless log line carries no whitespace but is not noise.
     const url = 'https://github.com/elderfo/mehmory/blob/main/src/distill/patterns.ts#L46';
     const entries = distill(
       [{ type: 'message', role: 'user', text: url, uuid: 'msg-url' }],
@@ -371,23 +386,37 @@ describe('distill stable ids across resume', () => {
     expect(entries.map(e => e.content)).toEqual([url]);
   });
 
-  it('drops harness notification blocks the user never typed', () => {
+  it('drops harness notification blocks however the tag is spelled', () => {
+    // The bare-lowercase form matched only the exact shape observed, so a capitalized
+    // tag, an attribute, or a space before `>` passed through and was filed verbatim.
+    // Captured text is re-injected into later sessions, so machine text reaching the
+    // store is an injection surface that persists, not just clutter.
+    const shapes = [
+      '<task-notification>\n<task-id>abc123</task-id>\n</task-notification>',
+      '<Task-Notification>machine text here</Task-Notification>',
+      '<task-notification id="1">machine text here</task-notification>',
+      '<task-notification >machine text here</task-notification>',
+      '<system-reminder>a block truncated mid-transcript with no closing tag',
+    ];
+    const records: TranscriptRecord[] = shapes.map((content, i) => ({
+      type: 'user',
+      message: { role: 'user', content },
+      uuid: `msg-notif-${String(i)}`,
+    }));
+
+    expect(distill(records, 'session-notif')).toEqual([]);
+  });
+
+  it('keeps prose that quotes a harness tag name inline', () => {
+    // Anchoring matters: an unanchored paired match deletes everything between the two
+    // mentions, which is exactly the turn someone working on this file types.
+    const text = 'strip <system-reminder> blocks the way we strip </system-reminder> ones';
     const entries = distill(
-      [
-        {
-          type: 'user',
-          message: {
-            role: 'user',
-            content:
-              '<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n</task-notification>',
-          },
-          uuid: 'msg-notif',
-        },
-      ],
-      'session-notif'
+      [{ type: 'user', message: { role: 'user', content: text }, uuid: 'msg-quote' }],
+      'session-quote'
     );
 
-    expect(entries).toEqual([]);
+    expect(entries.map(e => e.content)).toEqual([text]);
   });
 
   it('drops slash-command envelopes but keeps their arguments', () => {

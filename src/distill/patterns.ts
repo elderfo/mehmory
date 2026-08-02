@@ -135,13 +135,43 @@ function isUserMessage(record: Record<string, unknown>): boolean {
   return record.type === 'message' && record.role === 'user';
 }
 
-/** Blocks the harness writes into a user turn: tag and content are both machine text. */
-const NOISE_BLOCKS =
-  /<(command-name|command-message|local-command-stdout|local-command-caveat|bash-input|bash-stdout|bash-stderr|task-notification|system-reminder)>[\s\S]*?<\/\1>/g;
+/** Tag names the harness writes into a user turn; content and tag are both machine text. */
+const NOISE_TAGS =
+  'command-name|command-message|local-command-stdout|local-command-caveat|bash-input|bash-stdout|bash-stderr|task-notification|system-reminder';
 
 /**
- * Minimum whitespace-separated words a user turn must carry, once harness envelopes are
- * stripped, to be worth filing as memory.
+ * A complete harness block, anchored to the start of a line.
+ *
+ * Anchored because the harness emits these as whole blocks that begin a line, while a
+ * user discussing one writes it inline — and an unanchored pattern deletes everything
+ * between the two mentions. "strip <system-reminder> blocks the way we strip
+ * </system-reminder> ones" collapsed to "strip  ones", which is precisely the turn
+ * someone working on this file types.
+ *
+ * `\b[^>]*` tolerates attributes and trailing space inside the tag, and `i` tolerates
+ * case: the bare-lowercase-tag form matched only the exact shape observed, so
+ * `<Task-Notification>` or `<task-notification id="1">` passed through untouched and was
+ * filed verbatim. That matters more than cosmetics — captured text is re-injected into
+ * later sessions, so machine text reaching the store is a persistence-backed injection
+ * surface, not just noise.
+ */
+const NOISE_BLOCKS = new RegExp(
+  `^[ \\t]*<(${NOISE_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>`,
+  'gim'
+);
+
+/**
+ * An unterminated harness block: opening tag to end of input.
+ *
+ * A transcript line truncated mid-block leaves the open tag with no close, which the
+ * paired pattern above cannot match — so the machine text survived, and being long it
+ * always cleared the retention floor.
+ */
+const NOISE_BLOCK_UNCLOSED = new RegExp(`^[ \\t]*<(${NOISE_TAGS})\\b[^>]*>[\\s\\S]*$`, 'im');
+
+/**
+ * Minimum characters a user turn must carry, once harness envelopes are stripped, to be
+ * worth filing as memory.
  *
  * Without a floor the pattern list has no retention decision at all: `user_message`
  * matches every user turn unconditionally, so the keyword patterns above only choose a
@@ -149,20 +179,24 @@ const NOISE_BLOCKS =
  * answering a menu, "yes", "agreed", and "Ship it" reached the inbox — one real store
  * held seven consecutive one-letter entries.
  *
- * Words, not characters: the two classes overlap on length ("push direct to main" is 19
- * characters, "the deploy needs the VPN" is 24) but separate on shape. A menu pick or an
- * acknowledgement is one or two words; an assertion about the world is three or more.
+ * Characters, deliberately, and not a word count. Counting words looks sharper — an
+ * acknowledgement is one or two words, an assertion is three or more — but it encodes
+ * "words are whitespace-separated", which is false for Chinese, Japanese and Korean.
+ * A word floor drops 部署需要先连接VPN, a complete durable fact, as a single "word", and
+ * no character threshold high enough to be worth having rescues it: 30 characters is a
+ * fragment in English and a paragraph in CJK.
  *
- * `MIN_ENTRY_CHARS` is the escape hatch for the one shape a word count gets wrong: a
- * single unbroken token that is nonetheless substantial — a pasted URL, a stack frame, a
- * spaceless log line. Either threshold alone admits the turn.
+ * So the floor errs toward keeping. A memory tool that silently discards the user's own
+ * words fails worse than one that files some junk: a junk entry is visible and deletable
+ * at integrate time, a dropped fact is gone with no signal. 8 characters clears every
+ * one-word acknowledgement observed in a real store ("yes", "agreed", "Ship it",
+ * "confirm", "code .") while admitting the shortest CJK sentences.
  *
- * ponytail: two global thresholds, no per-pattern tuning and no config keys. Ceiling: it
- * keeps four-word ephemera like "push direct to main", and a short two-word durable fact
- * would be dropped. Upgrade: expose them under `distill.*` in config if that bites.
+ * ponytail: one global threshold, no per-script tuning and no config key. Ceiling: it
+ * keeps multi-word ephemera — "ok, thanks, bye", "push direct to main" — which is the
+ * side of the trade we chose. Upgrade: expose it as `distill.min_chars` if that bites.
  */
-const MIN_ENTRY_WORDS = 3;
-const MIN_ENTRY_CHARS = 30;
+const MIN_ENTRY_CHARS = 8;
 
 /** `<command-args>` is the exception — the arguments are what the user actually typed. */
 const COMMAND_ARGS_TAGS = /<\/?command-args>/g;
@@ -177,13 +211,18 @@ const COMMAND_ARGS_TAGS = /<\/?command-args>/g;
  *
  * Blocks are removed in place rather than the whole turn being discarded, because a
  * single record routinely carries both: a `/clear` echo followed by real prose the user
- * typed after it. Discarding on any envelope match would silently eat that prose — and
- * every turn merely quoting one of these tag names while discussing them.
+ * typed after it. Discarding on any envelope match would silently eat that prose. A turn
+ * that merely quotes one of these tag names inline while discussing it survives too,
+ * because `NOISE_BLOCKS` is anchored to the start of a line.
  *
  * @returns the user-authored text, or null when nothing but harness text remains
  */
 function stripCommandEnvelope(text: string): string | null {
-  const stripped = text.replace(NOISE_BLOCKS, '').replace(COMMAND_ARGS_TAGS, '').trim();
+  const stripped = text
+    .replace(NOISE_BLOCKS, '')
+    .replace(NOISE_BLOCK_UNCLOSED, '')
+    .replace(COMMAND_ARGS_TAGS, '')
+    .trim();
   return stripped === '' ? null : stripped;
 }
 
@@ -204,15 +243,8 @@ function extractMessageText(record: Record<string, unknown>): string | null {
   const text = extractRawText(record);
   if (text === null) return null;
   const stripped = stripCommandEnvelope(text);
-  if (stripped === null) return null;
-  const substantive =
-    countWords(stripped) >= MIN_ENTRY_WORDS || stripped.length >= MIN_ENTRY_CHARS;
-  return substantive ? stripped : null;
-}
-
-/** Whitespace-separated word count, used only by the `MIN_ENTRY_WORDS` floor. */
-function countWords(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length;
+  if (stripped === null || stripped.length < MIN_ENTRY_CHARS) return null;
+  return stripped;
 }
 
 /** The field-walking half of `extractMessageText`, before command unwrapping. */
