@@ -232,7 +232,7 @@ function stripCommandEnvelope(text: string): string | null {
  * Looks for common message text fields, then descends into the nested `message`
  * envelope Claude Code wraps real turns in, then strips slash-command wrappers.
  *
- * The `MIN_ENTRY_WORDS` floor lives here rather than in `distill.ts` so it applies
+ * The `MIN_ENTRY_CHARS` floor lives here rather than in `distill.ts` so it applies
  * uniformly: every pattern reaches its text through this function, so a turn too thin to
  * keep fails `matches` for the keyword patterns and yields no content for the
  * `user_message` catch-all, and no pattern can quietly opt out of the gate.
