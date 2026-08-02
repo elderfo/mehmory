@@ -96,9 +96,10 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * toggle is the same object handed to `body` — an adapter reading `loadConfig()` again
  * would not only cost a second disk read on every invocation, it could disagree with
  * the toggle this function just checked. A disabled harness skips `body` entirely — no
- * stdin is read, so there is no capture, no injection and no pointer, the same silence
- * `/mehmory:pause` promises for a single session, but persistent and scoped to one
- * harness via config instead.
+ * stdin is read, so there is no capture, no injection and no pointer — `renderHookOutput`
+ * still emits its normal no-op for the event (`''` for most events, `{}` for `Stop`),
+ * persistent and scoped to one harness via config, unlike the single-session promise of
+ * `/mehmory:pause`.
  *
  * @param event - Hook event name, e.g. `SessionStart`
  * @param body - The hook itself; receives parsed stdin, the project key, the host, and
