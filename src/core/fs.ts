@@ -184,10 +184,15 @@ export function atomicWrite(path: string, contents: string, mode?: number): void
 
   // Write to temp file with random suffix
   const tempPath = path + '.tmp-' + Math.random().toString(36).slice(2, 8);
-  writeFileSync(tempPath, contents, 'utf-8');
-
   const target = mode ?? existingMode(path);
-  if (target !== undefined) chmodSync(tempPath, target);
+  if (target !== undefined) {
+    writeFileSync(tempPath, contents, { encoding: 'utf-8', mode: target });
+    // umask can still mask bits out of the mode passed to writeFileSync,
+    // so force the exact target mode rather than trust the create-time result.
+    chmodSync(tempPath, target);
+  } else {
+    writeFileSync(tempPath, contents, 'utf-8');
+  }
 
   // Atomic rename on POSIX
   rename(tempPath, path);
