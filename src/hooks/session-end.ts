@@ -7,10 +7,16 @@
  * that lives in `finalizeSession` (A12, issue #16) — this adapter just calls it.
  */
 
+import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { finalizeSession } from '../core/capture.js';
 
 runHook('SessionEnd', (input, project, host) => {
-  const result = finalizeSession(input.session_id, input.transcript_path, project, host);
+  const config = loadConfig();
+  // Disabling this event means this event does nothing — the session stays pending and
+  // the next SessionStart finalizes it. Skipping is not discarding (F3-1).
+  if (!config.hooks.session_end.enabled) return {};
+
+  const result = finalizeSession(input.session_id, input.transcript_path, project, host, config);
   return { stats: { captured_entries: result.capturedEntries } };
 });

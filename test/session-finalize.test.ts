@@ -6,8 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createTempDir } from './helpers.js';
-import { writeTranscript } from './hook-fixture.js';
+import { writeCodexRollout, writeTranscript } from './hook-fixture.js';
 import { finalizeSession, scopePaths } from '../src/core/capture.js';
+import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
 import * as sessionModule from '../src/core/session.js';
@@ -118,5 +119,20 @@ describe('finalizeSession', () => {
     expect(logLines).toHaveLength(1);
     expect(commits).toHaveLength(1);
     expect(retried.capturedEntries).toBe(0);
+  });
+
+  it('still captures the tail when hooks.session_end is disabled — a toggle must never destroy un-captured material (F3-1)', () => {
+    const transcript = writeCodexRollout([{ text: 'We decided to ship the plugin unbundled.' }]);
+    const base = loadConfig();
+    const config: MehmoryConfig = {
+      ...base,
+      hooks: { ...base.hooks, session_end: { enabled: false } },
+    };
+
+    const result = finalizeSession('s4', transcript, key, 'codex', config);
+
+    expect(result.capturedEntries).toBe(1);
+    const queued = readdirSync(statePath('queue')).filter(f => f.endsWith('.json'));
+    expect(queued).toHaveLength(1);
   });
 });

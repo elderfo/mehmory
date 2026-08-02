@@ -390,10 +390,20 @@ function sessionEndLogTag(sessionId: string): string {
  * `log.md` line was already committed. That guard is what stops a retry from
  * re-reading a reset cursor and double-appending the log line / double-committing.
  *
+ * Not gated by `hooks.session_end.enabled`. That toggle governs the SessionEnd *hook*,
+ * so it is checked in the SessionEnd adapter like every other hook checks its own —
+ * and only there. This function is also the recovery path `finalizePendingSessions`
+ * drives from SessionStart, which for Codex (no session-end event at all) is the only
+ * route the session's tail has into the inbox. Gating it here made the toggle delete
+ * un-distilled material instead of deferring it: a disabled event must capture nothing,
+ * never destroy anything. `isPaused` still short-circuits, because discarding the
+ * session's tail is what `/mehmory:pause` explicitly promises.
+ *
  * Arguments only — no ambient config or environment read (A21); the caller loads
- * config once (or accepts this default) and passes it through. Never throws: every
- * step it calls is already fail-open, and an uncaught exception here still lands in
- * `runHook`'s outer boundary (A2, A8).
+ * config once (or accepts this default) and passes it through. Throws only what
+ * `markSessionFinalized`/`deleteSessionState` throw on a failed state write; the
+ * distill, log and commit steps are each fail-open, and `finalizePendingSessions` and
+ * `runHook` both bound anything that escapes (A2, A8).
  */
 export function finalizeSession(
   sessionId: string,
@@ -404,7 +414,7 @@ export function finalizeSession(
 ): FinalizeSessionResult {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
 
-  if (!config.hooks.session_end.enabled || isPaused(sessionId)) {
+  if (isPaused(sessionId)) {
     deleteSessionState(sessionId);
     markSessionFinalized(sessionId);
     return { capturedEntries: 0 };
