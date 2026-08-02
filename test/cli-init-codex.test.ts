@@ -14,7 +14,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { envelopeOf, runCli } from './cli-fixture.js';
@@ -135,6 +143,29 @@ describe('mehmory init --host codex', () => {
     expect(run.stdout).toContain(`backed up to ${fixture.hooksFile}.mehmory.bak`);
     expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(FOREIGN_HOOKS);
     expect(readFileSync(`${fixture.configFile}.mehmory.bak`, 'utf-8')).toBe('model = "gpt-5"\n');
+  });
+
+  it('keeps config.toml at its original 0600 and does not leave a world-readable backup (F3-3)', () => {
+    const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config: 'model = "gpt-5"\n' });
+    chmodSync(fixture.configFile, 0o600);
+
+    expect(init(fixture).status).toBe(0);
+
+    expect(statSync(fixture.configFile).mode & 0o777).toBe(0o600);
+    expect(statSync(`${fixture.configFile}.mehmory.bak`).mode & 0o777).toBe(0o600);
+    expect(statSync(`${fixture.hooksFile}.mehmory.bak`).mode & 0o777).toBe(0o600);
+  });
+
+  it('keeps the pristine pre-mehmory backup across a re-install (F3-5)', () => {
+    const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config: 'model = "gpt-5"\n' });
+    expect(init(fixture).status).toBe(0);
+
+    // A re-install is routine — a version bump moves the bundle path, so the hook
+    // commands change and the file is rewritten a second time.
+    writeFileSync(fixture.hooksFile, readFileSync(fixture.hooksFile, 'utf-8').replace(/mehmory/g, 'mehmory2'));
+    expect(init(fixture).status).toBe(0);
+
+    expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(FOREIGN_HOOKS);
   });
 
   it('is idempotent — a second install writes nothing and leaves one set of entries', () => {

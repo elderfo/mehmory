@@ -335,11 +335,22 @@ function writeFailed(path: string, err: unknown): MehmoryError {
   };
 }
 
-/** Copy a file to `<path>.mehmory.bak` before it is modified. No file, no backup. */
+/**
+ * Copy a file to `<path>.mehmory.bak` before it is modified. No file, no backup.
+ *
+ * Written once and never again: the backup's job is to hold the *pre-mehmory* state, and
+ * a re-install — routine after a version bump moves the bundle path — would otherwise
+ * overwrite it with a mehmory-modified copy, destroying the one file a user reaches for
+ * after a bad merge. An existing backup is returned as-is.
+ *
+ * Forced to 0600 because it is a verbatim duplicate of a file that may be 0600 itself:
+ * `config.toml` carries `[mcp_servers.*.env]` API keys, and `~/.codex` is 0755.
+ */
 function backupFile(path: string): string | undefined {
   if (!pathExists(path)) return undefined;
   const destination = path + CODEX_BACKUP_SUFFIX;
-  atomicWrite(destination, readFile(path));
+  if (pathExists(destination)) return destination;
+  atomicWrite(destination, readFile(path), 0o600);
   return destination;
 }
 

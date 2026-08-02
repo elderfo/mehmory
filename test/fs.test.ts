@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { join, dirname } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { statePath } from '../src/core/home.js';
 import { atomicWrite, appendRecord, pathExists, APPEND_ATOMIC_CEILING_BYTES } from '../src/core/fs.js';
@@ -20,6 +20,25 @@ describe('fs primitives', () => {
 
       expect(pathExists(filePath)).toBe(true);
       expect(readFileSync(filePath, 'utf-8')).toBe(contents);
+    });
+
+    it('preserves the destination file mode instead of downgrading it to the umask (F3-3)', () => {
+      const filePath = join(statePath(), 'test-atomic-mode.txt');
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, 'secret');
+      chmodSync(filePath, 0o600);
+
+      atomicWrite(filePath, 'still secret');
+
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    });
+
+    it('honours an explicit mode for a file that does not exist yet', () => {
+      const filePath = join(statePath(), 'test-atomic-mode-new.txt');
+
+      atomicWrite(filePath, 'secret', 0o600);
+
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
     });
 
     it('creates parent directories', () => {
