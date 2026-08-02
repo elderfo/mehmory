@@ -6,7 +6,7 @@ const docs = `${repo}/blob/main/docs`;
 export default defineConfig({
   title: 'mehmory',
   description:
-    'Hook-enforced, model-maintained markdown wiki memory for Claude Code. Markdown and git. No embeddings, no MCP server, no cloud.',
+    'Hook-enforced, model-maintained markdown wiki memory for Claude Code and Codex CLI. Markdown and git. No embeddings, no MCP server, no cloud.',
   // Project page under github.io/mehmory/. Drop this if a custom domain ever fronts it.
   base: '/mehmory/',
   cleanUrls: true,

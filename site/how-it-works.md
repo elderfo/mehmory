@@ -23,15 +23,21 @@ it can't be acquired. A crash mid-write leaves the previous state, not a half fi
 
 ## 2. Hooks — deterministic capture
 
-Five Claude Code hooks, bundled to plain `.mjs`:
+Five hooks, bundled to plain `.mjs` and wired into both Claude Code and Codex CLI (Codex has
+no `SessionEnd` event, so that one runs on Claude Code only — see below):
 
-| Hook | Job |
-| --- | --- |
-| `SessionStart` | Compose the injection frame — identity + project + index, inside the token budget |
-| `UserPromptSubmit` | Point at pages relevant to what you just typed |
-| `Stop` | Distill the turn into inbox entries once the capture threshold is crossed |
-| `PreCompact` | Capture before the context window collapses |
-| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up |
+| Hook | Job | Claude Code | Codex CLI |
+| --- | --- | --- | --- |
+| `SessionStart` | Compose the injection frame — identity + project + index, inside the token budget | ✓ | ✓ |
+| `UserPromptSubmit` | Point at pages relevant to what you just typed | ✓ | ✓ |
+| `Stop` | Distill the turn into inbox entries once the capture threshold is crossed | ✓ | ✓ |
+| `PreCompact` | Capture before the context window collapses | ✓ | ✓ (payload unverified) |
+| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up | ✓ | — (no such event; see below) |
+
+Codex has no session-end event, so a Codex session is finalized at the *next* session's start
+instead of its own end — the deterministic capture is not late by more than one session, but
+`mehmory status` won't show that last stretch until then. A per-harness `hosts.<host>.enabled`
+config toggle lets you turn either side off independently.
 
 Three properties matter more than what they do:
 
@@ -91,8 +97,9 @@ Secrets are redacted on the way into the store, with configurable patterns and a
 The filter's real limits are written down in [Privacy](https://github.com/elderfo/mehmory/blob/main/docs/PRIVACY.md)
 rather than oversold.
 
-`mehmory purge` deletes by page, session (its un-integrated captures), project, or
-everything, and can export first. It
+Both apply identically regardless of which harness produced the content — there's one store,
+not one per harness. `mehmory purge` deletes by page, session (its un-integrated captures),
+project, or everything, and can export first. It
 removes from the working tree and commits the removal — **it never rewrites your git
 history**, because rewriting a user's history to hide a secret is a worse outcome than
 telling them plainly that the old commit still has it.

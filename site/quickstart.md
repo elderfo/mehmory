@@ -16,18 +16,32 @@ npm install -g @elderfo/mehmory
 
 The token is required even for a public package — GitHub Packages has no anonymous read.
 
-Then install the Claude Code plugin from the marketplace. `mehmory init` prints the pinned
-install command if it doesn't find the plugin already installed.
+Then wire mehmory into your harness:
+
+**Claude Code** — install the plugin from the marketplace (`mehmory init` prints the pinned
+install command if it doesn't find the plugin already installed):
+
+```
+/plugin marketplace add elderfo/mehmory
+/plugin install mehmory@mehmory
+```
+
+**Codex CLI** — no marketplace step; `mehmory init --host codex` (next step) writes the
+wiring directly.
 
 ## 2. Initialize the store
 
 ```bash
-mehmory init
+mehmory init                    # Claude Code
+mehmory init --host codex       # Codex CLI
 ```
 
 Creates `~/.mehmory` (or `$MEHMORY_HOME`), a `.gitignore`, an empty `config.json`, and a git
-repo. Checks your Node version and whether the plugin is installed. Running it twice is a
-no-op.
+repo. On Claude Code, checks your Node version and whether the plugin is installed. On Codex,
+also writes the four hook entries into `$CODEX_HOME/hooks.json`, turns on Codex's
+`[features] hooks` if it's off, and installs the six skills. `mehmory init --host codex
+--uninstall` reverses the Codex wiring; the store itself is untouched either way. Running
+either twice is a no-op.
 
 ## 3. Onboard from the sessions you already have
 
@@ -48,9 +62,9 @@ no transcripts found — run /mehmory:onboard-session inside a Claude Code sessi
 
 ## 4. First session — integrate
 
-Start `claude` as usual. `SessionStart` injects `identity.md`, `project.md` and `index.md`
-inside an 800-token budget, and nudges you once the inbox has enough in it to be worth
-integrating.
+Start `claude` (or `codex`) as usual. `SessionStart` injects `identity.md`, `project.md` and
+`index.md` inside an 800-token budget on either harness, and nudges you once the inbox has
+enough in it to be worth integrating.
 
 ```
 /mehmory:integrate
@@ -62,14 +76,15 @@ fact belongs, writes pages, updates the index, and commits.
 ::: warning It writes outside your project directory
 `~/.mehmory` is outside your repo, so Claude Code prompts for permission the first time.
 Denying is safe — the entries stay in the inbox, capture keeps working through the hooks, and
-the next `/mehmory:integrate` picks up where you left off.
+the next `/mehmory:integrate` picks up where you left off. (On Codex, whether the first hook
+invocation prompts for trust the same way is unverified — see the troubleshooting doc.)
 :::
 
 ## 5. Second session — this is the one
 
-Start a new `claude`. **Now** `project.md` carries what integrate actually wrote, not the
-onboarding stub. This is the session where "it already knows my project" becomes true — not
-the first one.
+Start a new `claude` (or `codex`) session. **Now** `project.md` carries what integrate
+actually wrote, not the onboarding stub. This is the session where "it already knows my
+project" becomes true — not the first one.
 
 ## 6. Anytime
 
