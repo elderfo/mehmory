@@ -25,6 +25,7 @@ import {
   inboxBytes,
   scopePaths,
   storeExists,
+  skillRef,
   storeIsUnpopulated,
 } from '../core/capture.js';
 import type { Host } from '../core/host.js';
@@ -35,10 +36,10 @@ const MAX_MAINTENANCE_LINES = 2;
 /**
  * Run the best-effort lane. Every step yields rather than waits (A16).
  *
- * Pending finalization goes first, ahead of both the queue drain — so a session finalized
- * here has its delta applied in the same start rather than the next one — and the state
- * sweep, which would otherwise be free to delete a pending session's state before anyone
- * read it (issue #24).
+ * Pending finalization goes first, ahead of both the queue drain and the state sweep,
+ * which would otherwise be free to delete a pending session's state before anyone read it
+ * (issue #24). The drain claims `queue.claims_per_start` jobs — 1 by default — so a
+ * session finalized here normally has its delta applied at the *next* start, not this one.
  *
  * @returns number of abandoned sessions finalized
  */
@@ -55,7 +56,7 @@ function maintenance(
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob('distill-final');
     if (!job) break;
-    applyDistillJob(job.data);
+    applyDistillJob(job.data, config);
     completeJob(job.id);
   }
 
@@ -69,7 +70,7 @@ runHook('SessionStart', (input, project, host) => {
 
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project);
+  const injection = buildScopeInjection(project, config);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
 
@@ -77,19 +78,20 @@ runHook('SessionStart', (input, project, host) => {
   const candidates: string[] = [];
   const warning = pendingWarnings()[0];
   if (warning !== undefined) candidates.push(`mehmory: ${warning}`);
+  // Every maintenance line names a skill, and how a skill is invoked is harness-specific
+  // — a Codex user has no slash commands to run (F3-4).
+  const integrate = skillRef(host, 'integrate');
   if (input.source === 'compact') {
     candidates.push(
-      `mehmory: context was compacted — what came before is captured in ${paths.inboxFile}; run /mehmory:integrate to merge it`
+      `mehmory: context was compacted — what came before is captured in ${paths.inboxFile}; run ${integrate} to merge it`
     );
   }
   if (entries.length >= config.inbox.nudge_entries || bytes >= config.inbox.nudge_bytes) {
-    candidates.push(
-      `mehmory: inbox has ${String(entries.length)} entries — run /mehmory:integrate`
-    );
+    candidates.push(`mehmory: inbox has ${String(entries.length)} entries — run ${integrate}`);
   }
   if (justInitialized || storeIsUnpopulated(project)) {
     candidates.push(
-      `mehmory: memory at ${mehmoryHome()} is empty — run /mehmory:onboard-session to seed it`
+      `mehmory: memory at ${mehmoryHome()} is empty — run ${skillRef(host, 'onboard-session')} to seed it`
     );
   }
 

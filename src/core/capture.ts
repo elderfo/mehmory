@@ -126,6 +126,22 @@ export const ROUTING_BLOCK = [
 ].join('\n');
 
 /**
+ * How a user invokes one of mehmory's skills under `host`.
+ *
+ * Slash commands are a Claude Code plugin feature. Codex installs the same six skills as
+ * flat, prefix-named directories under `$CODEX_HOME/skills/` and has no slash commands at
+ * all, so telling a Codex user to run `/mehmory:integrate` names something that does not
+ * exist. The host is already threaded into every hook body (A21/A23) — this is the one
+ * thing the user actually reads, so it is the one thing that has to be shaped by it.
+ *
+ * The `remember:` prefix deliberately is *not* host-shaped: it is delivered by the
+ * UserPromptSubmit hook, which mehmory wires on both harnesses.
+ */
+export function skillRef(host: InboxHost, skill: string): string {
+  return host === 'codex' ? `the mehmory-${skill} skill` : `/mehmory:${skill}`;
+}
+
+/**
  * Compose the SessionStart injection for a scope: identity + project + index, budget-
  * truncated by `buildInjection` to `config.injection.budget_tokens`, wrapped in an
  * explicit data-only frame so the model reads injected memory as facts rather than as

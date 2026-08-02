@@ -141,6 +141,27 @@ describe('Codex recall (#22)', () => {
     expect(statsLines().at(-1)).toMatchObject({ hook: 'SessionStart', host: 'codex' });
   });
 
+  it('names the Codex skill, not a Claude Code slash command, in its maintenance lines (F3-4)', () => {
+    seedStore(key, { inboxEntries: 30 });
+
+    const codex = additionalContext(
+      runHook('session-start', sessionStart(cwd, rollout, 'compact'), { cwd, args: CODEX_ARGS })
+    );
+
+    expect(codex).toContain('mehmory-integrate');
+    expect(codex).not.toContain('/mehmory:');
+
+    // The Claude Code wording is unchanged — this is host-shaped guidance, not a rename.
+    const claude = additionalContext(
+      runHook(
+        'session-start',
+        { session_id: 'claude-session', transcript_path: writeTranscript(ROLLOUT), source: 'compact' },
+        { cwd, args: ['claude-code'] }
+      )
+    );
+    expect(claude).toContain('/mehmory:integrate');
+  });
+
   it('resolves the same project key as Claude Code in the same repository (A5)', () => {
     const codex = runHook('session-start', sessionStart(cwd, rollout), { cwd, args: CODEX_ARGS });
     const claude = runHook(

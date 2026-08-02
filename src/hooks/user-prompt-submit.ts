@@ -33,7 +33,7 @@ runHook('UserPromptSubmit', (input, project, host) => {
   if (remember) {
     const text = prompt.slice(remember[0].length);
     if (!text.trim()) return {};
-    const entry = rememberEntry(text, input.session_id, host);
+    const entry = rememberEntry(text, input.session_id, host, config);
     const { appended } = appendInboxEntries(paths.inboxFile, [entry], project);
     return { context: 'mehmory: captured to inbox', stats: { captured_entries: appended } };
   }
