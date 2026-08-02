@@ -485,6 +485,10 @@ export function finalizeSession(
  * session may well come from the other harness or another project directory; the
  * arguments are only the fallback for state written before either was recorded.
  *
+ * Each session is finalized inside its own `failOpen`, not the sweep as a whole: one
+ * session whose state write fails must not abandon the rest of that start, nor report
+ * `finalized: 0` for the ones that already completed.
+ *
  * @returns number of sessions finalized
  */
 export function finalizePendingSessions(
@@ -493,11 +497,13 @@ export function finalizePendingSessions(
   host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): number {
-  return failOpen(
-    () => {
-      let finalized = 0;
-      for (const state of listPendingSessions()) {
-        if (state.session_id === currentSessionId) continue;
+  const pending = failOpen(() => listPendingSessions(), [], 'E_SESSION_STATE');
+
+  let finalized = 0;
+  for (const state of pending) {
+    if (state.session_id === currentSessionId) continue;
+    const ok = failOpen(
+      () => {
         finalizeSession(
           state.session_id,
           state.transcript_path,
@@ -505,11 +511,12 @@ export function finalizePendingSessions(
           state.host ?? host,
           config
         );
-        finalized++;
-      }
-      return finalized;
-    },
-    0,
-    'E_SESSION_STATE'
-  );
+        return true;
+      },
+      false,
+      'E_SESSION_STATE'
+    );
+    if (ok) finalized++;
+  }
+  return finalized;
 }

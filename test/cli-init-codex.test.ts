@@ -93,7 +93,9 @@ describe('mehmory init --host codex', () => {
       'UserPromptSubmit',
     ]);
     for (const command of mehmoryCommands(fixture)) {
-      expect(command).toMatch(/^node .*\.mjs codex --mehmory$/);
+      // Always single-quoted, not only when the path has whitespace: an apostrophe in
+      // the path (`/Users/o'brien/…`) otherwise produces a command Codex mis-parses.
+      expect(command).toMatch(/^node '.*\.mjs' codex --mehmory$/);
     }
     expect(readFileSync(fixture.configFile, 'utf-8')).toContain('[features]\nhooks = true');
     // The pre-existing setting is still there, not rewritten around the flag.
@@ -307,8 +309,8 @@ describe('mehmory init --host codex', () => {
     const fixture = codexFixture();
     expect(init(fixture).status).toBe(0);
     for (const command of mehmoryCommands(fixture)) {
-      const path = /^node (.+)\.mjs codex/.exec(command)?.[1];
-      expect(existsSync(`${path ?? ''}.mjs`), command).toBe(true);
+      const path = /^node '(.+\.mjs)' codex/.exec(command)?.[1];
+      expect(existsSync(path ?? ''), command).toBe(true);
     }
   });
 
@@ -411,6 +413,19 @@ describe('mehmory doctor — the Codex surface', () => {
       level: 'warn',
       code: 'E_CODEX_SKILLS_MISSING',
     });
+  });
+
+  it('still reports when config.toml exists but cannot be read (F3-8)', () => {
+    // A directory where the file should be raises EISDIR from readFile the same way a
+    // root-owned file raises EACCES — an unreadable path that exists, without depending
+    // on the uid the suite runs under.
+    const codexHome = createTempDir('mehmory-test-codex-case');
+    mkdirSync(join(codexHome, 'config.toml'));
+
+    const run = runCli(['doctor', '--json'], { codexHome });
+    // The diagnostic still produces its envelope instead of dying on E_APPEND_FAILED.
+    expect(envelopeOf(run)['command']).toBe('doctor');
+    expect(findings(codexHome).get('codex.harness')).toMatchObject({ level: 'ok' });
   });
 
   it('reports the flag as on when it is on, and as off when it is explicitly false', () => {

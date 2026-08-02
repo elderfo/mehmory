@@ -7,12 +7,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { writeCodexRollout, writeTranscript } from './hook-fixture.js';
-import { finalizeSession, scopePaths } from '../src/core/capture.js';
+import { finalizePendingSessions, finalizeSession, scopePaths } from '../src/core/capture.js';
 import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
 import * as sessionModule from '../src/core/session.js';
-import { sessionStatePath } from '../src/core/session.js';
+import { freshSessionState, sessionStatePath } from '../src/core/session.js';
 import { initStore } from '../src/core/store.js';
 
 /** Every file under the store, keyed by its path relative to `mehmoryHome()`, content
@@ -134,5 +134,40 @@ describe('finalizeSession', () => {
     expect(result.capturedEntries).toBe(1);
     const queued = readdirSync(statePath('queue')).filter(f => f.endsWith('.json'));
     expect(queued).toHaveLength(1);
+  });
+});
+
+describe('finalizePendingSessions', () => {
+  let cwd: string;
+  let key: string;
+
+  beforeEach(() => {
+    cwd = createTempDir('mehmory-project');
+    key = resolveProjectKey(cwd);
+    initStore();
+  });
+
+  it('one bad session does not abandon the rest of the sweep (F3-10)', () => {
+    const transcript = writeTranscript([{ text: 'We decided to ship the plugin unbundled.' }]);
+    const pending = ['bad', 'good'].map(id => ({
+      ...freshSessionState(id),
+      transcript_path: transcript,
+      project_key: key,
+      host: 'claude-code' as const,
+    }));
+
+    vi.spyOn(sessionModule, 'listPendingSessions').mockReturnValue(pending);
+    vi.spyOn(sessionModule, 'markSessionFinalized').mockImplementation((id: string) => {
+      if (id === 'bad') throw new Error('simulated marker write failure');
+    });
+
+    // 1, not 0: the good session completed and must be counted, and it must be reached
+    // at all — the pre-fix single failOpen around the whole loop aborted on the first
+    // throw and reported nothing finalized.
+    expect(finalizePendingSessions('current', key, 'claude-code')).toBe(1);
+
+    const log = readFileSync(scopePaths(key).logFile, 'utf-8');
+    expect(log).toContain('(session good)');
+    vi.restoreAllMocks();
   });
 });

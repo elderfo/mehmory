@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { atomicWrite, listDir, pathExists, readFile, removeDir } from './fs.js';
 import { codexHome } from './home.js';
 import { HOOK_EVENTS, type HookConfigKey } from './environment.js';
-import type { MehmoryError } from './errors.js';
+import { failOpen, type MehmoryError } from './errors.js';
 import type { InboxHost } from '../schema/format.js';
 
 /**
@@ -422,10 +422,17 @@ function bundleName(key: HookConfigKey): string {
   return `${key.replace(/_/g, '-')}.mjs`;
 }
 
-/** The command Codex runs for one mehmory hook. */
+/**
+ * The command Codex runs for one mehmory hook.
+ *
+ * The path is always single-quoted, with embedded quotes escaped POSIX-style. Quoting
+ * only when the path contains whitespace left `/Users/o'brien/…` — not exotic — producing
+ * a command Codex mis-parses. Not attacker-reachable (the path comes from
+ * `resolvePackageDir` walking up from `import.meta.url`), so this is robustness.
+ */
 function hookCommand(key: HookConfigKey, host: InboxHost, bundlesDir: string): string {
   const bundle = join(bundlesDir, bundleName(key));
-  const quoted = /\s/.test(bundle) ? `'${bundle}'` : bundle;
+  const quoted = `'${bundle.replace(/'/g, `'\\''`)}'`;
   return `node ${quoted} ${host} ${CODEX_HOOK_MARKER}`;
 }
 
@@ -588,26 +595,54 @@ export interface CodexProbe {
   readonly skillsInstalled: boolean;
 }
 
-/** Everything `doctor` needs to describe the Codex surface. Never throws (A2). */
+/**
+ * Everything `doctor` needs to describe the Codex surface. Never throws (A2).
+ *
+ * `readJsonObject` and `readHooksFeature` both read a file that exists but may not be
+ * readable — a root-owned or mode-000 `~/.codex/config.toml` raises EACCES, and `doctor`
+ * calls this unwrapped, which turned the *diagnostic* command into a generic failure.
+ * Wrapped in `failOpen` like every sibling probe in `environment.ts`: an unreadable
+ * surface reports as unknown, which is what a diagnostic should say.
+ */
 export function probeCodexInstall(): CodexProbe {
   const home = codexHome();
   const hooksFile = codexHooksFile();
   const configFile = codexConfigFile();
 
-  const parsed = readJsonObject(hooksFile);
-  const wiredEvents = parsed.ok ? mehmoryEvents(parsed.value) : [];
-
-  return {
+  // A file that is there but cannot be read is exactly `hooksFileBroken`: present, and
+  // nothing can be said about the wiring inside it.
+  const unreadable: CodexProbe = {
     codexHome: home,
     hooksFile,
     configFile,
     harnessPresent: pathExists(configFile),
-    hooksFeature: pathExists(configFile) ? readHooksFeature(readFile(configFile)) : undefined,
-    hooksFileBroken: !parsed.ok,
-    wiredEvents,
-    missingEvents: CODEX_HOOK_EVENTS.filter(event => !wiredEvents.includes(event)),
-    skillsInstalled: hasCodexSkills(home),
+    hooksFeature: undefined,
+    hooksFileBroken: pathExists(hooksFile),
+    wiredEvents: [],
+    missingEvents: CODEX_HOOK_EVENTS,
+    skillsInstalled: false,
   };
+
+  return failOpen(
+    () => {
+      const parsed = readJsonObject(hooksFile);
+      const wiredEvents = parsed.ok ? mehmoryEvents(parsed.value) : [];
+
+      return {
+        codexHome: home,
+        hooksFile,
+        configFile,
+        harnessPresent: pathExists(configFile),
+        hooksFeature: pathExists(configFile) ? readHooksFeature(readFile(configFile)) : undefined,
+        hooksFileBroken: !parsed.ok,
+        wiredEvents,
+        missingEvents: CODEX_HOOK_EVENTS.filter(event => !wiredEvents.includes(event)),
+        skillsInstalled: hasCodexSkills(home),
+      };
+    },
+    unreadable,
+    'E_CODEX_INSTALL'
+  );
 }
 
 /**
