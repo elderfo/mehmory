@@ -39,7 +39,7 @@ runHook('PreCompact', (input, project, host) => {
     return {};
   }
 
-  const captured = captureDelta(input.session_id, transcript, project, host);
+  const captured = captureDelta(input.session_id, transcript, project, host, config);
   // A capture is a capture whichever hook made it: the Stop counter restarts here too.
   resetStopCount(input.session_id);
 
