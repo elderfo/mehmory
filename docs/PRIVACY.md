@@ -13,6 +13,11 @@ Every write to the store passes through `redact()`, which applies five built-in 
 patterns (AWS keys, GitHub tokens, bearer tokens, private-key blocks, `.env`-shaped
 `KEY=value` lines) plus anything you add under `secrets.patterns` in `config.json`.
 
+**Redaction reaches both harnesses.** There is one store and one `redact()` call on the write
+path, regardless of whether the session that produced the text was Claude Code or Codex CLI —
+harness identity is not a redaction input, so nothing about a Codex-originated capture is
+filtered differently or filtered less.
+
 **This is best-effort pattern matching, not a PII-safe guarantee.** It catches secrets that
 look like the shapes above. It does not reliably catch:
 
@@ -45,6 +50,12 @@ regression is exactly what it would reintroduce.
 ## What `purge` does and does not reach
 
 `mehmory purge` (see `docs/CLI.md`) deletes from the working tree and commits the removal.
+
+**Purge reaches content captured by either harness.** The store has no per-harness partition —
+a page, an inbox entry, or a project is the same kind of thing whether a Claude Code session or
+a Codex CLI session produced it, so every purge scope (`--page`, `--session`, `--project`,
+`--global`, `--all`) reaches Codex-captured material exactly as it reaches Claude Code-captured
+material, with no separate flag needed.
 
 **Deleting anything takes two invocations.** The first run previews the targets, prints the
 confirmation token scaled to what you're about to lose, and exits 4 having changed nothing;
@@ -91,21 +102,30 @@ git filter-repo --path <path-to-purge> --invert-paths
 from inside `~/.mehmory` (or `$MEHMORY_HOME`). `purge`'s own output prints this recipe every
 time it runs, not just this document — you shouldn't have to already know it exists.
 
-## Uninstalling the plugin is not deleting your data
+## Uninstalling is not deleting your data — on either harness
 
-These are two separate operations:
+These are two separate operations, on both Claude Code and Codex CLI:
 
-- **Uninstalling the plugin** (removing it from your Claude Code plugin marketplace
-  installation) stops the hooks and skills from running. It does **not** touch
-  `~/.mehmory` — your wiki, inbox, and log stay exactly where they are, untouched and
-  readable, because the plugin never owned that directory in the first place.
+- **Uninstalling** — removing the Claude Code plugin from your marketplace installation, or
+  running `mehmory init --host codex --uninstall` — stops the hooks and skills from running.
+  It does **not** touch `~/.mehmory` (or `$MEHMORY_HOME`) — your wiki, inbox, and log stay
+  exactly where they are, untouched and readable, because neither harness's install mechanism
+  ever owned that directory in the first place.
 - **Deleting your data** is `mehmory purge --all` (or a narrower purge scope), and it's the
-  only thing that removes content from the store.
+  only thing that removes content from the store, regardless of which harness it came from.
 
-If you uninstall the plugin and reinstall it later (or on another machine, pointed at the same
+If you uninstall and reinstall later (or on another machine, pointed at the same
 `$MEHMORY_HOME`), your memory is exactly as you left it — nothing needs restoring, because
 nothing was removed. This is worth stating plainly, because a user's first assumption about
 "uninstall" is usually "and my data goes with it" — here it doesn't.
+
+**Codex uninstall may reformat a hand-edited `hooks.json`.** Content correctness is
+unconditional: `--uninstall` never removes an entry it did not write, and the file is backed
+up (`<file>.mehmory.bak`) before any change. But if `$CODEX_HOME/hooks.json` was not already in
+the canonical 2-space JSON Codex itself writes — hand-edited with different spacing, for
+example — uninstall's rewrite renders the whole file back out in that canonical form. Nothing
+is added, removed, or reordered in the data; the bytes around it can still change. See
+`docs/CLI.md` for the byte-identity guarantee and the assumption it depends on.
 
 ## Restoring from `purge --export`
 
