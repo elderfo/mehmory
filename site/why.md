@@ -45,9 +45,10 @@ that can take down your editor isn't a productivity gain.
 ## What it actually does
 
 **Captures without asking.** Deterministic hooks distill your sessions into an inbox as you
-work — no model call, no token spend, no interruption. `mehmory onboard` backfills the same
-inbox from the Claude Code transcripts you already have, so a project with history doesn't
-start empty.
+work — no model call, no token spend, no interruption. They skip the harness's own noise and
+turns too short to be a fact, so the inbox is what you said, not a transcript. `mehmory
+onboard` backfills the same inbox from the Claude Code transcripts you already have, so a
+project with history doesn't start empty.
 
 **Integrates with judgment.** Sorting a fact into the right page is a reading-comprehension
 problem, so a model does it. `/mehmory:integrate` reads the inbox and the schema, decides

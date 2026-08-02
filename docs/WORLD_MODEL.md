@@ -365,3 +365,37 @@ Above the reader, distillation takes exactly one input type and is harness-blind
 distill patterns and their normative fixtures do not fork (A7). Below it, each harness's
 on-disk shape is a parse detail and reader selection is by host. Adding a third harness
 is a new reader, not a new distiller.
+
+## Run-4 Amendments
+
+### Amendment: A7 does not make the pattern list the whole capture contract
+
+A7 fixes the distill patterns and their fixtures as a contract. It was read as saying the
+pattern list decides what is captured. It never did: the list ends in a `user_message`
+catch-all matching every user turn, so the patterns above it only chose a label, and no
+part of the pipeline decided whether a turn was worth keeping. Real stores filled with
+menu picks and acknowledgements; one held seven consecutive one-letter entries.
+
+Amending: capture is **pattern selection plus a retention floor**, and the floor is as
+normative as the patterns. It lives in `extractMessageText` so every pattern reaches its
+text through it and none can opt out. A fixture that pins retention is as binding as one
+that pins a pattern match.
+
+The floor errs toward keeping, deliberately, and that direction is the contract rather
+than the threshold's value. A memory tool that silently discards the user's own words
+fails worse than one that files some junk: a junk entry is visible and deletable at
+integrate time, a dropped fact leaves no signal anywhere. A later run may move the
+threshold; it may not invert the direction without amending this.
+
+A corollary the first attempt got wrong: the floor may not assume a script. Counting
+whitespace-separated words encodes "words are separated by spaces", which is false for
+Chinese, Japanese and Korean, and dropped complete sentences in those languages as a
+single "word".
+
+**Rejected:** Retention as a pattern (a `too_thin` pattern in the list would be tested in
+order and skipped by any earlier match, which is exactly how the catch-all escaped
+scrutiny). Retention as config (a threshold no one has needed to tune is a key to keep
+working forever; the constant is one edit away if that changes).
+
+**WORLD_MODEL check.** This amendment extends A7 and upholds A21 — the floor is a module
+constant, not ambient state, and reads no environment.
