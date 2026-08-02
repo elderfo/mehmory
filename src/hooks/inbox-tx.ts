@@ -16,6 +16,7 @@
  * Subcommands: see `src/core/inbox-tx.ts`.
  */
 
+import { loadConfig } from '../core/config.js';
 import { parseJsonRecord, runInboxTx } from '../core/inbox-tx.js';
 
 function readStdin(): Promise<string> {
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
   const subcommand = process.argv[2] ?? '';
   const stdin = await readStdin();
   const input = parseJsonRecord(stdin, 'stdin');
-  const result = runInboxTx(subcommand, input);
+  const result = runInboxTx(subcommand, input, loadConfig());
   process.stdout.write(JSON.stringify(result) + '\n');
 }
 

@@ -8,9 +8,9 @@
  * a thin consumer of the same behavior rather than a second implementation (A17).
  *
  * Subcommands:
- *   append   {inbox, key, entries:[{text, src}]}  -> {appended, skipped}
- *   snapshot {inbox, key}                         -> {snapshotId, entries}
- *   clear    {inbox, key, snapshotId}             -> {removed}
+ *   append   {inbox, key, host?, entries:[{text, src}]}  -> {appended, skipped}
+ *   snapshot {inbox, key}                                -> {snapshotId, entries}
+ *   clear    {inbox, key, snapshotId}                    -> {removed}
  *
  * `snapshot` persists the snapshotted id list under `<MEHMORY_HOME>/.state/`; `clear`
  * removes exactly those ids and deletes the snapshot file. Entries appended between the
@@ -19,12 +19,13 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { loadConfig } from './config.js';
+import { type MehmoryConfig } from './config.js';
 import { statePath } from './home.js';
 import { atomicWrite, pathExists, readFile, remove } from './fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from './inbox.js';
 import { redact } from './redact.js';
-import { inboxEntryId, type InboxEntry } from '../schema/format.js';
+import { readSessionState } from './session.js';
+import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 
 /** Thrown for any bad input or unusable state; callers report it and exit non-zero. */
 export class TxError extends Error {}
@@ -62,21 +63,56 @@ function snapshotFile(snapshotId: string): string {
   return statePath(`inbox-snapshot.${snapshotId}.json`);
 }
 
-function doAppend(input: Record<string, unknown>): Record<string, unknown> {
+/**
+ * The harness to attribute an appended entry to.
+ *
+ * Declared beats inferred (A23): the caller passes a top-level `host` and it wins. An
+ * unrecognized value is a hard error rather than a silent fall-through to the
+ * serializer's `claude-code` default — a well-formed line with the wrong attribution is
+ * exactly the failure issue #20 exists to prevent, and it is invisible once written.
+ *
+ * With no `host` declared, the entry's `src` — a session id — is resolved against that
+ * session's recorded state, which is the authoritative record of which harness wrote it
+ * (`finalizePendingSessions` prefers it over the running host for the same reason). That
+ * keeps a re-appended older entry attributed to the session that produced it rather than
+ * to whatever harness is running now. Only when neither is available does the entry go
+ * out without a host and pick up the serializer's default.
+ */
+function declaredHost(input: Record<string, unknown>): InboxHost | undefined {
+  const value = input['host'];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !(INBOX_HOSTS as readonly string[]).includes(value)) {
+    throw new TxError(`unknown "host" (expected ${INBOX_HOSTS.join('|')})`);
+  }
+  return value as InboxHost;
+}
+
+function doAppend(
+  input: Record<string, unknown>,
+  config: MehmoryConfig
+): Record<string, unknown> {
   const inbox = requireString(input, 'inbox');
   const key = requireString(input, 'key');
   const raw = input['entries'];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
 
-  // Loaded once for the whole append, not per entry: `redact` never reads config
-  // itself (criterion 13).
-  const secrets = loadConfig().secrets;
+  const host = declaredHost(input);
+  // Config is threaded from the adapter (A21); `redact` never reads it itself, and one
+  // read serves the whole append rather than one per entry (criterion 13).
+  const secrets = config.secrets;
   const ts = new Date().toISOString();
   const entries: InboxEntry[] = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
     const text = redact(requireString(entry, 'text'), secrets);
     const src = requireString(entry, 'src');
-    return { id: inboxEntryId(src + text), text, src, ts };
+    const entryHost = host ?? readSessionState(src).host;
+    return {
+      id: inboxEntryId(src + text),
+      text,
+      src,
+      ...(entryHost !== undefined ? { host: entryHost } : {}),
+      ts,
+    };
   });
 
   return appendInboxEntries(inbox, entries, key);
@@ -100,7 +136,9 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
   const path = snapshotFile(requireString(input, 'snapshotId'));
   if (!pathExists(path)) throw new TxError('unknown snapshotId (already cleared?)');
 
-  const stored = asRecord(JSON.parse(readFile(path)), 'snapshot file');
+  // Parsed through `parseJsonRecord` so a truncated snapshot reports the same actionable
+  // TxError as a mis-shaped one, instead of leaking a raw JSON SyntaxError to the skill.
+  const stored = parseJsonRecord(readFile(path), 'snapshot file');
   const ids = stored['ids'];
   if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) {
     throw new TxError('corrupt snapshot file');
@@ -117,11 +155,17 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
  * Both `hooks/inbox-tx.ts` and `src/cli/commands/inbox-tx.ts` call this directly — it is
  * the whole implementation; they differ only in how they get `input` from the outside
  * world and how they report the result.
+ *
+ * `config` is threaded by the adapter rather than read here (A21).
  */
-export function runInboxTx(subcommand: string, input: Record<string, unknown>): Record<string, unknown> {
+export function runInboxTx(
+  subcommand: string,
+  input: Record<string, unknown>,
+  config: MehmoryConfig
+): Record<string, unknown> {
   switch (subcommand) {
     case 'append':
-      return doAppend(input);
+      return doAppend(input, config);
     case 'snapshot':
       return doSnapshot(input);
     case 'clear':

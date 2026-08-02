@@ -34,6 +34,11 @@ function json(result: CliRun): unknown {
   return JSON.parse(result.stdout);
 }
 
+/** Every `host=` value stamped on the inbox's entry lines, in file order. */
+function hostsIn(body: string): string[] {
+  return [...body.matchAll(/host=(\S+)/g)].map(m => m[1] as string);
+}
+
 let inbox: string;
 let key: string;
 
@@ -74,6 +79,58 @@ describe('mehmory inbox-tx append', () => {
     const body = readFileSync(inbox, 'utf-8');
     expect(body).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(body).toContain('deploy key');
+  });
+
+  // `every`, not `some`: the failure mode is a well-formed line with the wrong
+  // attribution, which `some` would sail straight past (F3-2, issue #20).
+  it('stamps the declared host on every entry, so a Codex skill does not record claude-code', () => {
+    seed();
+    json(
+      tx('append', {
+        inbox,
+        key,
+        host: 'codex',
+        entries: [
+          { text: 'codex entry one', src: 'sess-cx' },
+          { text: 'codex entry two', src: 'sess-cx' },
+        ],
+      })
+    );
+    const hosts = hostsIn(readFileSync(inbox, 'utf-8'));
+    expect(hosts).toHaveLength(2);
+    expect(hosts.every(h => h === 'codex')).toBe(true);
+  });
+
+  it('falls back to the host recorded in the src session state when none is declared', () => {
+    seed();
+    const home = process.env.MEHMORY_HOME as string;
+    writeFileSync(
+      join(home, '.state', 'sess-cx.json'),
+      JSON.stringify({
+        session_id: 'sess-cx',
+        cursor: { file_id: '0:0', size: 0, offset: 0 },
+        stop_count: 0,
+        host: 'codex',
+        paused: false,
+      })
+    );
+
+    json(tx('append', { inbox, key, entries: [{ text: 'derived host', src: 'sess-cx' }] }));
+    const hosts = hostsIn(readFileSync(inbox, 'utf-8'));
+    expect(hosts).toHaveLength(1);
+    expect(hosts.every(h => h === 'codex')).toBe(true);
+  });
+
+  it('rejects an unknown host rather than silently defaulting it', () => {
+    seed();
+    const result = tx('append', {
+      inbox,
+      key,
+      host: 'emacs',
+      entries: [{ text: 'unknown host', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('host');
   });
 });
 

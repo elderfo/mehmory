@@ -28,13 +28,20 @@ grep -l '"session_id"' "$HOME_DIR"/.state/*.json 2>/dev/null \
   | xargs -r ls -t 2>/dev/null | head -1 | xargs -r cat
 ```
 
-Use its `project_key` for `key` and its `session_id` for `src`. Then append:
+Use its `project_key` for `key`, its `session_id` for `src`, and its `host` for `host`.
+Then append:
 
 ```bash
-echo '{"inbox":"'"$HOME_DIR"'/projects/<key>/inbox.md","key":"<key>",
+echo '{"inbox":"'"$HOME_DIR"'/projects/<key>/inbox.md","key":"<key>","host":"<host>",
        "entries":[{"text":"<the fact, one line>","src":"<session id>"}]}' \
   | mehmory inbox-tx append
 ```
+
+`host` is which harness you are running under — `claude-code` or `codex` — and it is what
+the entry is attributed to. Take it from the state file rather than guessing; omit the
+field entirely if the file has no `host`, and the helper derives it from `src` instead.
+Never send a value that is not one of those two: the helper rejects it, which is the
+point — a wrong host is a silently mis-attributed memory.
 
 Stdout is `{"appended":n,"skipped":m}`; `skipped` means that exact text was already in
 the inbox, which is a success, not a failure. Non-zero exit: report the stderr line and

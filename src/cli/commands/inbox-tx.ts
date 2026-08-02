@@ -9,6 +9,7 @@
  * rather than re-implementing the append/snapshot/clear logic.
  */
 
+import { loadConfig } from '../../core/config.js';
 import { readStdin } from '../../core/fs.js';
 import { parseJsonRecord, runInboxTx, TxError } from '../../core/inbox-tx.js';
 import { parseFlags } from '../args.js';
@@ -23,9 +24,12 @@ export const command: Command = {
     '  stdout — the same input/output contract as the bundled `hooks/inbox-tx.mjs`',
     '  script, so a skill can call either one interchangeably.',
     '',
-    '  append   {inbox, key, entries:[{text, src}]}  -> {appended, skipped}',
-    '  snapshot {inbox, key}                         -> {snapshotId, entries}',
-    '  clear    {inbox, key, snapshotId}             -> {removed}',
+    '  append   {inbox, key, host?, entries:[{text, src}]}  -> {appended, skipped}',
+    '  snapshot {inbox, key}                                -> {snapshotId, entries}',
+    '  clear    {inbox, key, snapshotId}                    -> {removed}',
+    '',
+    '  `host` is the harness to attribute the entries to (claude-code|codex). Omit it',
+    '  and the host recorded for each entry\'s `src` session is used instead.',
   ],
 
   run(ctx): CommandResult {
@@ -48,7 +52,7 @@ export const command: Command = {
 
     let result: Record<string, unknown>;
     try {
-      result = runInboxTx(subcommand, parseJsonRecord(readStdin(), 'stdin'));
+      result = runInboxTx(subcommand, parseJsonRecord(readStdin(), 'stdin'), loadConfig());
     } catch (err) {
       if (!(err instanceof TxError)) throw err;
       return usageError(err.message, 'mehmory inbox-tx --help');
