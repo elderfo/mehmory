@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../core/config.js';
 import { runHook } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta, scopePaths } from '../core/capture.js';
+import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
+import type { InboxHost } from '../schema/format.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
 const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
@@ -22,7 +23,7 @@ const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
  * save it. Never the raw entry serialization — ids are sha256, and A15 reserves inbox
  * writes for the helper.
  */
-function blockReason(key: string, sessionId: string): string {
+function blockReason(key: string, sessionId: string, host: InboxHost): string {
   const payload = JSON.stringify({
     inbox: scopePaths(key).inboxFile,
     key,
@@ -31,7 +32,7 @@ function blockReason(key: string, sessionId: string): string {
   return [
     'mehmory: save this stretch of the session before stopping.',
     'Append anything durable — decisions made, corrections received, gotchas found since the last capture —',
-    'as one short line each. Use /mehmory:remember, or run:',
+    `as one short line each. Use ${skillRef(host, 'remember')}, or run:`,
     // Heredoc, not `echo '<json>' |`: the learning is model-written prose and a single
     // quote in it would end the shell quote and break the command. A quoted heredoc
     // delimiter passes the body through to stdin literally.
@@ -53,7 +54,7 @@ runHook('Stop', (input, project, host) => {
   resetStopCount(input.session_id);
 
   return {
-    json: { decision: 'block', reason: blockReason(project, input.session_id) },
+    json: { decision: 'block', reason: blockReason(project, input.session_id, host) },
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });

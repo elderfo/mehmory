@@ -309,6 +309,16 @@ describe('Codex capture (#23)', () => {
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop', host: 'codex' });
   });
 
+  it('names the Codex skill, not a slash command, in the block reason (F4-2)', () => {
+    primeCounter(CODEX_SESSION);
+
+    const output = outputJson(runHook('stop', stop(cwd, rollout), { cwd, args: CODEX_ARGS }));
+
+    const reason = String(output['reason']);
+    expect(reason).toContain('the mehmory-remember skill');
+    expect(reason).not.toContain('/mehmory:remember');
+  });
+
   it('redacts secrets in a Codex capture exactly as in a Claude Code one', () => {
     // The secret is embedded in a line that IS captured, not one the distiller drops:
     // absence alone would otherwise prove nothing about the filter, only about the
