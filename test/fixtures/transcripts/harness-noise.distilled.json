@@ -1,0 +1,24 @@
+[
+  {
+    "id": "b6116080978ae45e5345b172b5ef518d6aeef4567cf1041cafaf263031d5c911",
+    "pattern": "user_message",
+    "content": "push direct to main",
+    "source": {
+      "sessionId": "noise-session",
+      "recordUuid": "dd000000-0000-4000-8000-000000000003",
+      "recordType": "user",
+      "lineNumber": 3
+    }
+  },
+  {
+    "id": "e69f470359c80437a8282aac8bca394eebf8fe0782953ff8b9e80d0603715ac2",
+    "pattern": "user_message",
+    "content": "Codex session_meta.payload.session_id is absent from 85 of 163 real rollouts; the rollout uuid is session_meta.payload.id.",
+    "source": {
+      "sessionId": "noise-session",
+      "recordUuid": "dd000000-0000-4000-8000-000000000006",
+      "recordType": "user",
+      "lineNumber": 6
+    }
+  }
+]

@@ -171,7 +171,7 @@ describe('distill', () => {
       {
         type: 'message',
         role: 'user',
-        text: 'Hello',
+        text: 'Hello, can you look at this?',
         uuid: 'msg-008',
       },
     ];
@@ -332,11 +332,64 @@ describe('distill stable ids across resume', () => {
 
   it('falls back to the invoking session id for records with no sessionId', () => {
     const entries = distill(
-      [{ type: 'message', role: 'user', text: 'legacy record', uuid: 'msg-legacy' }],
+      [
+        {
+          type: 'message',
+          role: 'user',
+          text: 'a legacy record with no sessionId',
+          uuid: 'msg-legacy',
+        },
+      ],
       'session-invoking'
     );
     expect(entries[0]?.id).toBe(computeId('session-invoking', 'msg-legacy'));
   });
+
+  it('drops turns too thin to be memory', () => {
+    // The `user_message` pattern matches every user turn unconditionally, so without a
+    // floor there is no retention decision anywhere in the pipeline and menu picks land
+    // in the inbox. One real store held seven consecutive one-letter entries.
+    const thin = ['A', 'yes', 'agreed', 'Ship it', 'confirm', 'code .', 'Commit everythin'];
+    const records: TranscriptRecord[] = thin.map((text, i) => ({
+      type: 'message',
+      role: 'user',
+      text,
+      uuid: `msg-thin-${String(i)}`,
+    }));
+
+    expect(distill(records, 'session-thin')).toEqual([]);
+  });
+
+  it('keeps a substantial single-token turn the word floor would reject', () => {
+    // A pasted URL or a spaceless log line is one "word" but is not noise.
+    const url = 'https://github.com/elderfo/mehmory/blob/main/src/distill/patterns.ts#L46';
+    const entries = distill(
+      [{ type: 'message', role: 'user', text: url, uuid: 'msg-url' }],
+      'session-url'
+    );
+
+    expect(entries.map(e => e.content)).toEqual([url]);
+  });
+
+  it('drops harness notification blocks the user never typed', () => {
+    const entries = distill(
+      [
+        {
+          type: 'user',
+          message: {
+            role: 'user',
+            content:
+              '<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n</task-notification>',
+          },
+          uuid: 'msg-notif',
+        },
+      ],
+      'session-notif'
+    );
+
+    expect(entries).toEqual([]);
+  });
+
   it('drops slash-command envelopes but keeps their arguments', () => {
     // Claude Code writes these as `type: 'user'` with no `isMeta` flag, so the meta
     // filter never saw them and the inbox filled with /reload-plugins transcripts.

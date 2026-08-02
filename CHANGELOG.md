@@ -9,6 +9,20 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Capture now has a retention decision.** The distill pattern list ended in a
+  `user_message` catch-all that matched every user turn unconditionally, so the keyword
+  patterns above it only chose a label — nothing anywhere in the pipeline decided whether a
+  turn was worth keeping. Menu picks and acknowledgements (`A`, `yes`, `Ship it`) were filed
+  as memory; one store held seven consecutive one-letter entries. A turn now has to carry
+  three words, or thirty characters, to reach the inbox. The character threshold is the
+  escape hatch for a substantial single token — a pasted URL, a spaceless log line.
+- **Harness notification blocks are stripped like the other machine text.**
+  `<task-notification>` and `<system-reminder>` joined the slash-command and bash envelopes
+  in the noise filter. Without them a single agent-completion notice was filed verbatim, and
+  a run that dispatched several subagents wrote a near-identical entry for each.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added

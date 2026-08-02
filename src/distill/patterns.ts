@@ -137,7 +137,32 @@ function isUserMessage(record: Record<string, unknown>): boolean {
 
 /** Blocks the harness writes into a user turn: tag and content are both machine text. */
 const NOISE_BLOCKS =
-  /<(command-name|command-message|local-command-stdout|local-command-caveat|bash-input|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>/g;
+  /<(command-name|command-message|local-command-stdout|local-command-caveat|bash-input|bash-stdout|bash-stderr|task-notification|system-reminder)>[\s\S]*?<\/\1>/g;
+
+/**
+ * Minimum whitespace-separated words a user turn must carry, once harness envelopes are
+ * stripped, to be worth filing as memory.
+ *
+ * Without a floor the pattern list has no retention decision at all: `user_message`
+ * matches every user turn unconditionally, so the keyword patterns above only choose a
+ * label and everything else falls through and gets filed. That is how a bare "A"
+ * answering a menu, "yes", "agreed", and "Ship it" reached the inbox — one real store
+ * held seven consecutive one-letter entries.
+ *
+ * Words, not characters: the two classes overlap on length ("push direct to main" is 19
+ * characters, "the deploy needs the VPN" is 24) but separate on shape. A menu pick or an
+ * acknowledgement is one or two words; an assertion about the world is three or more.
+ *
+ * `MIN_ENTRY_CHARS` is the escape hatch for the one shape a word count gets wrong: a
+ * single unbroken token that is nonetheless substantial — a pasted URL, a stack frame, a
+ * spaceless log line. Either threshold alone admits the turn.
+ *
+ * ponytail: two global thresholds, no per-pattern tuning and no config keys. Ceiling: it
+ * keeps four-word ephemera like "push direct to main", and a short two-word durable fact
+ * would be dropped. Upgrade: expose them under `distill.*` in config if that bites.
+ */
+const MIN_ENTRY_WORDS = 3;
+const MIN_ENTRY_CHARS = 30;
 
 /** `<command-args>` is the exception — the arguments are what the user actually typed. */
 const COMMAND_ARGS_TAGS = /<\/?command-args>/g;
@@ -167,10 +192,27 @@ function stripCommandEnvelope(text: string): string | null {
  *
  * Looks for common message text fields, then descends into the nested `message`
  * envelope Claude Code wraps real turns in, then strips slash-command wrappers.
+ *
+ * The `MIN_ENTRY_WORDS` floor lives here rather than in `distill.ts` so it applies
+ * uniformly: every pattern reaches its text through this function, so a turn too thin to
+ * keep fails `matches` for the keyword patterns and yields no content for the
+ * `user_message` catch-all, and no pattern can quietly opt out of the gate.
+ *
+ * @returns the user-authored text, or null when nothing substantive remains
  */
 function extractMessageText(record: Record<string, unknown>): string | null {
   const text = extractRawText(record);
-  return text === null ? null : stripCommandEnvelope(text);
+  if (text === null) return null;
+  const stripped = stripCommandEnvelope(text);
+  if (stripped === null) return null;
+  const substantive =
+    countWords(stripped) >= MIN_ENTRY_WORDS || stripped.length >= MIN_ENTRY_CHARS;
+  return substantive ? stripped : null;
+}
+
+/** Whitespace-separated word count, used only by the `MIN_ENTRY_WORDS` floor. */
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
 }
 
 /** The field-walking half of `extractMessageText`, before command unwrapping. */
