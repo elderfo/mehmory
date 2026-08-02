@@ -58,7 +58,7 @@ describe('mehmory onboard', () => {
   it('writes the stub project.md that keeps the empty-store nudge from firing', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { s: transcript('s', ['prefer vitest']) },
+      [project]: { s: transcript('s', ['prefer vitest over jest here']) },
     });
     runCli(['init'], { cwd: project, claudeHome });
     const run = runCli(['onboard', '--json'], { cwd: project, claudeHome });
@@ -91,7 +91,7 @@ describe('mehmory onboard', () => {
   it('lists a directory whose decoded path is gone as unresolvable, and never guesses', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { s: transcript('s', ['still here']) },
+      [project]: { s: transcript('s', ['the session is still here']) },
       // Empty session map still creates the directory; the path itself never existed.
       '/tmp/mehmory-gone-3f9a1c/does-not-exist': {},
     });
@@ -109,9 +109,9 @@ describe('mehmory onboard', () => {
   it('caps the project scan and reports the remainder as unscanned', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { s: transcript('s', ['a']) },
-      [fakeProject()]: { t: transcript('t', ['b']) },
-      [fakeProject()]: { u: transcript('u', ['c']) },
+      [project]: { s: transcript('s', ['the first project note']) },
+      [fakeProject()]: { t: transcript('t', ['the second project note']) },
+      [fakeProject()]: { u: transcript('u', ['the third project note']) },
     });
     runCli(['init'], { cwd: project, claudeHome });
     const data = envelopeOf(
@@ -151,7 +151,7 @@ describe('mehmory onboard', () => {
   it('replays as a no-op: a second run appends nothing new', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { s: transcript('s', ['idempotent please']) },
+      [project]: { s: transcript('s', ['idempotent replay please']) },
     });
     runCli(['init'], { cwd: project, claudeHome });
     runCli(['onboard'], { cwd: project, claudeHome });
@@ -177,8 +177,8 @@ describe('mehmory onboard', () => {
   it('--resume finishes an interrupted run to the same inbox as an uninterrupted one', () => {
     const project = fakeProject();
     const sessions = {
-      'session-1': transcript('session-1', ['first thing']),
-      'session-2': transcript('session-2', ['second thing']),
+      'session-1': transcript('session-1', ['the first thing captured']),
+      'session-2': transcript('session-2', ['the second thing captured']),
     };
     const claudeHome = createFakeClaudeHome({ [project]: sessions });
     runCli(['init'], { cwd: project, claudeHome });
@@ -211,7 +211,7 @@ describe('mehmory onboard', () => {
 
   it('--resume exits 1 when the recorded scope differs from the flags given', () => {
     const project = fakeProject();
-    const claudeHome = createFakeClaudeHome({ [project]: { s: transcript('s', ['x']) } });
+    const claudeHome = createFakeClaudeHome({ [project]: { s: transcript('s', ['a note worth keeping']) } });
     runCli(['init'], { cwd: project, claudeHome });
     mkdirSync(join(home(), '.state'), { recursive: true });
     writeFileSync(
@@ -226,7 +226,7 @@ describe('mehmory onboard', () => {
 
   it('--resume with nothing to resume exits 1', () => {
     const project = fakeProject();
-    const claudeHome = createFakeClaudeHome({ [project]: { s: transcript('s', ['x']) } });
+    const claudeHome = createFakeClaudeHome({ [project]: { s: transcript('s', ['a note worth keeping']) } });
     runCli(['init'], { cwd: project, claudeHome });
     const run = runCli(['onboard', '--resume'], { cwd: project, claudeHome });
     expect(run.status).toBe(1);
@@ -253,7 +253,7 @@ describe('mehmory onboard', () => {
   it('skips an unreadable transcript and still succeeds', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { good: transcript('good', ['readable']) },
+      [project]: { good: transcript('good', ['a readable transcript line']) },
     });
     // A directory where a transcript should be: EISDIR on read, on any platform and
     // any uid — unlike chmod, which root ignores.
@@ -270,7 +270,7 @@ describe('mehmory onboard', () => {
   it('survives a corrupt store: an inbox that is a directory costs entries, not a throw', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
-      [project]: { s: transcript('s', ['corrupt store']) },
+      [project]: { s: transcript('s', ['a corrupt store note']) },
     });
     runCli(['init'], { cwd: project, claudeHome });
     const key = keyFromEnvelope(

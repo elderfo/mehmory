@@ -230,6 +230,14 @@ through.
 - `max_loss_percent` — the unparseable-line ratio above which a distill pass logs
   `E_DISTILL_LOSSY`. **Honored** (`src/core/capture.ts`).
 
+**The retention floor is not configurable.** A captured turn is dropped, before it reaches
+the inbox, when fewer than 8 characters of it survive stripping the harness's own blocks.
+That threshold is a constant in `src/distill/patterns.ts`, not a key here — it exists to
+clear one-word acknowledgements ("yes", "agreed", "Ship it") and is deliberately low
+enough that it never assumes a turn is written in a space-separated script. If you find
+yourself wanting to tune it, that is worth an issue rather than a local edit: the useful
+signal is which real turn it dropped.
+
 ## `log`
 
 ```json

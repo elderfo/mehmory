@@ -7,6 +7,26 @@ that store, what happens when you ask it to delete something, and what to do if 
 content gone from history too — those are three different questions with three different
 answers.
 
+## Not every turn you type is captured
+
+Two filters run before anything reaches the inbox, and both discard silently — there is no
+per-turn log of what was dropped.
+
+The first removes blocks the harness wrote into a turn rather than you: slash-command
+echoes, `!`-mode bash input and output, agent-completion notices, injected reminders. It is
+anchored to the start of a line, so a turn that merely quotes one of those tag names while
+discussing it keeps its text.
+
+The second is a length floor. What remains after that stripping must be at least 8
+characters, which drops bare answers like "yes", "agreed" and "Ship it". The floor is
+deliberately low, and low enough not to assume your turn is written in a script that
+separates words with spaces — a short sentence in Chinese, Japanese or Korean is kept.
+
+Both are subtractive and neither writes anywhere, so a dropped turn leaves no trace in the
+store — including a turn dropped because a harness block happened to contain a secret. The
+transcript on disk is unaffected either way; `mehmory onboard` re-reads it, so a capture
+missed today can be backfilled by a later version with a different floor.
+
 ## The secret filter's real limits
 
 Every write to the store passes through `redact()`, which applies five built-in regex
