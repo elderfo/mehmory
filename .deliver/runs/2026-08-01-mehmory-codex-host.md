@@ -4,7 +4,7 @@ date: 2026-08-01
 slug: mehmory-codex-host
 source: GitHub issue elderfo/mehmory#14 (spec, approved) + tickets #16–#26
 approved: 2026-08-01
-landed:
+landed: 2026-08-02 — PR #27 squash-merged as `2d3a037`, released as `v0.2.0` (tag `607ca74`, hook bundles force-added by release.yml)
 Dispatches: 0 / 26
 
 ## Resume header
