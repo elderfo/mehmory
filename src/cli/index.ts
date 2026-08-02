@@ -48,7 +48,7 @@ const COMMANDS: readonly Command[] = [
 function globalHelp(): readonly string[] {
   const width = Math.max(...COMMANDS.map(c => c.name.length));
   return [
-    'mehmory — memory for Claude Code',
+    'mehmory — memory for Claude Code and Codex CLI',
     '',
     'Usage: mehmory <command> [options]',
     '',
