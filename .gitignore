@@ -1,5 +1,7 @@
 .research
-/.deliver/case-studies/
+# Internal delivery notes — run plans, retros, session state. Local-only since the repo
+# went public; the shipped history is what's public, not the working notes behind it.
+.deliver/
 .scratch/
 .work/
 .swarm/
@@ -9,7 +11,6 @@ dist/
 # Anchored and extension-scoped on purpose: a bare `hooks/` also matches `src/hooks/`,
 # which silently un-tracks the hook sources. `/hooks/hooks.json` stays committed.
 /hooks/*.mjs
-/.deliver/SESSION.md
 .DS_Store
 *.swp
 *.swo

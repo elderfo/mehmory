@@ -5,9 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# Fork pull requests run this workflow. Nothing here needs the token for anything beyond
+# reading the checked-out code, so say so explicitly rather than inheriting the repo default.
+permissions: {}
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in mehmory does not behave as documented
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: `docs/TROUBLESHOOTING.md` covers every error message mehmory emits, and
+        `mehmory doctor` diagnoses most install and wiring problems.
+
+        **Do not paste memory-store contents or transcripts without checking them for
+        secrets first.**
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: '`mehmory doctor` output'
+      description: Run `mehmory doctor` and paste the output. Redact anything sensitive.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: mehmory version
+      description: Output of `mehmory --version`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Harness
+      options:
+        - Claude Code
+        - Codex CLI
+        - Both
+        - Neither / CLI only
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node version
+      placeholder: 'macOS 15.3, Node 22.11'
+    validations:
+      required: true
