@@ -229,7 +229,8 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 ### Pull Requests
 
 - One logical unit of work per PR (per subtask boundary)
-- Branches off `feat/runtime`, never directly to `main`
+- Branches off `main`, never committed to directly (the `feat/runtime` integration branch was
+  a run-era staging branch and no longer exists)
 - Wait for Copilot review before merging
 - Resolve PR comments one at a time with commits
 - Never merge with failing CI or unresolved comments

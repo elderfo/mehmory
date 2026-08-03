@@ -15,14 +15,15 @@ response within a week.
 
 ## Scope
 
-mehmory reads harness transcripts and writes markdown to a git-backed store at `~/.mehmory`.
-The security-relevant surfaces are:
+mehmory reads harness transcripts and writes markdown to a git-backed store at `~/.mehmory`
+(or `$MEHMORY_HOME`, if set). The security-relevant surfaces are:
 
 - **The secret filter** (`src/core/redact.ts`) — a pattern-based best-effort filter that runs
   before anything is written to the store. Its known limits are documented in
   `docs/PRIVACY.md`. A pattern that lets a real credential class through is a valid report;
   so is a bypass of the filter's call sites.
-- **Store writes** — path traversal, or a write that escapes the configured store root.
+- **Store writes** — path traversal, or a write that escapes the configured store root
+  (whether that root came from the default or from `$MEHMORY_HOME`).
 - **Hook execution** — anything that turns transcript content into executed code.
 
 Out of scope: the contents of your own memory store, and secrets that reach the store because
