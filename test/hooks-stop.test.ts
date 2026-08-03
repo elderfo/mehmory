@@ -76,6 +76,9 @@ describe('Stop hook', () => {
     expect(reason).toContain('/mehmory:remember');
     // The model must never be told to hand-write the entry serialization (A15, U6).
     expect(reason).not.toContain('<!--mehmory');
+    // A block mid-dialogue is disruptive enough without the model reciting every entry
+    // back and re-summarizing the session on top of it.
+    expect(reason).toContain('Save silently');
 
     const inbox = readIfPresent(paths(key).inbox);
     expect(inbox).toContain('fly.io');

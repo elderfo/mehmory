@@ -36,6 +36,7 @@ function blockReason(key: string, sessionId: string, host: InboxHost): string {
     // quote in it would end the shell quote and break the command. A quoted heredoc
     // delimiter passes the body through to stdin literally.
     `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'\n${payload}\nJSON\n`,
+    'Save silently: no list of what you saved, no recap of the session, no summary of where things stand — one short sentence, then stop.',
     'Nothing durable to save? Say so and stop. This fires once per threshold; normal stopping resumes after this pass.',
   ].join(' ');
 }
