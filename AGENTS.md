@@ -75,6 +75,9 @@ mehmory/
 │   ├── quickstart.md          # condensed README "First 5 minutes"
 │   └── how-it-works.md        # three planes, retrieval trade-off, context budget
 ├── .github/
+│   ├── ISSUE_TEMPLATE/        # bug_report.yml, feature_request.yml, config.yml (blank issues
+│   │                           # off; links to TROUBLESHOOTING.md and private vuln reporting)
+│   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
 │   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR),
 │                               # release.yml (v* tag → build → force-add hooks/*.mjs into the
 │                               # tagged tree; npm publish job inert this run) (X);
@@ -104,9 +107,12 @@ mehmory/
 ├── eslint.config.js             # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
 ├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
-├── .gitignore                  # node_modules, dist, .deliver/SESSION.md, /hooks/*.mjs (D)
+├── .gitignore                  # node_modules, dist, .deliver/, /hooks/*.mjs (D)
 ├── LICENSE                     # run 3: MIT, Christopher Freddy Getsfred (X)
 ├── README.md                   # run 3: "First 5 Minutes" quickstart (X)
+├── CONTRIBUTING.md             # setup, local checks, conventions for outside contributors
+├── CODE_OF_CONDUCT.md          # Contributor Covenant 2.1
+├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
     ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21 (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
@@ -239,7 +245,8 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 
 - All architectural decisions are in `docs/WORLD_MODEL.md` § Architectural Decisions
 - Design spec is at `docs/superpowers/specs/2026-07-28-mehmory-design.md` (read-only for this run)
-- Run plan is at `.deliver/runs/2026-07-29-mehmory-runtime.md` (read-only)
+- Run plan is at `.deliver/runs/2026-07-29-mehmory-runtime.md` (read-only, local — `.deliver/`
+  is untracked, so this path exists only in a working copy that has it)
 
 ## Architecture Summary
 
