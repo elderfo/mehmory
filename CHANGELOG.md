@@ -9,6 +9,8 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-03
+
 ### Fixed
 
 - **The Stop nudge asks for a silent save.** The block reason told the model what to save
@@ -124,6 +126,7 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/elderfo/mehmory/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/elderfo/mehmory/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/elderfo/mehmory/releases/tag/v0.1.0
