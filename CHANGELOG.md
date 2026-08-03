@@ -11,6 +11,11 @@ and a test enforces that they match.
 
 ### Fixed
 
+- **The Stop nudge asks for a silent save.** The block reason told the model what to save
+  but never how loudly. One session answered it mid-brainstorm by reciting all twelve saved
+  entries and appending a "where we left off" recap, which buried the dialogue it
+  interrupted. The reason now asks for the append and one short sentence — no list, no
+  recap, no status summary.
 - **Capture now has a retention decision.** The distill pattern list ended in a
   `user_message` catch-all that matched every user turn unconditionally, so the keyword
   patterns above it only chose a label — nothing anywhere in the pipeline decided whether a
