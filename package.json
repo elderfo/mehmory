@@ -1,11 +1,11 @@
 {
-  "name": "@elderfo/mehmory",
+  "name": "mehmory",
   "version": "0.2.1",
   "type": "module",
   "description": "Memory abstraction layer for Claude Code and Codex CLI",
   "license": "MIT",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "repository": {
     "type": "git",

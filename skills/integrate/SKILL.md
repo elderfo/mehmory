@@ -18,7 +18,7 @@ ls "$HOME_DIR"
 ```
 
 If `mehmory` is not on PATH, install it before doing anything else
-(`npm install -g @elderfo/mehmory`). **Do not proceed without it** — clearing the inbox
+(`npm install -g mehmory`). **Do not proceed without it** — clearing the inbox
 by hand loses entries captured mid-integrate.
 
 The project key is cached by the hooks in the newest session-state file:

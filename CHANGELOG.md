@@ -9,6 +9,19 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+### Changed
+
+- **The package is `mehmory` on npmjs, not `@elderfo/mehmory` on GitHub Packages.** GitHub
+  Packages has no anonymous read, so the documented install told every reader to mint a
+  `read:packages` token before they could try the tool — a private-repo arrangement that
+  outlived the private repo. Installing is now `npm install -g mehmory`, with no registry
+  configuration and no token. Releases authenticate with an `NPM_TOKEN` secret instead of the
+  workflow's `GITHUB_TOKEN`, and the release-workflow test asserts the old registry and scope
+  are absent rather than present, so a half-revert fails loudly.
+
+  Anyone on the old package should replace it:
+  `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
+
 ## [0.2.1] - 2026-08-03
 
 ### Fixed
