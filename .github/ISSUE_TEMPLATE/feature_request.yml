@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a change to how mehmory works
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mehmory is deliberately boring: git-backed markdown, no embeddings, no MCP server, no
+        external services. Proposals that keep it that way have a much better chance.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that mehmory makes hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should mehmory do instead? Include the command, config key, or hook it touches.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including doing nothing — what happens if this is not built?

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/elderfo/mehmory/blob/main/docs/TROUBLESHOOTING.md
+    about: Every error message mehmory emits, and what to do about it.
+  - name: Report a security vulnerability
+    url: https://github.com/elderfo/mehmory/security/advisories/new
+    about: Report privately — do not open a public issue.
