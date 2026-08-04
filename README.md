@@ -17,23 +17,22 @@ limits and how deletion works, and `docs/UPGRADE.md` for `schema_version` drift.
 This flow is ordered deliberately: **no step below claims mehmory knows something it can't
 yet know.** `onboard` seeds raw material into the inbox and a one-line stub `project.md` — it
 does not build the wiki. The wiki gets built by `/mehmory:integrate`, which is model-driven,
-in-session work. So the first session after onboarding sees only a stub; the session *after
-that first integrate* is the one where the project's memory is actually there waiting for
+in-session work. So the first session after onboarding sees only a stub; the session _after
+that first integrate_ is the one where the project's memory is actually there waiting for
 you. If you've read that mehmory's magical moment is "the very first session already knows
 your project" — that's wrong for this ordering, and this README is the corrected version.
 
 ### 1. Install
 
-The CLI publishes to GitHub Packages, not npmjs.org, so npm needs to be told where the
-`@elderfo` scope lives and given a GitHub token with `read:packages`:
-
 ```bash
-npm config set @elderfo:registry https://npm.pkg.github.com
-npm config set //npm.pkg.github.com/:_authToken <your-github-token>
-npm install -g @elderfo/mehmory
+npm install -g mehmory
 ```
 
-The token is required even for a public package — GitHub Packages has no anonymous read.
+Requires Node.js 22 or newer.
+
+> Earlier releases published to GitHub Packages as `@elderfo/mehmory`, which needed a
+> `read:packages` token from every installer. If you installed it that way, replace it:
+> `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
 
 Then wire mehmory into whichever harness (or both) you use. The two paths differ, because the
 harnesses themselves differ — pick the one for the harness you're setting up:

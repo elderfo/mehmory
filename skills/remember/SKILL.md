@@ -19,7 +19,7 @@ load. This skill exists for multi-fact saves and for when the user asks in prose
 HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
 ```
 
-If `mehmory` is not on PATH, install it first (`npm install -g @elderfo/mehmory`).
+If `mehmory` is not on PATH, install it first (`npm install -g mehmory`).
 
 Read the project key and the current session id from the newest session-state file:
 

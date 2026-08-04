@@ -5,16 +5,16 @@ it can't yet know.**
 
 ## 1. Install
 
-The CLI publishes to GitHub Packages, not npmjs.org, so npm needs to be told where the
-`@elderfo` scope lives and given a GitHub token with `read:packages`:
-
 ```bash
-npm config set @elderfo:registry https://npm.pkg.github.com
-npm config set //npm.pkg.github.com/:_authToken <your-github-token>
-npm install -g @elderfo/mehmory
+npm install -g mehmory
 ```
 
-The token is required even for a public package — GitHub Packages has no anonymous read.
+Requires Node.js 22 or newer.
+
+::: tip Upgrading from `@elderfo/mehmory`?
+Earlier releases published to GitHub Packages, which needed a `read:packages` token from
+every installer. Replace it with `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
+:::
 
 Then wire mehmory into your harness:
 
