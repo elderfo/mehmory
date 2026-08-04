@@ -9,6 +9,11 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04
+
+This is the first release published to npmjs.org, and the first one installable without a
+token. It is also the first release since the repository became public.
+
 ### Changed
 
 - **The package is `mehmory` on npmjs, not `@elderfo/mehmory` on GitHub Packages.** GitHub
@@ -21,6 +26,23 @@ and a test enforces that they match.
 
   Anyone on the old package should replace it:
   `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
+
+  `@elderfo/mehmory` stays published on GitHub Packages at 0.2.1 rather than being deleted —
+  removing it would break existing installs, and the README documents the switch. The
+  `@mehmory/mehmory` name on npmjs is a reservation stub containing no code; it exists so the
+  scope can't be claimed by someone else, and points at `mehmory`.
+
+### Added
+
+- **Contributor and security docs**, now that the repository is public: `CONTRIBUTING.md`,
+  `SECURITY.md` (private vulnerability reporting, with the secret filter named as the
+  security-relevant surface), `CODE_OF_CONDUCT.md`, issue forms, and a pull request template.
+
+### Security
+
+- **CI runs on fork pull requests**, so `ci.yml` declares `permissions: {}` at the workflow
+  level and `contents: read` on the job instead of inheriting the repository default. Secret
+  scanning, push protection, and Dependabot alerts are enabled on the repository.
 
 ## [0.2.1] - 2026-08-03
 
@@ -80,7 +102,7 @@ and a test enforces that they match.
   `/reload-plugins` echo or a `<local-command-stdout>` block as something the user said —
   an inbox, and eventually wiki pages, built from command transcripts. The envelope blocks
   are now stripped in place: `<command-args>` survives, because `/orchestrate <a whole
-  project brief>` puts real intent there, and so does prose the user typed after an echo in
+project brief>` puts real intent there, and so does prose the user typed after an echo in
   the same record.
 
 ### Known limitations
@@ -135,11 +157,12 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - Installing the CLI from GitHub Packages requires a GitHub token with `read:packages`;
   the registry has no anonymous read, even for a public package. See the README.
 - `project.md` only carries integrated content after the first `/mehmory:integrate`, so
-  the session that already knows your project is the *second* one, not the first.
+  the session that already knows your project is the _second_ one, not the first.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/elderfo/mehmory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/elderfo/mehmory/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/elderfo/mehmory/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/elderfo/mehmory/releases/tag/v0.1.0
