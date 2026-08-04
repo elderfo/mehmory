@@ -17,8 +17,8 @@ limits and how deletion works, and `docs/UPGRADE.md` for `schema_version` drift.
 This flow is ordered deliberately: **no step below claims mehmory knows something it can't
 yet know.** `onboard` seeds raw material into the inbox and a one-line stub `project.md` — it
 does not build the wiki. The wiki gets built by `/mehmory:integrate`, which is model-driven,
-in-session work. So the first session after onboarding sees only a stub; the session *after
-that first integrate* is the one where the project's memory is actually there waiting for
+in-session work. So the first session after onboarding sees only a stub; the session _after
+that first integrate_ is the one where the project's memory is actually there waiting for
 you. If you've read that mehmory's magical moment is "the very first session already knows
 your project" — that's wrong for this ordering, and this README is the corrected version.
 
@@ -30,7 +30,7 @@ npm install -g mehmory
 
 Requires Node.js 22 or newer.
 
-> Before 0.3.0 the CLI published to GitHub Packages as `@elderfo/mehmory`, which needed a
+> Earlier releases published to GitHub Packages as `@elderfo/mehmory`, which needed a
 > `read:packages` token from every installer. If you installed it that way, replace it:
 > `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
 

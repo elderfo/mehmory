@@ -12,7 +12,7 @@ npm install -g mehmory
 Requires Node.js 22 or newer.
 
 ::: tip Upgrading from `@elderfo/mehmory`?
-Before 0.3.0 the CLI published to GitHub Packages, which needed a `read:packages` token from
+Earlier releases published to GitHub Packages, which needed a `read:packages` token from
 every installer. Replace it with `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
 :::
 
