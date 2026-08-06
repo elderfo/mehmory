@@ -68,15 +68,19 @@ function jobBlock(source: string, jobName: string): string {
 describe('release workflow — publish-npm targets npmjs', () => {
   const source = loadWorkflow();
 
-  it('build-tag exists and force-adds the built hook bundles into the tagged tree', () => {
-    const block = jobBlock(source, 'build-tag');
-    expect(block).toMatch(/git add -f hooks\/\*\.mjs/);
-    expect(block).toMatch(/git push origin "\$GITHUB_REF_NAME" --force/);
+  it('no longer force-adds hook bundles onto the tag — they ship on the branch', () => {
+    // Inverted rather than deleted, same as the GitHub Packages assertions above. The
+    // force-add job built `hooks/*.mjs`, committed them onto the `v*` tag and force-pushed
+    // it. The tag was correct and irrelevant: the marketplace clones the default branch,
+    // so the bundles never reached an install. They are committed on `main` now (A25),
+    // and the tag inherits them. A reappearance of this job means the outage is back.
+    expect(source).not.toMatch(/git add -f hooks/);
+    expect(source).not.toMatch(/--force/);
+    expect(source).not.toContain('build-tag');
   });
 
-  it('build-tag has contents: write permission for its force-push', () => {
-    const block = jobBlock(source, 'build-tag');
-    expect(block).toMatch(/permissions:\s*\n\s*contents:\s*write/);
+  it('needs no contents: write anywhere — nothing pushes back to the repo', () => {
+    expect(source).not.toMatch(/contents:\s*write/);
   });
 
   it("publish-npm's job-level if: names the tag ref and never references secrets", () => {

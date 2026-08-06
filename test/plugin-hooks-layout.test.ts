@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { HOOKS_DIR } from './hook-fixture.js';
@@ -50,6 +50,34 @@ describe('plugin hooks layout', () => {
         `node \${CLAUDE_PLUGIN_ROOT}/hooks/${expected.script} ${expected.host}`
       );
       expect(existsSync(join(HOOKS_DIR, expected.script)), expected.script).toBe(true);
+    }
+  });
+
+  it('commits every bundle to git, so a marketplace clone of the branch has them', () => {
+    // The one assertion that would have caught the 0.3.0 outage. `existsSync` above is
+    // satisfied by any local `pnpm build`, but the plugin marketplace does not build —
+    // it clones this repo's default branch and copies the tree. While `/hooks/*.mjs`
+    // was gitignored, every installed plugin got a hooks.json registering five commands
+    // whose files were absent, and all five hooks died with MODULE_NOT_FOUND. Tracked-ness
+    // is the real contract; presence on disk is not (A25 in docs/WORLD_MODEL.md).
+    const tracked = spawnSync('git', ['ls-files', '--', 'hooks/*.mjs'], {
+      cwd: process.cwd(),
+      encoding: 'utf-8',
+    });
+    expect(tracked.status, tracked.stderr).toBe(0);
+    const trackedNames = new Set(
+      tracked.stdout
+        .split('\n')
+        .filter(Boolean)
+        .map(p => p.slice('hooks/'.length))
+    );
+
+    // Every .mjs the build emits, not just the five entrypoints: the entrypoints import
+    // shared `chunk-*.mjs` siblings, so an untracked chunk breaks them just as completely.
+    const onDisk = readdirSync(HOOKS_DIR).filter(f => f.endsWith('.mjs'));
+    expect(onDisk.length).toBeGreaterThan(0);
+    for (const file of onDisk) {
+      expect(trackedNames.has(file), `hooks/${file} is not tracked by git`).toBe(true);
     }
   });
 

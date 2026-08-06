@@ -399,3 +399,40 @@ working forever; the constant is one edit away if that changes).
 
 **WORLD_MODEL check.** This amendment extends A7 and upholds A21 — the floor is a module
 constant, not ambient state, and reads no environment.
+
+### A25. Built hook bundles are committed on the default branch
+
+`hooks/*.mjs` is build output, and it is committed anyway. The plugin marketplace resolves
+`.claude-plugin/marketplace.json`'s `"source": "./"` by cloning this repo and copying the
+**default branch** — not the release tag, not the npm tarball. Whatever `main` does not
+carry, the installed plugin does not have.
+
+The original arrangement gitignored the bundles on `main` and had `release.yml` force-add
+them onto the `v*` tag. The tag was correct — `git ls-tree v0.3.0 -- hooks` lists all six
+bundles — and it never mattered: installs recorded `main`'s HEAD, so `hooks.json`
+registered five commands whose target files did not exist. Every hook died with
+`MODULE_NOT_FOUND` and exit 1, which the host surfaces as a hook failure rather than as a
+missing plugin, so the store simply stayed empty and silent.
+
+This is the standard failure mode for a git-distributed plugin: the artifact the host
+loads is the tree on a branch, so the branch is the distribution channel. npm is a second
+channel with different mechanics (`files` + a `prepublish` build), and it was already
+working; the two do not share an artifact path and cannot share one.
+
+**Committed build output goes stale.** That is the real cost here, and it is paid in CI:
+`ci.yml` rebuilds and fails if `git status --porcelain -- hooks/` is non-empty. The
+bundles are content-addressed and reproducible — an independent tag build and a local
+build produced identical `chunk-Q3XCVOKA.mjs` / `chunk-RODSLL2D.mjs` — so the check is
+deterministic rather than flaky.
+
+**Rejected:** *A dedicated release branch pointed at by `marketplace.json`* — moves the
+same artifacts into a branch that no one reviews, and buys cleanliness on `main` at the
+cost of a second publishing path to keep honest. *Building on install* — plugin hooks run
+as bare commands with no install step, and a first-run `pnpm install` inside a hook is
+both slow and a network dependency on the session-start path. *Shipping only via npm and
+dropping the marketplace* — the marketplace install is the documented entry point and
+requires no Node toolchain from the user.
+
+**WORLD_MODEL check.** Upholds A12 (bundles stay thin adapters over `src/core`; committing
+them changes distribution, not layering) and A17 (the CLI's `dist/` stays gitignored — it
+reaches users through npm's `bin`, which the marketplace clone never provides).
