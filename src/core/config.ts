@@ -221,8 +221,15 @@ export function loadConfig(): MehmoryConfig {
 }
 
 /**
+ * Keys that reach an object's prototype rather than the object itself. A merge that
+ * copies them from parsed JSON writes into shared state instead of the config.
+ */
+const POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
  * Deep merge source into target, recursively.
  * Target is mutated. Handles nested objects; arrays are replaced (not merged).
+ * Prototype-reaching keys are dropped — see POLLUTING_KEYS.
  */
 function deepMerge(
   target: Record<string, unknown>,
@@ -230,13 +237,21 @@ function deepMerge(
 ): Record<string, unknown> {
   for (const key in source) {
     if (Object.prototype.hasOwnProperty.call(source, key)) {
+      // config.json is user-writable and `JSON.parse` turns `__proto__` into a real own
+      // enumerable property, so without this the assignment below wrote through to
+      // `Object.prototype` and poisoned every object in the process. No legitimate config
+      // key is spelled this way, so refusing them costs nothing.
+      if (POLLUTING_KEYS.has(key)) continue;
+
       const sourceValue = source[key];
 
       if (
         sourceValue !== null &&
         typeof sourceValue === 'object' &&
         !Array.isArray(sourceValue) &&
-        key in target &&
+        // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so an inherited
+        // member would steer the recursion into a shared object rather than the config.
+        Object.prototype.hasOwnProperty.call(target, key) &&
         typeof target[key] === 'object' &&
         target[key] !== null &&
         !Array.isArray(target[key])

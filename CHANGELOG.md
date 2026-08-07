@@ -9,6 +9,57 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every hook was dead in any plugin install.** `hooks.json` registered five commands
+  pointing at `hooks/*.mjs` bundles that were not in the installed plugin, so all five hooks
+  — SessionStart, UserPromptSubmit, Stop, PreCompact, SessionEnd — exited 1 with
+  `MODULE_NOT_FOUND`. Nothing was captured, nothing was injected, and because the host
+  reports that as a hook failure rather than a broken plugin, it looked like memory was
+  simply empty.
+
+  The bundles were gitignored on `main`, and `release.yml` force-added them onto the `v*`
+  tag to compensate. The tag was correct — `v0.3.0` carries all six files — and it never
+  reached anyone: the plugin marketplace clones the repository's **default branch**, not the
+  tag, so installs recorded `main`'s HEAD and got a `hooks/` directory containing only
+  `hooks.json`.
+
+  `hooks/*.mjs` is now committed on `main` (A25 in `docs/WORLD_MODEL.md`) and the tag
+  inherits it. Committed build output can go stale, so CI rebuilds and fails if `hooks/`
+  differs by a byte; the bundles are content-addressed and reproduce identically across
+  machines, so that gate is deterministic. A test now asserts each bundle is **tracked by
+  git** rather than merely present on disk — the previous `existsSync` check was satisfied by
+  any local `pnpm build`, which is why the outage shipped.
+
+  Upgrading requires a new release: reinstall the plugin once `0.3.1` is tagged. `dist/`
+  stays gitignored, because a marketplace install never puts the `mehmory` CLI on `PATH`
+  regardless — that surface is npm's.
+
+### Security
+
+- **A crafted `config.json` could poison every object in the process.** `JSON.parse` turns
+  `__proto__` into a real own enumerable property, and the config merge treated it as
+  ordinary data — `'__proto__' in target` is true through the prototype chain, so the
+  recursion wrote straight into `Object.prototype`. Since config is merged into defaults on
+  every hook run, one poisoned file leaked a property onto every object mehmory touched.
+  Prototype-reaching keys (`__proto__`, `constructor`, `prototype`) are now dropped, and the
+  merge tests own-property membership instead of walking the chain.
+
+- **Inbox text ending a comment early.** `serializeInboxEntry` neutralized `-->` but not
+  `--!>`, which HTML also accepts as a comment terminator, leaving one spelling live in text
+  written into a markdown file. Both are escaped now, reversibly — a round-trip still returns
+  the user's exact words.
+
+  Both were surfaced by CodeQL against the newly committed bundles and fixed at the source
+  rather than suppressed, so the pre-existing alerts on `src/schema/format.ts` and
+  `src/core/config.ts` clear too.
+
+### Removed
+
+- **The `build-tag` release job**, along with the workflow's write access to repository
+  contents. It existed only to force-push bundles onto the tag; with them on the branch it
+  has nothing left to do, and `release.yml` no longer needs a token that can rewrite refs.
+
 ## [0.3.0] - 2026-08-04
 
 This is the first release published to npmjs.org, and the first one installable without a

@@ -61,8 +61,11 @@ mehmory/
 │           ├── purge.ts       # (C2)
 │           └── inbox-tx.ts    # run-4: `mehmory inbox-tx` — same append/snapshot/clear contract as
 │                               # hooks/inbox-tx.mjs, via src/core/inbox-tx.ts (issue #17)
-├── hooks/                     # run 2: plugin hook dir — committed hooks.json plus
-│                               # gitignored *.mjs bundles built from src/hooks/*.ts (B)
+├── hooks/                     # run 2: plugin hook dir — hooks.json plus the *.mjs bundles
+│                               # built from src/hooks/*.ts (B). Bundles are COMMITTED, not
+│                               # gitignored: the marketplace installs from the default
+│                               # branch (A25). Rebuild with `pnpm build` and commit; CI fails
+│                               # if hooks/ drifts from a clean build.
 ├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
 ├── .claude-plugin/            # run 2: plugin.json manifest (C); run-3: marketplace metadata (X)
@@ -78,9 +81,9 @@ mehmory/
 │   ├── ISSUE_TEMPLATE/        # bug_report.yml, feature_request.yml, config.yml (blank issues
 │   │                           # off; links to TROUBLESHOOTING.md and private vuln reporting)
 │   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
-│   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR),
-│                               # release.yml (v* tag → build → force-add hooks/*.mjs into the
-│                               # tagged tree; npm publish job inert this run) (X);
+│   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR,
+│                               # plus a hooks/ bundle-drift gate — A25);
+│                               # release.yml (v* tag → build → npm publish) (X);
 │                               # pages.yml (site/** on main → vitepress build → Pages deploy)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
@@ -107,7 +110,7 @@ mehmory/
 ├── eslint.config.js             # Flat config + custom rules (A); run-2: full strictTypeChecked, hooks/ ignored (D)
 ├── .prettierrc                 # Code formatting (A)
 ├── .husky/                     # Pre-commit hooks: lint, test, typecheck (A, D)
-├── .gitignore                  # node_modules, dist, .deliver/, /hooks/*.mjs (D)
+├── .gitignore                  # node_modules, dist, .deliver/ (D). NOT /hooks/*.mjs — A25
 ├── LICENSE                     # run 3: MIT, Christopher Freddy Getsfred (X)
 ├── README.md                   # run 3: "First 5 Minutes" quickstart (X)
 ├── CONTRIBUTING.md             # setup, local checks, conventions for outside contributors

@@ -43,6 +43,23 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The hook bundles under `hooks/*.mjs` are committed, not gitignored, because the
+      # plugin marketplace installs from this repo's default branch (A25 in
+      # docs/WORLD_MODEL.md). Committed build output goes stale silently, so the build
+      # above must reproduce the committed bytes exactly. `git status --porcelain` is
+      # used rather than `git diff --exit-code` on purpose: it also catches a *new*
+      # content-hashed `chunk-*.mjs`, which `git diff` ignores as untracked, and a
+      # committed chunk the build no longer emits, which shows up as a deletion.
+      - name: Check committed hook bundles are up to date
+        run: |
+          if [ -n "$(git status --porcelain -- hooks/)" ]; then
+            echo "::error::hooks/ differs from a clean build of src/hooks/*.ts."
+            echo "Run 'pnpm build' and commit the resulting hooks/*.mjs."
+            git status --porcelain -- hooks/
+            git diff -- hooks/ | head -100
+            exit 1
+          fi
+
       - name: Lint
         run: pnpm lint
 

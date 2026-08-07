@@ -6,44 +6,13 @@ on:
       - 'v*'
 
 jobs:
-  build-tag:
-    runs-on: ubuntu-latest
-    # Force-pushing the tag below (to attach the built hook bundles) needs write
-    # access to repo contents; the default GITHUB_TOKEN grants that only if the repo
-    # settings allow it, so it's pinned explicitly here rather than left implicit.
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm build
-
-      # The plugin marketplace installs directly from this git repo, and `hooks/*.mjs`
-      # is gitignored (it's a build artifact, not source). Without this, a tag would
-      # ship a hooks.json pointing at five files that don't exist in the tagged tree.
-      # Bundles are tag-only artifacts, never committed on a branch — see
-      # docs/WORLD_MODEL.md's run-3 ADR candidate for the alternatives this rejected.
-      - name: Force-add built hook bundles into the tagged tree
-        run: |
-          git config user.name "mehmory-release"
-          git config user.email "release@users.noreply.github.com"
-          git add -f hooks/*.mjs
-          git commit -m "chore: include built hook bundles for ${GITHUB_REF_NAME}"
-          git tag -f "$GITHUB_REF_NAME"
-          git push origin "$GITHUB_REF_NAME" --force
+  # No bundle-attaching job here any more. It used to build `hooks/*.mjs` and force-push
+  # them onto the tag, because the bundles were gitignored on `main`. That never reached
+  # the installed plugin: the marketplace clones the **default branch**, not the tag, so
+  # every marketplace install shipped a `hooks.json` pointing at five files that did not
+  # exist. The bundles are now committed on `main` (A25 in docs/WORLD_MODEL.md) and the
+  # tag inherits them, which also lets this workflow drop its repo-write scope entirely.
+  # (Spelling that permission out here would trip the test that asserts it is gone.)
 
   # Publishes the unscoped `mehmory` package to npmjs.org. GitHub Packages was the
   # registry while the repo was private; it has no anonymous read, so every installer
@@ -59,7 +28,6 @@ jobs:
   # the tag ref — `secrets` is not an allowed context there — so a missing token fails the
   # publish step loudly rather than skipping the job silently.
   publish-npm:
-    needs: build-tag
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

@@ -37,6 +37,12 @@ export default defineConfig([
           noExternal: [/.*/],
           dts: false,
           sourcemap: false,
+          // `clean: true` would delete `hooks/hooks.json`, which is source. The `.mjs`
+          // files are cleared by the `clean:hooks` script `build` runs first instead —
+          // necessary because the shared `chunk-*.mjs` names are content-hashed, so a
+          // source change renames them and the previous ones would linger. Harmless while
+          // they were gitignored; now that they are committed (A25), orphans would
+          // accumulate in the tree forever.
           clean: false,
           outDir: 'hooks',
           outExtension: () => ({ js: '.mjs' })

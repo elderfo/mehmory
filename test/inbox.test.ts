@@ -59,6 +59,26 @@ describe('inbox entry format (A14)', () => {
     expect(parseInboxEntries(line)[0]?.text).toBe('watch out for --> arrows');
   });
 
+  it('neutralizes the `--!>` comment terminator too, not just `-->`', () => {
+    // HTML closes a comment on `--!>` as well as `-->`. Escaping only the latter left a
+    // second terminator live in text mehmory writes into a markdown file, which is what
+    // CodeQL's js/bad-tag-filter flags. Round-tripping is the binding half: neutralizing
+    // by dropping characters would silently corrupt the user's own words.
+    const line = serializeInboxEntry(entry('watch out for --!> arrows', 'seed-bang'));
+
+    expect(line).toMatch(INBOX_ENTRY_PATTERN);
+    expect(line.slice(0, line.indexOf(' <!--mehmory'))).not.toContain('--!>');
+    expect(parseInboxEntries(line)[0]?.text).toBe('watch out for --!> arrows');
+  });
+
+  it('round-trips text carrying both terminator spellings at once', () => {
+    const text = 'a --> b --!> c';
+    const line = serializeInboxEntry(entry(text, 'seed-both'));
+
+    expect(line).toMatch(INBOX_ENTRY_PATTERN);
+    expect(parseInboxEntries(line)[0]?.text).toBe(text);
+  });
+
   it('ignores non-entry lines so the inbox stays human-editable', () => {
     const content = [
       '---',
