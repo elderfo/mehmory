@@ -37,9 +37,11 @@ never ran — reinstall the plugin to pick this up.
   git** rather than merely present on disk — the previous `existsSync` check was satisfied by
   any local `pnpm build`, which is why the outage shipped.
 
-  Upgrading requires a new release: reinstall the plugin once `0.3.1` is tagged. `dist/`
-  stays gitignored, because a marketplace install never puts the `mehmory` CLI on `PATH`
-  regardless — that surface is npm's.
+  The two distribution paths update at different moments. **Plugin users reinstall to pick
+  this up as soon as it is on `main`** — the marketplace installs from the default branch, so
+  no tag is involved, which is the whole point of the change. The npm package still updates
+  on the `v0.3.1` tag. `dist/` stays gitignored, because a marketplace install never puts the
+  `mehmory` CLI on `PATH` regardless — that surface is npm's.
 
 ### Security
 
