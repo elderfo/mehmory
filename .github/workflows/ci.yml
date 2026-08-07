@@ -48,8 +48,8 @@ jobs:
       # docs/WORLD_MODEL.md). Committed build output goes stale silently, so the build
       # above must reproduce the committed bytes exactly. `git status --porcelain` is
       # used rather than `git diff --exit-code` on purpose: it also catches a *new*
-      # content-hashed `chunk-*.mjs` that `git diff` would ignore as untracked, and a
-      # stale one left behind by the hooks build's `clean: false`.
+      # content-hashed `chunk-*.mjs`, which `git diff` ignores as untracked, and a
+      # committed chunk the build no longer emits, which shows up as a deletion.
       - name: Check committed hook bundles are up to date
         run: |
           if [ -n "$(git status --porcelain -- hooks/)" ]; then

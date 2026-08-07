@@ -199,14 +199,19 @@ export function inboxEntryId(seed: string): string {
  *
  * Embedded newlines are JSON-escaped (`\n` → `\\n`) so the one-line invariant holds
  * before the record reaches `appendRecord`, whose escape pass is then a no-op.
- * Carriage returns are dropped; the trailing `-->` sequence in the text would break
- * the comment, so it is neutralized.
+ * Carriage returns are dropped; a comment terminator in the text would break the
+ * comment, so it is neutralized.
+ *
+ * Both spellings are neutralized: HTML ends a comment on `--!>` as well as `-->`, and
+ * escaping only the latter left the other one live (CodeQL js/bad-tag-filter). The
+ * optional `!` is captured and replayed so the escape stays reversible — `parseInboxEntries`
+ * undoes exactly this, and losing a character here would corrupt the user's own words.
  */
 export function serializeInboxEntry(entry: InboxEntry): string {
   const text = entry.text
     .replace(/\r/g, '')
     .replace(/\n/g, '\\n')
-    .replace(/-->/g, '--\\>')
+    .replace(/--(!?)>/g, '--$1\\>')
     .trim();
   const host = entry.host ?? DEFAULT_INBOX_HOST;
   return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
@@ -234,7 +239,7 @@ export function parseInboxEntries(content: string): InboxEntry[] {
         : DEFAULT_INBOX_HOST;
     entries.push({
       id,
-      text: text.replace(/--\\>/g, '-->').replace(/\\n/g, '\n'),
+      text: text.replace(/--(!?)\\>/g, '--$1>').replace(/\\n/g, '\n'),
       src,
       host,
       ts,

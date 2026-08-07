@@ -50,7 +50,8 @@
     "./distill/distill": "./dist/distill/distill.js"
   },
   "scripts": {
-    "build": "tsup",
+    "clean:hooks": "node -e \"const fs=require('node:fs');for(const f of fs.readdirSync('hooks'))if(f.endsWith('.mjs'))fs.rmSync('hooks/'+f)\"",
+    "build": "pnpm run clean:hooks && tsup",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

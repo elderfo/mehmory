@@ -467,11 +467,15 @@ function loadConfig() {
   );
   return merged;
 }
+var POLLUTING_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
 function deepMerge(target, source) {
   for (const key in source) {
     if (Object.prototype.hasOwnProperty.call(source, key)) {
+      if (POLLUTING_KEYS.has(key)) continue;
       const sourceValue = source[key];
-      if (sourceValue !== null && typeof sourceValue === "object" && !Array.isArray(sourceValue) && key in target && typeof target[key] === "object" && target[key] !== null && !Array.isArray(target[key])) {
+      if (sourceValue !== null && typeof sourceValue === "object" && !Array.isArray(sourceValue) && // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so an inherited
+      // member would steer the recursion into a shared object rather than the config.
+      Object.prototype.hasOwnProperty.call(target, key) && typeof target[key] === "object" && target[key] !== null && !Array.isArray(target[key])) {
         deepMerge(
           target[key],
           sourceValue
@@ -625,7 +629,7 @@ function inboxEntryId(seed) {
   return createHash2("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }
 function serializeInboxEntry(entry) {
-  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/-->/g, "--\\>").trim();
+  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
   const host = entry.host ?? DEFAULT_INBOX_HOST;
   return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
 }
@@ -641,7 +645,7 @@ function parseInboxEntries(content) {
     const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
     entries.push({
       id,
-      text: text.replace(/--\\>/g, "-->").replace(/\\n/g, "\n"),
+      text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
       src,
       host,
       ts

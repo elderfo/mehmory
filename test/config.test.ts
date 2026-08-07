@@ -28,6 +28,30 @@ describe('loadConfig', () => {
     }
   });
 
+  it('cannot be made to pollute Object.prototype from config.json', () => {
+    // `JSON.parse` makes `__proto__` a real own enumerable property, so the merge saw it
+    // as ordinary data: `'__proto__' in target` is true via the prototype chain, and the
+    // recursion then wrote straight into `Object.prototype`. config.json is user-writable
+    // and merged into defaults on every hook run, so one poisoned file would have leaked
+    // a property onto every object in the process (CodeQL js/prototype-pollution-utility).
+    // Written as raw JSON on purpose: in an object literal `__proto__:` invokes the
+    // prototype setter and JSON.stringify would never emit the key, so a stringified
+    // fixture silently tests nothing. `JSON.parse` is what makes it an own property.
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      '{"__proto__": {"polluted": "yes"}, "constructor": {"polluted": "yes"}}'
+    );
+
+    try {
+      expect(() => loadConfig()).not.toThrow();
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(Object.prototype).not.toHaveProperty('polluted');
+    } finally {
+      // A failure here must not poison the rest of the suite.
+      delete (Object.prototype as Record<string, unknown>).polluted;
+    }
+  });
+
   it('detects missing config.json and returns full defaults without throwing', () => {
     const configPath = join(tempDir, 'config.json');
 

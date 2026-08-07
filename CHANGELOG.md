@@ -35,6 +35,25 @@ and a test enforces that they match.
   stays gitignored, because a marketplace install never puts the `mehmory` CLI on `PATH`
   regardless — that surface is npm's.
 
+### Security
+
+- **A crafted `config.json` could poison every object in the process.** `JSON.parse` turns
+  `__proto__` into a real own enumerable property, and the config merge treated it as
+  ordinary data — `'__proto__' in target` is true through the prototype chain, so the
+  recursion wrote straight into `Object.prototype`. Since config is merged into defaults on
+  every hook run, one poisoned file leaked a property onto every object mehmory touched.
+  Prototype-reaching keys (`__proto__`, `constructor`, `prototype`) are now dropped, and the
+  merge tests own-property membership instead of walking the chain.
+
+- **Inbox text ending a comment early.** `serializeInboxEntry` neutralized `-->` but not
+  `--!>`, which HTML also accepts as a comment terminator, leaving one spelling live in text
+  written into a markdown file. Both are escaped now, reversibly — a round-trip still returns
+  the user's exact words.
+
+  Both were surfaced by CodeQL against the newly committed bundles and fixed at the source
+  rather than suppressed, so the pre-existing alerts on `src/schema/format.ts` and
+  `src/core/config.ts` clear too.
+
 ### Removed
 
 - **The `build-tag` release job**, along with the workflow's write access to repository
