@@ -9,6 +9,12 @@ and a test enforces that they match.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-07
+
+The first release whose plugin installs actually work. Every 0.x release before this one
+shipped a `hooks.json` pointing at bundles that were not in the installed tree, so the hooks
+never ran — reinstall the plugin to pick this up.
+
 ### Fixed
 
 - **Every hook was dead in any plugin install.** `hooks.json` registered five commands
@@ -212,7 +218,8 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/elderfo/mehmory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/elderfo/mehmory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/elderfo/mehmory/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/elderfo/mehmory/compare/v0.1.0...v0.2.0
