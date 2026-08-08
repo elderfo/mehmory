@@ -8,6 +8,11 @@ server, no external services.
 
 Website: <https://elderfo.github.io/mehmory/> — the pitch, the quickstart, and how it works.
 
+mehmory ships a portable Agent Plugins v1.0.0 package: the root `plugin.json` and `skills/`
+directory are client-neutral. Claude Code is supported through its compatibility manifest in
+`.claude-plugin/` and the bundled lifecycle hooks; Codex CLI uses the same skills plus its
+native hook installation path.
+
 See `docs/CLI.md` for the full command reference, `docs/CONFIG.md` for every config key,
 `docs/TROUBLESHOOTING.md` for error messages, `docs/PRIVACY.md` for the secret filter's
 limits and how deletion works, and `docs/UPGRADE.md` for `schema_version` drift.

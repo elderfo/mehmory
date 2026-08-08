@@ -46,8 +46,10 @@ describe('plugin skills layout', () => {
   it.each(SKILLS)('skills/%s/SKILL.md has the required frontmatter', name => {
     const fields = frontmatter(bodies.get(name) as string);
     expect(fields['name']).toBe(name);
+    expect(fields['name']).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
     expect(fields['description']?.length).toBeGreaterThan(40);
     expect(fields['allowed-tools']?.length).toBeGreaterThan(0);
+    expect(fields['allowed-tools']).not.toContain(',');
   });
 
   it('remember names the `remember:` prompt prefix in its description', () => {
@@ -115,17 +117,69 @@ describe('plugin skills layout', () => {
 });
 
 describe('plugin manifest', () => {
-  it('parses, is named mehmory, and tracks the package version', () => {
-    const manifest = JSON.parse(readFileSync(resolve('.claude-plugin/plugin.json'), 'utf-8')) as {
+  it('ships a canonical Agent Plugins v1 manifest at the package root', () => {
+    const manifest = JSON.parse(readFileSync(resolve('plugin.json'), 'utf-8')) as {
+      $schema: string;
       name: string;
       version: string;
       description: string;
+      author: { name: string };
+      homepage: string;
+      repository: string;
+      license: string;
+      keywords: string[];
     };
     const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as { version: string };
+    const version = readFileSync(resolve('VERSION'), 'utf-8').trim();
 
+    expect(manifest.$schema).toBe(
+      'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json'
+    );
     expect(manifest.name).toBe('mehmory');
+    expect(manifest.version).toBe(version);
     expect(manifest.version).toBe(pkg.version);
     expect(manifest.description.length).toBeGreaterThan(20);
+    expect(manifest.author).toEqual({ name: 'Christopher Freddy Getsfred' });
+    expect(manifest.license).toBe('MIT');
+    expect(manifest.keywords).toContain('plugin');
+    expect(Object.keys(manifest).sort()).toEqual(
+      [
+        '$schema',
+        'author',
+        'description',
+        'homepage',
+        'keywords',
+        'license',
+        'name',
+        'repository',
+        'version',
+      ].sort()
+    );
+    expect(manifest.name).toMatch(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
+    expect(manifest.name).not.toMatch(/--|\.\./);
+  });
+
+  it('keeps the Claude Code manifest in sync with the portable manifest', () => {
+    const portable = JSON.parse(readFileSync(resolve('plugin.json'), 'utf-8')) as Record<
+      string,
+      unknown
+    >;
+    const claude = JSON.parse(
+      readFileSync(resolve('.claude-plugin/plugin.json'), 'utf-8')
+    ) as Record<string, unknown>;
+
+    for (const field of [
+      'name',
+      'version',
+      'description',
+      'author',
+      'homepage',
+      'repository',
+      'license',
+      'keywords',
+    ]) {
+      expect(claude[field], field).toEqual(portable[field]);
+    }
   });
 
   // Issue #25: measured live against Codex CLI 0.146.0 — `codex plugin marketplace add`

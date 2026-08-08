@@ -1,7 +1,7 @@
 ---
 name: lint
 description: Full-sweep health check of the mehmory wiki under ~/.mehmory — staleness, orphan pages, contradictions across pages, and archive candidates. Reports everything first and applies only the fixes the user approves. Use when the user asks to lint, audit, clean up, or check memory. Writes to ~/.mehmory (outside the project), so Claude Code may prompt for permission on the apply step; the report itself is read-only.
-allowed-tools: Read, Edit, Bash, Glob, Grep
+allowed-tools: Read Edit Bash Glob Grep
 ---
 
 # Lint

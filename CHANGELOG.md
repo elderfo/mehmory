@@ -4,10 +4,27 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-`package.json` is the canonical version source; `.claude-plugin/plugin.json` mirrors it
-and a test enforces that they match.
+`VERSION` is the canonical version source; `package.json`, `plugin.json`, and
+`.claude-plugin/plugin.json` mirror it and tests enforce that they match.
 
 ## [Unreleased]
+
+### Added
+
+- **Portable Agent Plugins packaging.** The root `plugin.json` and `skills/` directory now
+  expose the Agent Plugins v1.0.0 surface while preserving Claude Code's compatibility
+  manifest and lifecycle hooks.
+
+### Changed
+
+- **Skill metadata is portable across clients.** Skill `allowed-tools` values now use the
+  Agent Skills space-separated format, and the generated hook chunks are tracked so clean
+  marketplace checkouts contain every runtime bundle.
+
+### Security
+
+- **Skills no longer install npm packages implicitly.** Missing `mehmory` binaries now stop
+  with an explicit installation request instead of running an unpinned global install.
 
 ## [0.3.1] - 2026-08-07
 

@@ -68,7 +68,8 @@ mehmory/
 │                               # if hooks/ drifts from a clean build.
 ├── skills/                    # run 2: plugin skills — integrate, lint, onboard-session,
 │                               # remember, pause, resume (C)
-├── .claude-plugin/            # run 2: plugin.json manifest (C); run-3: marketplace metadata (X)
+├── plugin.json                # Agent Plugins v1 portable manifest
+├── .claude-plugin/            # Claude Code compatibility manifest + marketplace metadata
 ├── site/                      # VitePress marketing + docs site, deployed to GitHub Pages.
 │   │                           # Hype/landing content only — deep reference stays in docs/*.md
 │   │                           # and is linked out to, never mirrored here.
@@ -170,7 +171,7 @@ reuse A–F; check the run's plan doc for which is which).
 - **B — hooks**: `src/hooks/{session-start,user-prompt-submit,stop,pre-compact,session-end}.ts`,
   `hooks/hooks.json`, `test/hooks-*.test.ts`, `test/plugin-hooks-layout.test.ts`.
 
-- **C — skills + packaging + amendments**: `skills/*/SKILL.md`, `.claude-plugin/plugin.json`,
+- **C — skills + packaging + amendments**: `skills/*/SKILL.md`, `plugin.json`, `.claude-plugin/plugin.json`,
   `src/hooks/inbox-tx.ts`, `test/inbox-tx.test.ts`, `test/plugin-skills-layout.test.ts`,
   `assets/SCHEMA.md` additions, spec `## Run-2 amendments`, `docs/WORLD_MODEL.md` A12–A16.
 
@@ -200,7 +201,7 @@ runs reuse A–F/D–C; check the run's plan doc for which is which).
   `src/core/onboard.ts`.
 - **X — docs, CI, amendments.** `README.md`, `docs/{CLI,TROUBLESHOOTING,
   PRIVACY,CONFIG,UPGRADE}.md`, `LICENSE`, `.github/workflows/{ci,release}.yml`,
-  `.claude-plugin/plugin.json` metadata, the spec's KPI rewrite and
+  `plugin.json` / `.claude-plugin/plugin.json` metadata, the spec's KPI rewrite and
   `## Run-3 amendments`, `docs/WORLD_MODEL.md` A17–A21, this file's run-3 sections.
 - **Integration unit.** Merges the tails; owns the bidirectional docs↔binary
   consistency test and `test/quickstart.test.ts` — both spawn `dist/cli.mjs`, which does

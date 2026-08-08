@@ -436,3 +436,15 @@ requires no Node toolchain from the user.
 **WORLD_MODEL check.** Upholds A12 (bundles stay thin adapters over `src/core`; committing
 them changes distribution, not layering) and A17 (the CLI's `dist/` stays gitignored — it
 reaches users through npm's `bin`, which the marketplace clone never provides).
+
+### A26. Portable Agent Plugins manifest with Claude compatibility
+
+The repository ships the Agent Plugins v1.0.0 manifest at the package root as `plugin.json`.
+The `skills/` tree is the portable component surface: each immediate child contains an Agent
+Skills-compliant `SKILL.md`. Claude Code remains supported through its required legacy
+`.claude-plugin/plugin.json` manifest and root `hooks/` configuration; those files are kept in
+sync with the portable metadata and are not presented as portable Agent Plugins components.
+
+**Rejected:** Removing `.claude-plugin/` and `hooks/` in favor of the portable manifest alone —
+Agent Plugins v1 standardizes skills and MCP servers, while Claude Code still owns its plugin
+manifest and lifecycle-hook conventions.
