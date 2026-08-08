@@ -1,7 +1,7 @@
 ---
 name: integrate
 description: Merge captured mehmory inbox entries into the wiki pages under ~/.mehmory — editing pages, links, index lines and frontmatter, then clearing the inbox transactionally and committing. Use when the SessionStart nudge says the inbox is over threshold, or whenever the user asks to integrate, process, or file memory. Writes to ~/.mehmory (outside the project), so Claude Code may prompt for permission; if writes are denied nothing is lost — entries stay in the inbox for the next pass.
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+allowed-tools: Read Write Edit Bash Glob Grep
 ---
 
 # Integrate
@@ -17,9 +17,9 @@ HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
 ls "$HOME_DIR"
 ```
 
-If `mehmory` is not on PATH, install it before doing anything else
-(`npm install -g mehmory`). **Do not proceed without it** — clearing the inbox
-by hand loses entries captured mid-integrate.
+If `mehmory` is not on PATH, stop and ask the user to install it explicitly before doing
+anything else. **Do not install packages from this skill** — clearing the inbox by hand
+loses entries captured mid-integrate.
 
 The project key is cached by the hooks in the newest session-state file:
 

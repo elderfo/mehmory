@@ -22,6 +22,8 @@
     "hooks",
     "skills",
     "assets",
+    "VERSION",
+    "plugin.json",
     ".claude-plugin"
   ],
   "exports": {

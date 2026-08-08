@@ -1,7 +1,7 @@
 ---
 name: resume
 description: Turn mehmory capture and injection back on for this session after /mehmory:pause. Use when the user says resume memory, unpause, or start capturing again. Clears one flag under ~/.mehmory/.state (outside the project), so Claude Code may prompt for permission. It never re-enables a hook that was switched off in config.json — that stays the user's explicit choice.
-allowed-tools: Read, Edit, Bash
+allowed-tools: Read Edit Bash
 ---
 
 # Resume

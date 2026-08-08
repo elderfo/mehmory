@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mehmory",
+  "version": "0.3.1",
+  "description": "Memory abstraction layer for Claude Code and Codex CLI: deterministic capture hooks plus model-driven skills over a markdown wiki in ~/.mehmory.",
+  "author": {
+    "name": "Christopher Freddy Getsfred"
+  },
+  "homepage": "https://github.com/elderfo/mehmory",
+  "repository": "https://github.com/elderfo/mehmory",
+  "license": "MIT",
+  "keywords": ["memory", "wiki", "context", "claude-code", "codex", "plugin"]
+}

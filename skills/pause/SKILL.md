@@ -1,7 +1,7 @@
 ---
 name: pause
 description: Stop mehmory capturing and injecting for the rest of this session — no inbox writes, no context injection, no pointers. Use when the user says pause memory, stop capturing, mute mehmory, or is about to work on something they do not want remembered. Writes one flag file under ~/.mehmory/.state (outside the project), so Claude Code may prompt for permission. Reversible with /mehmory:resume.
-allowed-tools: Read, Edit, Bash
+allowed-tools: Read Edit Bash
 ---
 
 # Pause

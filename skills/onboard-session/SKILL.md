@@ -1,7 +1,7 @@
 ---
 name: onboard-session
 description: Seed mehmory for the current project from scratch — survey the repo (README, package manifest, git log, docs), then write project.md, a first set of pages and the index under ~/.mehmory, and commit. Use on a fresh store, when SessionStart says the store was just created, or when the user asks to onboard, bootstrap, or set up memory for this project. Writes to ~/.mehmory (outside the project), so Claude Code may prompt for permission.
-allowed-tools: Read, Write, Bash, Glob, Grep
+allowed-tools: Read Write Bash Glob Grep
 ---
 
 # Onboard session

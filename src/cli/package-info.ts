@@ -1,9 +1,10 @@
 /**
- * `--version` and the Node requirement, read from `package.json` itself.
+ * `--version` and the Node requirement, read from the publishable package manifest.
  *
  * The import is resolved at build time — tsup bundles `dist/cli.mjs` self-contained, so
  * there is no runtime file read and no assumption about where the package sits on disk.
- * Both values therefore cannot drift from the manifest that npm actually publishes.
+ * `VERSION` is the repository's canonical release source and is checked against this
+ * manifest by the packaging tests, so the CLI and published package stay aligned.
  */
 
 import pkg from '../../package.json' with { type: 'json' };
