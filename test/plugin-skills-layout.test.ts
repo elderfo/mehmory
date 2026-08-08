@@ -47,7 +47,10 @@ describe('plugin skills layout', () => {
     const fields = frontmatter(bodies.get(name) as string);
     expect(fields['name']).toBe(name);
     expect(fields['name']).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
+    expect(fields['name']?.length).toBeLessThanOrEqual(64);
+    expect(fields['name']).not.toContain('--');
     expect(fields['description']?.length).toBeGreaterThan(40);
+    expect(fields['description']?.length).toBeLessThanOrEqual(1024);
     expect(fields['allowed-tools']?.length).toBeGreaterThan(0);
     expect(fields['allowed-tools']).not.toContain(',');
   });
