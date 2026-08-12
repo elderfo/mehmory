@@ -48,7 +48,7 @@ latency you'd notice.
 "continue the session without mehmory." A memory layer is not allowed to be the reason your
 editor stops.
 
-**Thin adapters only.** A hook parses stdin, calls into `src/core`, and writes stdout. All
+**Thin adapters only.** A hook parses stdin, calls into the core library, and writes stdout. All
 behavior lives in the core library, which is synchronous, ESM-only, never exits the process,
 and never throws across its own boundary. The CLI is a second thin consumer of that same
 core, not a second implementation of it.
