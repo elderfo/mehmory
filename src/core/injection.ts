@@ -98,7 +98,13 @@ export function buildInjection(
   // floors to zero — a zero sub-budget truncates to the empty string.
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
-  const agentBudget = isNamed ? Math.max(1, agentSlot) : 0;
+  // Floored at one token so a named agent is never emptied — but clamped to what is
+  // actually left, because two independent floors could otherwise sum past a budget too
+  // small to seat them. The agent yields here for the same reason it yields first in the
+  // truncation ladder below: identity is the one that must survive.
+  const agentBudget = isNamed
+    ? Math.min(Math.max(1, agentSlot), Math.max(0, budget - identityBudget - projectBudget))
+    : 0;
   // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the sub-budgets
   // always sum to exactly `budget` after flooring.
   const indexBudget = Math.max(0, budget - identityBudget - projectBudget - agentBudget);

@@ -121,7 +121,7 @@ function selectAgent(selector: FlagValue | undefined, config: MehmoryConfig): Sc
       ok: false,
       result: usageError(
         'bare `--agent` needs a named agent: neither MEHMORY_AGENT nor `identity.agent` is set',
-        'mehmory --agent <name>'
+        'mehmory status'
       ),
     };
   }

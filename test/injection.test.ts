@@ -265,6 +265,28 @@ describe('buildInjection', () => {
 });
 
 describe('sub-budget allocation (KTD6)', () => {
+  it('never sums its floors past a budget too small to seat them', () => {
+    // Copilot caught this: identity and the agent slot are each floored at one token so
+    // neither is emptied, but two independent floors could sum to 2 against a budget of
+    // 1 and break the documented `totalTokens <= budget` contract. The agent yields here
+    // for the same reason it yields first in the truncation ladder.
+    for (const budgetTokens of [1, 2, 3]) {
+      const frame = buildInjection(
+        [
+          { label: 'identity', content: sized('a', 50) },
+          { label: 'project', content: sized('b', 50) },
+          { label: 'index', content: sized('c', 50) },
+          { label: 'agent', content: sized('g', 50) },
+        ],
+        { budgetTokens }
+      );
+
+      expect(frame.totalTokens).toBeLessThanOrEqual(budgetTokens);
+      // Identity is the one that must survive at any budget.
+      expect(estimateTokens(frame.identity)).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   /** Content sized to `tokens` under the chars/4 heuristic. */
   function sized(char: string, tokens: number): string {
     return char.repeat(tokens * 4);

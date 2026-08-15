@@ -412,7 +412,13 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
     }
     try {
       const parsed: unknown = JSON.parse(readFile(edit.jobPath));
-      if (typeof parsed !== 'object' || parsed === null) continue;
+      if (typeof parsed !== 'object' || parsed === null) {
+        // Same reasoning as the catch below: the file changed shape since planning, and
+        // leaving it would leave the stamps that rebuild the scope. Dropping under-reaches
+        // nothing; keeping it does.
+        remove(edit.jobPath);
+        continue;
+      }
       atomicWrite(
         edit.jobPath,
         JSON.stringify({ ...(parsed as Record<string, unknown>), entries: edit.keep }, null, 2)
