@@ -19,6 +19,14 @@ export const INJECTION_INDEX_TOKENS = 400;
 export const INJECTION_BUDGET_TOKENS = 800; // sum of above
 
 /**
+ * The agent scope's slot, added on top of `injection.budget_tokens` when the running
+ * agent is named (R10). Equal to the identity slot — an agent's self is worth what the
+ * user's self is worth — and deliberately additive rather than carved out of the three
+ * existing shares, which keep their sizes at any budget.
+ */
+export const INJECTION_AGENT_TOKENS = 200;
+
+/**
  * Estimate the number of tokens in a text string using chars/4 heuristic.
  *
  * TOLERANCE: This is an estimate. The ±20% tolerance (documented here, not hidden)

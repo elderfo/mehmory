@@ -7,6 +7,7 @@ import {
   INJECTION_IDENTITY_TOKENS,
   INJECTION_PROJECT_TOKENS,
   INJECTION_INDEX_TOKENS,
+  INJECTION_AGENT_TOKENS,
 } from '../src/core/tokens.js';
 
 describe('estimateTokens', () => {
@@ -84,6 +85,15 @@ describe('injection budget constants', () => {
       INJECTION_IDENTITY_TOKENS + INJECTION_PROJECT_TOKENS + INJECTION_INDEX_TOKENS
     );
     expect(INJECTION_BUDGET_TOKENS).toBe(800);
+  });
+
+  it('sizes the agent slot at the identity slot, outside the 800 sum', () => {
+    expect(INJECTION_AGENT_TOKENS).toBe(INJECTION_IDENTITY_TOKENS);
+    // The named total is budget_tokens + this slot, so it must not be folded into the
+    // three-way sum a lowered or raised budget_tokens divides.
+    expect(INJECTION_BUDGET_TOKENS).toBe(
+      INJECTION_IDENTITY_TOKENS + INJECTION_PROJECT_TOKENS + INJECTION_INDEX_TOKENS
+    );
   });
 
   it('uses TOKENS_PER_CHAR constant', () => {

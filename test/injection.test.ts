@@ -1,10 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   buildInjection,
   type InjectionPart,
 } from '../src/core/injection.js';
-import { estimateTokens, INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
-import { ROUTING_BLOCK } from '../src/core/capture.js';
+import {
+  estimateTokens,
+  INJECTION_AGENT_TOKENS,
+  INJECTION_BUDGET_TOKENS,
+} from '../src/core/tokens.js';
+import { ROUTING_BLOCK, buildScopeInjection } from '../src/core/capture.js';
+import { mehmoryHome } from '../src/core/home.js';
 
 /**
  * Ceiling for the static routing block. It is fixed overhead on every session with a
@@ -254,5 +261,243 @@ describe('buildInjection', () => {
       const frame = buildInjection(parts);
       expect(frame.totalTokens).toBeLessThanOrEqual(INJECTION_BUDGET_TOKENS);
     });
+  });
+});
+
+describe('sub-budget allocation (KTD6)', () => {
+  /** Content sized to `tokens` under the chars/4 heuristic. */
+  function sized(char: string, tokens: number): string {
+    return char.repeat(tokens * 4);
+  }
+
+  it('splits an unnamed injection 200/200/400 at the default budget', () => {
+    const frame = buildInjection([
+      { label: 'identity', content: sized('a', 300) },
+      { label: 'project', content: sized('b', 300) },
+      { label: 'index', content: sized('c', 900) },
+    ]);
+
+    expect(estimateTokens(frame.identity)).toBe(200);
+    expect(estimateTokens(frame.project)).toBe(200);
+    expect(estimateTokens(frame.index)).toBe(400);
+    expect(frame.agent).toBe('');
+    expect(frame.totalTokens).toBe(INJECTION_BUDGET_TOKENS);
+  });
+
+  it('adds the agent slot on top without rescaling the other three', () => {
+    // The regression this guards: deriving sub-budgets by scaling the 1:1:2 ratio to
+    // the larger total would hand identity 250, project 250 and index 500. R10 fixes
+    // all three at their current sizes and grows the total by one slot.
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: sized('a', 300) },
+        { label: 'project', content: sized('b', 300) },
+        { label: 'index', content: sized('c', 900) },
+        { label: 'agent', content: sized('g', 300) },
+      ],
+      { budgetTokens: INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS }
+    );
+
+    expect(estimateTokens(frame.identity)).toBe(200);
+    expect(estimateTokens(frame.project)).toBe(200);
+    expect(estimateTokens(frame.index)).toBe(400);
+    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
+    expect(frame.totalTokens).toBe(INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS);
+  });
+
+  it('grows a raised budget by the same fixed slot', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: sized('a', 300) },
+        { label: 'project', content: sized('b', 300) },
+        { label: 'index', content: sized('c', 1200) },
+        { label: 'agent', content: sized('g', 300) },
+      ],
+      { budgetTokens: 1200 + INJECTION_AGENT_TOKENS }
+    );
+
+    expect(frame.totalTokens).toBe(1400);
+    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
+    expect(estimateTokens(frame.identity)).toBe(200);
+    expect(estimateTokens(frame.project)).toBe(200);
+    // The raised budget widens the index alone.
+    expect(estimateTokens(frame.index)).toBe(800);
+  });
+
+  it('leaves the other three parts intact when the agent scope is empty', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: sized('a', 300) },
+        { label: 'project', content: sized('b', 300) },
+        { label: 'index', content: sized('c', 900) },
+        { label: 'agent', content: '' },
+      ],
+      { budgetTokens: INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS }
+    );
+
+    // An empty agent file costs the other three nothing: the slot's slack is simply
+    // available to whichever part is over its share.
+    expect(frame.agent).toBe('');
+    expect(frame.totalTokens).toBeLessThanOrEqual(
+      INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS
+    );
+    expect(estimateTokens(frame.identity)).toBeGreaterThanOrEqual(200);
+    expect(estimateTokens(frame.project)).toBeGreaterThanOrEqual(200);
+    expect(estimateTokens(frame.index)).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('truncation order with an agent slot', () => {
+  const named = { budgetTokens: INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS };
+
+  it('truncates the index first', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: 'a'.repeat(800) },
+        { label: 'project', content: 'b'.repeat(800) },
+        { label: 'index', content: 'c'.repeat(4000) },
+        { label: 'agent', content: 'g'.repeat(800) },
+      ],
+      named
+    );
+
+    expect(frame.index.length).toBe(1600);
+    expect(frame.identity.length).toBe(800);
+    expect(frame.project.length).toBe(800);
+    expect(frame.agent.length).toBe(800);
+  });
+
+  it('truncates the project next when the index is already within its share', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: 'a'.repeat(800) },
+        { label: 'project', content: 'b'.repeat(4000) },
+        { label: 'index', content: 'c'.repeat(1600) },
+        { label: 'agent', content: 'g'.repeat(800) },
+      ],
+      named
+    );
+
+    expect(frame.project.length).toBe(800);
+    expect(frame.index.length).toBe(1600);
+    expect(frame.identity.length).toBe(800);
+    expect(frame.agent.length).toBe(800);
+  });
+
+  it('truncates the agent slot next, and never empties it', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: 'a'.repeat(800) },
+        { label: 'project', content: 'b'.repeat(800) },
+        { label: 'index', content: 'c'.repeat(1600) },
+        { label: 'agent', content: 'agent self. '.repeat(400) },
+      ],
+      named
+    );
+
+    expect(frame.agent.length).toBeGreaterThan(0);
+    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
+    // Identity is untouched: the agent slot yields first.
+    expect(frame.identity.length).toBe(800);
+  });
+
+  it('yields the agent slot before identity under extreme overflow', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: 'identity that must survive' },
+        { label: 'project', content: 'p'.repeat(4000) },
+        { label: 'index', content: 'i'.repeat(4000) },
+        { label: 'agent', content: 'agent self that may be cut'.repeat(200) },
+      ],
+      { budgetTokens: 3 }
+    );
+
+    expect(frame.totalTokens).toBeLessThanOrEqual(3);
+    expect(frame.identity.length).toBeGreaterThan(0);
+    expect(frame.agent.length).toBeGreaterThan(0);
+    expect(estimateTokens(frame.agent)).toBeLessThanOrEqual(estimateTokens(frame.identity));
+  });
+});
+
+describe('buildScopeInjection: the agent scope', () => {
+  const KEY = 'github.com/acme/widgets';
+
+  function write(relative: string, content: string): void {
+    const file = join(mehmoryHome(), ...relative.split('/'));
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, content);
+  }
+
+  function seedStore(): void {
+    write('global/identity.md', 'user prefers dark mode');
+    write(`projects/${KEY}/project.md`, 'widgets is a TypeScript monorepo');
+    write(`projects/${KEY}/index.md`, '- [deploy](pages/deploy.md) — deploy runbook');
+  }
+
+  afterEach(() => {
+    delete process.env['MEHMORY_AGENT'];
+  });
+
+  it('omits the agent section when the agent is unnamed', () => {
+    seedStore();
+
+    const { text } = buildScopeInjection(KEY);
+
+    expect(text).toContain('# identity');
+    expect(text).not.toContain('# agent');
+  });
+
+  it('injects the named agent scope and nothing from another agent', () => {
+    seedStore();
+    write('agents/alpha/identity.md', 'alpha writes terse commit messages');
+    write('agents/beta/identity.md', 'beta writes verbose commit messages');
+
+    process.env['MEHMORY_AGENT'] = 'alpha';
+    const { text } = buildScopeInjection(KEY);
+
+    expect(text).toContain('# agent alpha');
+    expect(text).toContain('alpha writes terse');
+    expect(text).not.toContain('beta');
+    expect(text).not.toContain('verbose');
+  });
+
+  it('injects the same agent content for two sessions resolving one name', () => {
+    seedStore();
+    write('agents/alpha/identity.md', 'alpha writes terse commit messages');
+
+    process.env['MEHMORY_AGENT'] = 'alpha';
+    const first = buildScopeInjection(KEY);
+    const second = buildScopeInjection(KEY);
+
+    expect(second.text).toBe(first.text);
+  });
+
+  it('injects the other three parts when the agent has no identity.md yet', () => {
+    seedStore();
+    mkdirSync(join(mehmoryHome(), 'agents', 'alpha'), { recursive: true });
+
+    process.env['MEHMORY_AGENT'] = 'alpha';
+    expect(() => buildScopeInjection(KEY)).not.toThrow();
+    const { text } = buildScopeInjection(KEY);
+
+    expect(text).toContain('dark mode');
+    expect(text).toContain('TypeScript monorepo');
+    expect(text).toContain('deploy runbook');
+    expect(text).not.toContain('# agent');
+  });
+
+  it('grows the budget by exactly one agent slot when named', () => {
+    write('global/identity.md', 'a'.repeat(4000));
+    write(`projects/${KEY}/project.md`, 'b'.repeat(4000));
+    write(`projects/${KEY}/index.md`, 'c'.repeat(4000));
+    write('agents/alpha/identity.md', 'g'.repeat(4000));
+
+    const unnamed = buildScopeInjection(KEY).tokens;
+    process.env['MEHMORY_AGENT'] = 'alpha';
+    const named = buildScopeInjection(KEY).tokens;
+
+    // One fixed slot plus the section header, and nothing else moved.
+    expect(named - unnamed).toBeGreaterThanOrEqual(INJECTION_AGENT_TOKENS);
+    expect(named - unnamed).toBeLessThanOrEqual(INJECTION_AGENT_TOKENS + 10);
   });
 });

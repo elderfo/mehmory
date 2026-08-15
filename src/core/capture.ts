@@ -28,8 +28,8 @@ import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { isSafeAgentName, resolveAgentName } from './agent.js';
-import { buildInjection } from './injection.js';
-import { estimateTokens } from './tokens.js';
+import { buildInjection, type InjectionPart } from './injection.js';
+import { estimateTokens, INJECTION_AGENT_TOKENS } from './tokens.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 import { readSession } from '../transcript/host.js';
 import { distill } from '../distill/distill.js';
@@ -188,10 +188,17 @@ export function skillRef(host: InboxHost, skill: string): string {
 }
 
 /**
- * Compose the SessionStart injection for a scope: identity + project + index, budget-
- * truncated by `buildInjection` to `config.injection.budget_tokens`, wrapped in an
- * explicit data-only frame so the model reads injected memory as facts rather than as
- * instructions.
+ * Compose the SessionStart injection for a scope: identity + project + index, plus the
+ * running agent's own scope when it is named (R9) — budget-truncated by `buildInjection`
+ * to `config.injection.budget_tokens`, wrapped in an explicit data-only frame so the
+ * model reads injected memory as facts rather than as instructions.
+ *
+ * A named agent's total is `budget_tokens + INJECTION_AGENT_TOKENS`: one slot added on
+ * top, never carved out of the three existing shares (R10). An unnamed agent passes no
+ * agent part at all, so its frame is identical to before agent scopes existed.
+ *
+ * Only the resolved agent's own directory is ever read, which is what keeps one agent's
+ * self out of another's session.
  *
  * Empty scope → empty text, so a paused or failed session and an empty store are
  * distinguishable (U7: silence is reserved for paused/failed).
@@ -207,7 +214,8 @@ export function buildScopeInjection(
     () => {
       const paths = scopePaths(key);
       const projectIndex = join(paths.projectDir, 'index.md');
-      const frame = buildInjection([
+      const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
+      const parts: InjectionPart[] = [
         { label: 'identity', content: readIfPresent(join(paths.globalDir, 'identity.md')) },
         { label: 'project', content: readIfPresent(join(paths.projectDir, 'project.md')) },
         {
@@ -216,10 +224,24 @@ export function buildScopeInjection(
             pathExists(projectIndex) ? projectIndex : join(paths.globalDir, 'index.md')
           ),
         },
-      ], { budgetTokens: config.injection.budget_tokens, secrets: config.secrets });
+      ];
+      // The part is passed even when the agent's identity.md is absent, so a named
+      // agent's allocation does not depend on whether it has written a self yet.
+      if (agent !== undefined) {
+        parts.push({
+          label: 'agent',
+          content: readIfPresent(agentScopePaths(agent).identityFile),
+        });
+      }
+      const frame = buildInjection(parts, {
+        budgetTokens:
+          config.injection.budget_tokens + (agent !== undefined ? INJECTION_AGENT_TOKENS : 0),
+        secrets: config.secrets,
+      });
 
       const sections: string[] = [];
       if (frame.identity) sections.push(`# identity\n${frame.identity}`);
+      if (agent !== undefined && frame.agent) sections.push(`# agent ${agent}\n${frame.agent}`);
       if (frame.project) sections.push(`# project ${key}\n${frame.project}`);
       if (frame.index) sections.push(`# index\n${frame.index}`);
       if (sections.length === 0) return { text: '', tokens: 0 };
