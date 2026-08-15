@@ -193,6 +193,25 @@ Reported as a **warning**, not an error: the hooks are what capture and inject, 
 keep working. What you will notice instead is the inbox filling up and never being merged
 into the wiki.
 
+## E_AGENT_NAME_INVALID (actionable)
+
+A declared agent name is not usable as a directory segment under `agents/`, so it is
+refused rather than rewritten. Consequence: *this agent runs unnamed* — it captures to and
+recalls from the project scope and `global/` exactly as it would with no name set, and gets
+no agent scope of its own. Fix: set the name to a lowercase segment matching
+`[a-z0-9._-]{1,64}`.
+
+The warning names both the rejected value and where it came from (`MEHMORY_AGENT` or
+`config.identity.agent`), because warnings are rate-limited to one per code per hour — on a
+machine running several agents, only one of them surfaces this, and the value is what tells
+you which.
+
+Names are refused, never repaired. Uppercase is rejected rather than folded: on a
+case-insensitive filesystem `Scout` and `scout` would silently share one scope and each read
+the other's memory. The tokens `global`, `projects`, `agents` and `all` are reserved by the
+scope grammar. An invalid name does not fall through to a lower-precedence source — a bad
+`MEHMORY_AGENT` runs unnamed rather than quietly adopting the config default.
+
 ## CLI-level codes (not in `ERROR_KINDS`)
 
 These three shapes are raised by `src/cli/` and never by a library function, so they are
