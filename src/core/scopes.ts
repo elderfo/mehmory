@@ -8,7 +8,7 @@
 
 import { join, sep } from 'node:path';
 import { mehmoryHome } from './home.js';
-import { listDir, pathExists, stat } from './fs.js';
+import { isDirectory, listDir, pathExists } from './fs.js';
 import { failOpen } from './errors.js';
 import { isSafeAgentName } from './agent.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
@@ -54,7 +54,7 @@ export function listProjects(): readonly ProjectScope[] {
       const walk = (dir: string, segments: readonly string[]): void => {
         for (const name of listDir(dir)) {
           const child = join(dir, name);
-          if (!pathExists(child) || !stat(child)?.isDirectory()) continue;
+          if (!isDirectory(child)) continue;
 
           const path = [...segments, name];
           if (pathExists(join(child, 'inbox.md'))) {
@@ -108,12 +108,10 @@ export function listAgentScopes(): readonly AgentScope[] {
       const found: AgentScope[] = [];
       for (const name of listDir(root)) {
         const dir = join(root, name);
-        // `pathExists` first: `stat` is `statSync`, which throws on a dangling symlink or
-        // a permission-denied entry rather than returning undefined, and the whole loop
-        // runs inside `failOpen` — so one bad entry would collapse the entire listing to
-        // empty instead of being skipped. `listProjects` guards the same call for the same
-        // reason.
-        if (!pathExists(dir) || !stat(dir)?.isDirectory()) continue;
+        // Not a bare `stat`: it throws on a dangling symlink or a permission-denied
+        // entry, and the whole loop runs inside `failOpen`, so one bad entry would
+        // collapse the entire listing to empty instead of being skipped.
+        if (!isDirectory(dir)) continue;
         if (!pathExists(join(dir, 'identity.md'))) continue;
         // A directory whose name is not a safe agent name was not created by mehmory
         // and can never be addressed: `agentScopePaths` throws on it, so listing it

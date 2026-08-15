@@ -77,6 +77,22 @@ export function stat(path: string): ReturnType<typeof statSync> {
   return statSync(path);
 }
 
+/**
+ * True when `path` is a directory, false when it is anything else or cannot be read.
+ *
+ * `stat` throws — on EACCES, or on a path deleted between an existence check and the
+ * call. A scope walk that lets that escape loses every entry to its `failOpen`, not just
+ * the unreadable one, so the question "is this a directory I can use" answers false
+ * rather than throwing.
+ */
+export function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** Read file as UTF-8 string. */
 export function readFile(path: string): string {
   return readFileSync(path, 'utf-8');

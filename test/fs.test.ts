@@ -7,8 +7,35 @@ import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { statePath } from '../src/core/home.js';
-import { atomicWrite, appendRecord, pathExists, APPEND_ATOMIC_CEILING_BYTES } from '../src/core/fs.js';
+import { createTempDir } from './helpers.js';
+import {
+  atomicWrite,
+  appendRecord,
+  isDirectory,
+  pathExists,
+  stat,
+  APPEND_ATOMIC_CEILING_BYTES,
+} from '../src/core/fs.js';
 import { withProjectLock } from '../src/core/lock.js';
+
+describe('isDirectory', () => {
+  it('answers false instead of throwing when the path cannot be stat-ed', () => {
+    // `statSync` throws — ENOENT here, EACCES in the field. The scope walks that call
+    // this run inside `failOpen`, so a throw would lose every entry rather than the one
+    // that could not be read.
+    expect(() => stat(join(createTempDir('mehmory-isdir'), 'gone'))).toThrow();
+    expect(isDirectory(join(createTempDir('mehmory-isdir'), 'gone'))).toBe(false);
+  });
+
+  it('distinguishes a directory from a file', () => {
+    const dir = createTempDir('mehmory-isdir');
+    const file = join(dir, 'a.md');
+    atomicWrite(file, 'x\n');
+
+    expect(isDirectory(dir)).toBe(true);
+    expect(isDirectory(file)).toBe(false);
+  });
+});
 
 describe('fs primitives', () => {
   describe('atomicWrite', () => {
