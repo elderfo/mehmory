@@ -322,7 +322,8 @@ describe('sub-budget allocation (KTD6)', () => {
     expect(estimateTokens(frame.identity)).toBe(200);
     expect(estimateTokens(frame.project)).toBe(200);
     expect(estimateTokens(frame.index)).toBe(400);
-    expect(frame.agent).toBe('');
+    // Absent, not empty: the field is optional so `undefined` can mean unnamed.
+    expect(frame.agent).toBeUndefined();
     expect(frame.totalTokens).toBe(INJECTION_BUDGET_TOKENS);
   });
 

@@ -34,6 +34,7 @@ export interface InjectionFrame {
   readonly identity: string;
   readonly project: string;
   readonly index: string;
+  /** The agent's own content. Absent — not empty — when the agent is unnamed. */
   readonly agent?: string;
   readonly totalTokens: number;
 }
@@ -230,7 +231,10 @@ export function buildInjection(
     identity: identityTruncated,
     project: projectTruncated,
     index: indexTruncated,
-    agent: agentTruncated,
+    // Omitted rather than empty when no agent part was passed, so the optional field is
+    // honest: `undefined` means unnamed. Always returning `''` would make the optionality
+    // unreachable and invite callers to read `undefined` as a sentinel it never carries.
+    ...(isNamed ? { agent: agentTruncated } : {}),
     totalTokens,
   };
 }

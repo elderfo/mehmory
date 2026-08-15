@@ -255,7 +255,7 @@ export function planIsEmpty(plan: PurgePlan): boolean {
   );
 }
 
-/** Number of inbox entries a plan removes. */
+/** Number of captured entries a plan removes, across inboxes and queued distill jobs. */
 export function plannedEntries(plan: PurgePlan): number {
   return (
     plan.inboxEdits.reduce((sum, edit) => sum + edit.ids.length, 0) +
@@ -321,6 +321,13 @@ function exportTargets(plan: PurgePlan, dest: string): void {
       .filter(entry => doomed.has(entry.id))
       .map(entry => entry.text);
     atomicWrite(join(dest, relative(home, edit.inboxFile)), lines.join('\n') + '\n');
+  }
+  // Queued jobs are deletion targets too — `executePurge` rewrites or removes them — so
+  // "export then delete" would be false without their pre-purge contents. Copy the file
+  // whole rather than the doomed entries alone: a rewritten job loses entries, and a
+  // dropped one loses everything, so the original is what makes either recoverable.
+  for (const edit of plan.queueEdits ?? []) {
+    copyTree(edit.jobPath, join(dest, relative(home, edit.jobPath)));
   }
 }
 
