@@ -462,8 +462,15 @@ export function finalizeSession(
   // start's sweep, which passes no options and force-finalizes after its idle window if the
   // transcript never appears. Recovery relies on `transcript_path` being persisted in the
   // session state (`rememberSessionOrigin`), which is what keeps the session eligible in
-  // `listPendingSessions` — deferring a session whose state lacks it would strand it.
-  if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath)) {
+  // `listPendingSessions`. Guard on that: only defer when the persisted state actually carries
+  // a transcript path, so a session that could never be swept (state written without one, or
+  // `rememberSessionOrigin` failed) is retired now rather than stranded in perpetual pending.
+  if (
+    options.deferWhenTranscriptAbsent &&
+    transcriptPath &&
+    !pathExists(transcriptPath) &&
+    readSessionState(sessionId).transcript_path !== undefined
+  ) {
     return { capturedEntries: 0, deferred: true };
   }
 

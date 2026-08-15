@@ -260,6 +260,22 @@ describe('finalizeSession — deferred capture for not-yet-flushed transcripts',
     expect(queued).toHaveLength(1);
   });
 
+  it('does not defer a session whose persisted state lacks a transcript_path (avoids a strand)', () => {
+    // Guard for the case the review flagged: if the on-disk state has no transcript_path,
+    // listPendingSessions skips it forever, so deferring would strand it in perpetual pending.
+    // Retire it now instead (the pre-fix outcome) rather than lose it to a sweep that never runs.
+    const absent = join(createTempDir('mehmory-strand'), 'rollout.jsonl');
+    writeSessionState(freshSessionState('s5')); // fresh state carries no transcript_path
+
+    const result = finalizeSession('s5', absent, key, 'claude-code', loadConfig(), {
+      deferWhenTranscriptAbsent: true,
+    });
+
+    expect(result.deferred).toBeFalsy();
+    expect(existsSync(sessionStatePath('s5'))).toBe(false); // retired, not stranded
+    expect(sessionModule.isSessionFinalized('s5')).toBe(true);
+  });
+
   it('force-finalizes an absent transcript when not asked to defer (abandonment path)', () => {
     // The pending sweep passes no options, so after its idle window a session whose transcript
     // never landed still retires rather than retrying forever.

@@ -949,7 +949,7 @@ function finalizeSession(sessionId, transcriptPath, project, host, config = load
     markSessionFinalized(sessionId);
     return { capturedEntries: 0 };
   }
-  if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath)) {
+  if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath) && readSessionState(sessionId).transcript_path !== void 0) {
     return { capturedEntries: 0, deferred: true };
   }
   const home = mehmoryHome();
