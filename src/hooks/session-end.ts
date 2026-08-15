@@ -15,6 +15,12 @@ runHook('SessionEnd', (input, project, host, config) => {
   // the next SessionStart finalizes it. Skipping is not discarding (F3-1).
   if (!config.hooks.session_end.enabled) return {};
 
-  const result = finalizeSession(input.session_id, input.transcript_path, project, host, config);
-  return { stats: { captured_entries: result.capturedEntries } };
+  // Defer on an absent transcript: ACP writes its rollout after SessionEnd fires, so a
+  // not-yet-flushed transcript must stay pending for the next start's sweep rather than
+  // retiring the session and losing the content (F3-1 sibling — a race must never destroy
+  // un-captured material).
+  const result = finalizeSession(input.session_id, input.transcript_path, project, host, config, {
+    deferWhenTranscriptAbsent: true,
+  });
+  return { stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false } };
 });
