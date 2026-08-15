@@ -33,6 +33,13 @@ which project this session belongs to. The scope root is then
 `$HOME_DIR/projects/<key>/`; user-level facts (preferences, tooling, style) belong in
 `$HOME_DIR/global/` instead — use that scope's `inbox.md`, `index.md` and `pages/`.
 
+A named agent has a third scope, `$HOME_DIR/agents/<name>/`, holding what that agent is:
+its own preferences, style and non-project knowledge. It has an `identity.md`, an
+`index.md` and a `pages/` directory, but no inbox of its own — every entry lands in the
+project inbox and is routed out of it by its stamp (step 4). `ls "$HOME_DIR/agents"`
+lists the agent scopes that exist; create `agents/<name>/` on the first entry that routes
+there, giving it an `identity.md` and an `index.md` like any other scope.
+
 ## 2. Read before you write
 
 Read, in this order: `$HOME_DIR/SCHEMA.md` (the user's conventions win over anything in
@@ -53,6 +60,17 @@ stderr line to the user and change nothing.
 
 For every snapshot entry:
 
+- **Scope — route by the entry's stamp, never by who is running integration.** Repo facts
+  (build steps, layout, this codebase's conventions) go to the project scope; facts about
+  the human (preferences, tooling, style) go to `global/`; an agent's own self-facts (how
+  it works, what it prefers, what it has learned about itself) go to `agents/<name>/`,
+  where `<name>` is the `agent=` value stamped on that entry — the snapshot carries it as
+  the entry's `agent` field, mirroring the entry line's
+  `- <text> <!--mehmory id=... src=... host=...[ agent=<name>] ts=...-->`. File an entry
+  stamped `agent=scout` into `agents/scout/` whatever your own name is, and never route an
+  entry with no `agent=` stamp into an agent scope — it is a project or `global/` fact. A
+  stamped name that fails validation is dropped when the entry is parsed, so it reaches you
+  unattributed; treat it as unstamped rather than guessing at the name.
 - **Existing topic** — open the page and edit it. Supersession is editing: when a new
   fact contradicts a line, **rewrite that line**, do not append a second contradicting
   bullet and do not annotate the old one as outdated. Git history is the audit trail.

@@ -302,7 +302,7 @@ Token estimation uses chars/4 with ±20% tolerance.
 - **Caveman-telegraphic bullets** — short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** — avoid elaborate sentences
 - **Wikilinks** — use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** — user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`
+- **Scope rule** — user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) → \`agents/<name>/\`, by the entry's \`agent=\` stamp
 
 ## Secret Filter Limitation
 

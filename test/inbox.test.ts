@@ -25,6 +25,7 @@ import {
   scopePaths,
 } from '../src/core/capture.js';
 import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
+import { isSafeAgentName } from '../src/core/agent.js';
 
 const KEY = 'github.com/acme/repo';
 
@@ -332,6 +333,36 @@ describe('inbox entry agent (R7, KTD5, FORMAT_VERSION 3)', () => {
       const parsed = parseInboxEntries(withAgentValue(hostile));
       expect(parsed).toHaveLength(1);
       expect(parsed[0]?.agent).toBeUndefined();
+    }
+  });
+});
+
+describe('the golden inbox integration reads (R8, KTD7)', () => {
+  // The routing decision itself is judgment: `/mehmory:integrate` reads the rule out of
+  // skills/integrate/SKILL.md and applies it. What is mechanical — and what would rot
+  // without notice — is the substrate that decision stands on: whether an inbox holding
+  // every class of entry hands integration an unambiguous destination for each line.
+  it('presents each of the four entry classes unambiguously', () => {
+    const at = (n: number): string => `2026-08-15T12:0${String(n)}:00.000Z`;
+    const lines = [
+      `- scout prefers terse reports <!--mehmory id=${inboxEntryId('g1')} src=s host=claude-code agent=scout ts=${at(1)}-->`,
+      `- probe checks the slow paths first <!--mehmory id=${inboxEntryId('g2')} src=s host=claude-code agent=probe ts=${at(2)}-->`,
+      `- the build runs pnpm build <!--mehmory id=${inboxEntryId('g3')} src=s host=claude-code ts=${at(3)}-->`,
+      `- a hand-edited line with a hostile stamp <!--mehmory id=${inboxEntryId('g4')} src=s host=claude-code agent=../../global ts=${at(4)}-->`,
+    ];
+    atomicWrite(inboxFile(), `${lines.join('\n')}\n`);
+
+    const snapshot = snapshotClearInbox(inboxFile(), KEY);
+
+    expect(snapshot).toHaveLength(4);
+    expect(snapshot.map(e => e.agent)).toEqual(['scout', 'probe', undefined, undefined]);
+    // The two unattributed classes are indistinguishable on purpose: an entry that never
+    // carried a name and one whose name was refused both reach integration with nothing
+    // to route on, so neither can reach an agent scope (R8).
+    expect(snapshot.filter(e => e.agent === undefined)).toHaveLength(2);
+    // Nothing survives that could compose a path outside agents/.
+    for (const e of snapshot) {
+      expect(e.agent === undefined || isSafeAgentName(e.agent)).toBe(true);
     }
   });
 });
