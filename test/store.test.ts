@@ -9,6 +9,8 @@ import { readFileSync } from 'node:fs';
 import { initStore } from '../src/core/store.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { pathExists, readFile, mkdir, atomicWrite, listDir } from '../src/core/fs.js';
+import { agentScopePaths } from '../src/core/capture.js';
+import { listAgentScopes } from '../src/core/scopes.js';
 import { createTempDir, cleanupTempDir } from './helpers.js';
 
 // Note: test/setup.ts already guards MEHMORY_HOME to prevent touching ~/.mehmory
@@ -318,5 +320,36 @@ describe('SCHEMA.md / SCHEMA_TEMPLATE drift', () => {
     );
 
     expect(written).toBe(asset);
+  });
+});
+
+describe('the agents/ root is created lazily (R11)', () => {
+  it('is absent from a fresh store where no agent is ever named', () => {
+    initStore();
+
+    // Pinned as an exact listing: an eager `mkdir` in `initStore` would add a
+    // top-level directory to every store, including ones that never name an agent.
+    expect([...listDir(mehmoryHome())].sort()).toEqual([
+      '.git',
+      '.gitignore',
+      '.state',
+      'SCHEMA.md',
+      'config.json',
+      'global',
+      'projects',
+    ]);
+  });
+
+  it('appears on the first named-agent write', () => {
+    initStore();
+    const home = mehmoryHome();
+    expect(pathExists(join(home, 'agents'))).toBe(false);
+
+    const paths = agentScopePaths('scout');
+    mkdir(paths.pagesDir);
+    atomicWrite(paths.identityFile, '# Who I am\n');
+
+    expect(pathExists(join(home, 'agents'))).toBe(true);
+    expect(listAgentScopes().map(a => a.name)).toEqual(['scout']);
   });
 });

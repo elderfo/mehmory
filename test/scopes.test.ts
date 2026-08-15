@@ -1,11 +1,12 @@
 /** Project discovery and selector resolution (plan criterion 12). */
 
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
-import { listProjects, resolveScope } from '../src/core/scopes.js';
+import { listAgentScopes, listProjects, resolveScope } from '../src/core/scopes.js';
+import { agentScopePaths } from '../src/core/capture.js';
 
 /** Create `projects/<key>/inbox.md`, which is what makes a directory a project. */
 function seedProject(key: string): void {
@@ -122,5 +123,104 @@ describe('resolveScope', () => {
     writeConfig({ identity: { aliases: { ghost: 'github.com/acme/nothing' } } });
 
     expect(resolveScope('ghost', loadConfig()).kind).toBe('none');
+  });
+});
+
+/** Create `agents/<name>/identity.md`, which is what makes a directory an agent scope. */
+function seedAgentScope(name: string): void {
+  const dir = join(mehmoryHome(), 'agents', name);
+  mkdirSync(join(dir, 'pages'), { recursive: true });
+  writeFileSync(join(dir, 'identity.md'), '# Who I am\n');
+}
+
+describe('listAgentScopes', () => {
+  it('ignores a directory whose name is not a safe agent name', () => {
+    // Hand-created, or created by something that is not mehmory. `agentScopePaths`
+    // throws on such a name, so listing it would hand callers a value that detonates
+    // the moment they use it.
+    seedAgentScope('Scout');
+    seedAgentScope('scout');
+
+    expect(listAgentScopes().map(a => a.name)).toEqual(['scout']);
+  });
+
+  it('finds a directory holding identity.md', () => {
+    seedAgentScope('scout');
+
+    expect(listAgentScopes()).toEqual([
+      { name: 'scout', dir: join(mehmoryHome(), 'agents', 'scout') },
+    ]);
+  });
+
+  it('ignores a directory with no identity.md', () => {
+    mkdirSync(join(mehmoryHome(), 'agents', 'halfborn', 'pages'), { recursive: true });
+    seedAgentScope('scout');
+
+    expect(listAgentScopes().map(a => a.name)).toEqual(['scout']);
+  });
+
+  it('ignores nested directories below one level', () => {
+    seedAgentScope('scout');
+    // An agent name is a single segment (`isSafeAgentName`), so anything deeper is
+    // content inside a scope — never a scope of its own.
+    const nested = join(mehmoryHome(), 'agents', 'scout', 'pages', 'impostor');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, 'identity.md'), '# Not a scope\n');
+
+    expect(listAgentScopes().map(a => a.name)).toEqual(['scout']);
+  });
+
+  it('returns an empty list when the store has no agents dir (A2)', () => {
+    expect(listAgentScopes()).toEqual([]);
+  });
+
+  it('lists two agent scopes independently', () => {
+    seedAgentScope('scout');
+    seedAgentScope('probe');
+
+    expect(listAgentScopes()).toEqual([
+      { name: 'probe', dir: join(mehmoryHome(), 'agents', 'probe') },
+      { name: 'scout', dir: join(mehmoryHome(), 'agents', 'scout') },
+    ]);
+  });
+});
+
+describe('agentScopePaths', () => {
+  it('resolves every file of the scope inside agents/<name>/', () => {
+    const agentDir = join(mehmoryHome(), 'agents', 'scout');
+
+    expect(agentScopePaths('scout')).toEqual({
+      agentDir,
+      identityFile: join(agentDir, 'identity.md'),
+      indexFile: join(agentDir, 'index.md'),
+      pagesDir: join(agentDir, 'pages'),
+      logFile: join(agentDir, 'log.md'),
+    });
+  });
+
+  it('exposes no inbox path — capture always writes the project inbox (KTD3)', () => {
+    const paths = agentScopePaths('scout');
+
+    expect(Object.keys(paths)).not.toContain('inboxFile');
+    const composed: readonly string[] = [
+      paths.agentDir,
+      paths.identityFile,
+      paths.indexFile,
+      paths.pagesDir,
+      paths.logFile,
+    ];
+    expect(composed.some(p => p.endsWith('inbox.md'))).toBe(false);
+  });
+
+  it('refuses a name failing isSafeAgentName rather than composing a path', () => {
+    for (const name of ['..', '.', '', 'Scout', 'global', 'a/b', '../../tmp/pwned']) {
+      expect(() => agentScopePaths(name)).toThrow();
+    }
+  });
+
+  it('creates nothing — the agents/ root appears only on a write', () => {
+    agentScopePaths('scout');
+
+    expect(existsSync(join(mehmoryHome(), 'agents'))).toBe(false);
   });
 });

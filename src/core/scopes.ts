@@ -10,6 +10,7 @@ import { join, sep } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { listDir, pathExists, stat } from './fs.js';
 import { failOpen } from './errors.js';
+import { isSafeAgentName } from './agent.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 
 /**
@@ -65,6 +66,48 @@ export function listProjects(): readonly ProjectScope[] {
       walk(root, []);
 
       return found.sort((a, b) => a.key.localeCompare(b.key));
+    },
+    [],
+    'E_SEARCH_FAILED'
+  );
+}
+
+/** One discovered agent scope (R2). */
+export interface AgentScope {
+  /** The agent's name, which is its single directory segment under `agents/`. */
+  readonly name: string;
+  /** Absolute path of `<home>/agents/<name>`. */
+  readonly dir: string;
+}
+
+/**
+ * Every agent scope in the store, sorted by name.
+ *
+ * `listProjects` counts a directory as a scope when it holds `inbox.md`, but an agent
+ * scope never has one — capture always writes the project inbox (R6) — so this keys on
+ * `identity.md` instead: the page that says what the agent is. One level deep, because
+ * an agent name is a single segment (`isSafeAgentName`) and anything below it is
+ * content inside a scope, not a scope. Never throws (A2/A11), like `listProjects`.
+ */
+export function listAgentScopes(): readonly AgentScope[] {
+  return failOpen(
+    () => {
+      const root = join(mehmoryHome(), 'agents');
+      if (!pathExists(root)) return [];
+
+      const found: AgentScope[] = [];
+      for (const name of listDir(root)) {
+        const dir = join(root, name);
+        if (!stat(dir)?.isDirectory()) continue;
+        if (!pathExists(join(dir, 'identity.md'))) continue;
+        // A directory whose name is not a safe agent name was not created by mehmory
+        // and can never be addressed: `agentScopePaths` throws on it, so listing it
+        // would only hand callers a name that detonates on use.
+        if (!isSafeAgentName(name)) continue;
+        found.push({ name, dir });
+      }
+
+      return found.sort((a, b) => a.name.localeCompare(b.name));
     },
     [],
     'E_SEARCH_FAILED'

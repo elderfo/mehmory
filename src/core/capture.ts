@@ -62,6 +62,51 @@ export function scopePaths(key: string): ScopePaths {
   };
 }
 
+/**
+ * Absolute paths of the files one agent scope is made of (R2).
+ *
+ * Deliberately not `ScopePaths`: there is no `inboxFile`, because capture always
+ * appends to the *project* inbox (R6) and the agent name rides on the entry (KD3).
+ * A separate type is what makes an agent inbox unrepresentable rather than merely
+ * discouraged — the same reason `listAgentScopes` keys on `identity.md`.
+ */
+export interface AgentScopePaths {
+  /** `<home>/agents/<name>` — where this agent's own memory lives. */
+  readonly agentDir: string;
+  /** What this agent is; the page its sessions inject as their self. */
+  readonly identityFile: string;
+  readonly indexFile: string;
+  readonly pagesDir: string;
+  readonly logFile: string;
+}
+
+/**
+ * Resolve the file paths an agent name maps to. Creates nothing — the `agents/`
+ * root appears on the first write into it, never at `initStore`, so a store where
+ * no agent is ever named has the layout it had before agent scopes existed (R11).
+ *
+ * Throws on a name `isSafeAgentName` rejects rather than returning a path or
+ * `undefined`. Every caller reaches here through `resolveAgentName` or
+ * `parseInboxEntries`, both of which already validate, so an unsafe name arriving
+ * here is a broken invariant and not a case to branch on; an `undefined` return
+ * would instead invite `paths?.pagesDir` chains that silently skip the write. Core
+ * callers run inside `failOpen`, which turns the throw into a logged degradation
+ * (A2) — the same posture `inbox-tx.ts` takes for a value that failed validation.
+ */
+export function agentScopePaths(name: string): AgentScopePaths {
+  if (!isSafeAgentName(name)) {
+    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
+  }
+  const agentDir = join(mehmoryHome(), 'agents', name);
+  return {
+    agentDir,
+    identityFile: join(agentDir, 'identity.md'),
+    indexFile: join(agentDir, 'index.md'),
+    pagesDir: join(agentDir, 'pages'),
+    logFile: join(agentDir, 'log.md'),
+  };
+}
+
 /** True when the store layout exists (SessionStart uses this to decide on auto-init). */
 export function storeExists(): boolean {
   return pathExists(join(mehmoryHome(), 'global', 'identity.md'));
