@@ -27,6 +27,7 @@ import { commitPaths } from './git.js';
 import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
+import { isSafeAgentName, resolveAgentName } from './agent.js';
 import { buildInjection } from './injection.js';
 import { estimateTokens } from './tokens.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
@@ -239,11 +240,13 @@ export function distillDelta(
       }
 
       const ts = new Date().toISOString();
+      const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
       const entries = distill(records, sessionId, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
         host,
+        ...(agent !== undefined ? { agent } : {}),
         ts,
       }));
 
@@ -283,7 +286,15 @@ export function rememberEntry(
 ): InboxEntry {
   const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
-  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, host, ts };
+  const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
+  return {
+    id: inboxEntryId(`${sessionId}:${clean}`),
+    text: clean,
+    src: sessionId,
+    host,
+    ...(agent !== undefined ? { agent } : {}),
+    ts,
+  };
 }
 
 /** Append one `## <iso> <op> | <summary>` line to a scope's log.md (spec log format). */
@@ -347,11 +358,19 @@ export function applyDistillJob(
         typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
           ? (rawHost as InboxHost)
           : undefined;
+      // Same reason as `host`, for `agent` (R7): the payload is JSON round-tripped, so a
+      // SessionEnd capture deferred to the next session would land unattributed if the
+      // field were not carried across. Revalidated, per KTD5, because the queue file on
+      // disk is a read boundary like the inbox itself.
+      const rawAgent = e['agent'];
+      const agent =
+        typeof rawAgent === 'string' && isSafeAgentName(rawAgent) ? rawAgent : undefined;
       entries.push({
         id: e['id'],
         text: redact(e['text'], config.secrets),
         src: e['src'],
         ...(host !== undefined ? { host } : {}),
+        ...(agent !== undefined ? { agent } : {}),
         ts: e['ts'],
       });
     }
