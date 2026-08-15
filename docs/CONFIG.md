@@ -57,15 +57,17 @@ do with it — and is capped by its own test rather than by this key.
 
 - `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
   index content. At the default 800, the split is identity 200 / project 200 / index 400.
-  Identity and project keep **fixed** sub-budgets and the index absorbs whatever the total
-  leaves over, so raising `budget_tokens` above 800 widens the index alone. Below the
-  nominal sum every sub-budget scales down together, so a deliberately small budget tightens
-  each part instead of starving the index to nothing. **Honored** (`buildInjection`).
+  All three scale with the total in that 1:1:2 ratio, so raising or lowering
+  `budget_tokens` moves them together — 2000 gives identity 500 / project 500 / index 1000
+  — and the index absorbs whatever the flooring leaves over. **Honored**
+  (`buildInjection`).
 
 **The named-agent slot.** When the running agent has a name (see `identity.agent` below),
 its own scope is injected too, and it gets a fixed 200-token slot **on top of**
 `budget_tokens` rather than a share of it — a named agent's total is `budget_tokens + 200`.
-An unnamed agent's allocation is byte-identical to what it was before agent scopes existed.
+The three shares above are computed from `budget_tokens` alone, so they come out exactly as
+an unnamed agent gets them at the same setting: the slot is purely additive, and an unnamed
+agent's allocation is byte-identical to what it was before agent scopes existed.
 Truncation runs in priority order — index, then project, then the agent slot, then identity
 — and the agent and identity slots are never emptied, only shortened.
 
