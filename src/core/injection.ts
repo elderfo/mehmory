@@ -180,7 +180,11 @@ export function buildInjection(
         const result = truncateToTokens(agentTruncated, Math.max(1, agentTokens - 10));
         agentTruncated = result.text;
         agentTokens = result.tokens;
-      } else if (identityContent && identityTokens > 0) {
+        // `> 1`, not `> 0`: the shave floors at one token, so re-entering here with a
+        // one-token identity is a no-op that would spin out the iteration cap instead of
+        // falling through. Reachable only when the sub-budget floors already sum past a
+        // pathological budget, but a hook must not burn 100 passes to discover that.
+      } else if (identityContent && identityTokens > 1) {
         const result = truncateToTokens(
           identityTruncated,
           Math.max(1, identityTokens - 10)

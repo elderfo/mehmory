@@ -8,6 +8,7 @@ import {
   appendInboxEntries,
   appendRecord,
   atomicWrite,
+  currentAgentName,
   deleteSessionState,
   failOpen,
   inboxEntryId,
@@ -32,11 +33,10 @@ import {
   rememberSessionOrigin,
   remove,
   rename,
-  resolveAgentName,
   stat,
   statePath,
   withProjectLock
-} from "./chunk-PWAGXRFX.mjs";
+} from "./chunk-2KJOWJLD.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
@@ -522,7 +522,7 @@ function buildInjection(parts, options = {}) {
         const result = truncateToTokens(agentTruncated, Math.max(1, agentTokens - 10));
         agentTruncated = result.text;
         agentTokens = result.tokens;
-      } else if (identityContent && identityTokens > 0) {
+      } else if (identityContent && identityTokens > 1) {
         const result = truncateToTokens(
           identityTruncated,
           Math.max(1, identityTokens - 10)
@@ -853,7 +853,7 @@ function buildScopeInjection(key, config = loadConfig()) {
     () => {
       const paths = scopePaths(key);
       const projectIndex = join2(paths.projectDir, "index.md");
-      const agent = resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+      const agent = currentAgentName(config);
       const parts = [
         { label: "identity", content: readIfPresent(join2(paths.globalDir, "identity.md")) },
         { label: "project", content: readIfPresent(join2(paths.projectDir, "project.md")) },
@@ -914,7 +914,7 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
         });
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString();
-      const agent = resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+      const agent = currentAgentName(config);
       const entries = distill(records, sessionId, config.secrets).map((entry) => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
@@ -944,7 +944,7 @@ function captureDelta(sessionId, transcriptPath, key, host, config = loadConfig(
 function rememberEntry(text, sessionId, host, config = loadConfig()) {
   const clean = redact(text, config.secrets).trim();
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  const agent = resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+  const agent = currentAgentName(config);
   return {
     id: inboxEntryId(`${sessionId}:${clean}`),
     text: clean,

@@ -17,11 +17,12 @@ import { commitPaths } from './git.js';
 import { clearInboxEntries, readInboxEntries } from './inbox.js';
 import { AGENT_SCOPE_PREFIX, listAgentScopes, listProjects } from './scopes.js';
 import type { MehmoryError } from './errors.js';
+import type { InboxEntry } from '../schema/format.js';
 
 /** The six things a user can delete, in ascending blast radius. */
 export type PurgeForm = 'page' | 'session' | 'global' | 'agent' | 'project' | 'all';
 
-/** Inbox entries a `--session` purge removes, grouped by the inbox holding them. */
+/** Inbox entries a stamp-keyed purge removes, grouped by the inbox holding them. */
 export interface InboxEdit {
   readonly inboxFile: string;
   /** Project key (or `global`) — the lock key `clearInboxEntries` needs. */
@@ -82,6 +83,22 @@ function allInboxes(): readonly { inboxFile: string; key: string }[] {
 }
 
 /**
+ * Inbox edits clearing every entry a predicate matches, across every inbox in the store.
+ *
+ * Two purge forms delete by something stamped on an entry rather than by a path —
+ * `--session` by `src=`, `--agent` by `agent=` — and both have to sweep store-wide,
+ * because the stamp says nothing about which project the entry landed in.
+ */
+function inboxEditsMatching(match: (entry: InboxEntry) => boolean): InboxEdit[] {
+  const edits: InboxEdit[] = [];
+  for (const { inboxFile, key } of allInboxes()) {
+    const ids = readInboxEntries(inboxFile).filter(match).map(entry => entry.id);
+    if (ids.length > 0) edits.push({ inboxFile, key, ids });
+  }
+  return edits;
+}
+
+/**
  * The plan for `--session <id>`.
  *
  * Deliberately narrow: `src=<sessionId>` in an inbox entry's trailer is the only place
@@ -92,13 +109,7 @@ function allInboxes(): readonly { inboxFile: string; key: string }[] {
  * than one that refuses.
  */
 export function planSession(sessionId: string): PurgePlan {
-  const edits: InboxEdit[] = [];
-  for (const { inboxFile, key } of allInboxes()) {
-    const ids = readInboxEntries(inboxFile)
-      .filter(entry => entry.src === sessionId)
-      .map(entry => entry.id);
-    if (ids.length > 0) edits.push({ inboxFile, key, ids });
-  }
+  const edits = inboxEditsMatching(entry => entry.src === sessionId);
   return {
     form: 'session',
     label: `session ${sessionId}`,
@@ -136,16 +147,10 @@ export function planProject(key: string, dir: string): PurgePlan {
  * Removing `agents/<name>/` alone does not delete the agent. Every un-integrated entry
  * carrying `agent=<name>` survives in its project inbox, and the next integration
  * routes it straight back into a fresh scope — so the sweep is part of the deletion,
- * not a courtesy. Same shape as `planSession`, keyed on the stamp instead of `src`.
+ * not a courtesy.
  */
 export function planAgent(name: string, dir: string): PurgePlan {
-  const edits: InboxEdit[] = [];
-  for (const { inboxFile, key } of allInboxes()) {
-    const ids = readInboxEntries(inboxFile)
-      .filter(entry => entry.agent === name)
-      .map(entry => entry.id);
-    if (ids.length > 0) edits.push({ inboxFile, key, ids });
-  }
+  const edits = inboxEditsMatching(entry => entry.agent === name);
   return {
     form: 'agent',
     label: `agent ${name}`,

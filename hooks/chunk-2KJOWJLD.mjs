@@ -612,6 +612,9 @@ function resolveAgentName(envValue, configValue) {
   if (configValue) return validated(configValue, "config.identity.agent");
   return void 0;
 }
+function currentAgentName(config) {
+  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+}
 function validated(value, source) {
   if (isSafeAgentName(value)) return value;
   logError({
@@ -1186,7 +1189,7 @@ export {
   withProjectLock,
   tryProjectLock,
   isSafeAgentName,
-  resolveAgentName,
+  currentAgentName,
   readFrontmatter,
   pageAgeDays,
   ARCHIVE_DIVIDER,

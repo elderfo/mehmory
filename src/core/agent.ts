@@ -8,6 +8,7 @@
  */
 
 import { logError } from './errors.js';
+import type { MehmoryConfig } from './config.js';
 
 /**
  * An agent name becomes a directory name under <home>/agents/, so it must not be able
@@ -56,6 +57,18 @@ export function resolveAgentName(
   if (envValue) return validated(envValue, 'MEHMORY_AGENT');
   if (configValue) return validated(configValue, 'config.identity.agent');
   return undefined;
+}
+
+/**
+ * The running agent's name, or `undefined` when it is unnamed.
+ *
+ * The one place that knows `MEHMORY_AGENT` is the variable to read — callers hold a
+ * threaded `config` and should not each restate where the two candidate values come
+ * from. The env var is read at point of use the way `mehmoryHome()` reads its own; A21
+ * governs *config*, which still arrives as a parameter.
+ */
+export function currentAgentName(config: MehmoryConfig): string | undefined {
+  return resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
 }
 
 /** The name if safe; otherwise unnamed, with a warning naming the value and its source. */

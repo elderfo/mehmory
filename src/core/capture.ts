@@ -27,7 +27,7 @@ import { commitPaths } from './git.js';
 import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
-import { isSafeAgentName, resolveAgentName } from './agent.js';
+import { currentAgentName, isSafeAgentName } from './agent.js';
 import { buildInjection, type InjectionPart } from './injection.js';
 import { estimateTokens, INJECTION_AGENT_TOKENS } from './tokens.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
@@ -214,7 +214,7 @@ export function buildScopeInjection(
     () => {
       const paths = scopePaths(key);
       const projectIndex = join(paths.projectDir, 'index.md');
-      const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
+      const agent = currentAgentName(config);
       const parts: InjectionPart[] = [
         { label: 'identity', content: readIfPresent(join(paths.globalDir, 'identity.md')) },
         { label: 'project', content: readIfPresent(join(paths.projectDir, 'project.md')) },
@@ -307,7 +307,7 @@ export function distillDelta(
       }
 
       const ts = new Date().toISOString();
-      const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
+      const agent = currentAgentName(config);
       const entries = distill(records, sessionId, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
@@ -353,7 +353,7 @@ export function rememberEntry(
 ): InboxEntry {
   const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
-  const agent = resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent);
+  const agent = currentAgentName(config);
   return {
     id: inboxEntryId(`${sessionId}:${clean}`),
     text: clean,

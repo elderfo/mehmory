@@ -8,7 +8,7 @@
  */
 
 import { join } from 'node:path';
-import { resolveAgentName } from '../core/agent.js';
+import { currentAgentName } from '../core/agent.js';
 import { mehmoryHome } from '../core/home.js';
 import { resolveProjectKey } from '../core/identity.js';
 import { AGENT_SCOPE_PREFIX, resolveAgentScope, resolveScope } from '../core/scopes.js';
@@ -114,7 +114,7 @@ function selectAgent(selector: FlagValue | undefined, config: MehmoryConfig): Sc
   const typed = typeof selector === 'string' ? selector.trim() : '';
   const name =
     typed === ''
-      ? resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent)
+      ? currentAgentName(config)
       : typed;
   if (name === undefined) {
     return {
