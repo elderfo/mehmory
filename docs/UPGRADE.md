@@ -42,6 +42,13 @@ you get; treat it as a nudge to go read the diff, not as an error that needs sup
 
 ## `FORMAT_VERSION` history
 
+- **3** — inbox entries carry an optional `agent=` field recording which named agent
+  captured them, immediately after `host=` in the trailing comment. Entries from unnamed
+  agents omit it, as do all entries already in your store from before this change; those
+  are **not** rewritten, the parser still reads them, and they stay unattributed — an
+  entry with no agent is never routed into an agent scope. A value that fails agent-name
+  validation is dropped at parse time and the entry survives without attribution. No
+  action needed.
 - **2** (issue #20) — inbox entries carry a `host=` field recording which harness
   captured them (`claude-code` or `codex`), between `src=` and `ts=` in the trailing
   comment. Entries already in your store from before this change have no `host=`

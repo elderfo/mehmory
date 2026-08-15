@@ -85,7 +85,7 @@ you're scripting. There is no interactive `y/N` prompt anywhere in mehmory — a
 keystroke is not enough friction for `--all`, and the CLI's output contract does not allow a
 command to print a preview and then block for an answer.
 
-Three more things follow from working-tree deletion:
+Four more things follow from working-tree deletion:
 
 1. **It removes files, not history.** mehmory never rewrites your store's git history — see
    the recipe below for when you need that.
@@ -102,6 +102,33 @@ Three more things follow from working-tree deletion:
 3. **`--global` is its own scope**, not "every project" — `identity.md` and `global/pages/`
    are the most personal content in the store, and purge lets you reach them without deleting
    every project's memory along with them.
+4. **`--agent <name>` is its own scope** too, in the same sense — `agents/<name>/` holds what
+   one agent is, not what one project is, and purge lets you delete that agent without
+   touching any project's memory, `global/`, or any other agent. It also sweeps every project
+   inbox for un-integrated entries stamped `agent=<name>`, because removing the directory
+   alone would not delete the agent: the next integration would route the surviving entries
+   straight back into a fresh scope.
+
+   The two neighbouring scopes do **not** reach it, and both limits surprise people:
+
+   - **`--project` does not reach agent scopes.** An agent's self-facts are store-wide by
+     construction — one agent name resolves to one scope no matter which repo the agent was
+     working in when it learned something about itself — so what an agent learned about
+     *itself* while working on a project lives in `agents/<name>/`, not in that project's
+     scope, and purging the project leaves it in place.
+   - **`--session` cannot reach them at all.** Session provenance lives on inbox entries, an
+     agent scope has no inbox, and an integrated page carries no `src=` trailer. There is
+     nothing in `agents/<name>/` for a session id to match. Purge the page, or the agent.
+
+**The agent scope is a separation-of-concerns boundary, not a security boundary.** An agent
+name is self-declared and unauthenticated: mehmory takes whatever `MEHMORY_AGENT` or
+`identity.agent` says, validates only that it is a safe directory segment, and never verifies
+that the process claiming it is the agent it says it is. And because every agent in a repo
+shares one project inbox, anything that can write that inbox can stamp an entry with any
+agent's name, which integration will then file into that agent's scope. The isolation agent
+scopes give you is read-side and cooperative — it keeps distinct agents from being *merged*
+into one indistinct self. It does not keep one agent out of another's memory, and it is not
+a control to rely on against anything adversarial.
 
 ## Why mehmory never rewrites git history
 

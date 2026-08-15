@@ -27,6 +27,7 @@ mehmory/
 │   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
 │   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
+│   │   ├── agent.ts           # run-5: which agent is running — name resolution + single-segment validation, MEHMORY_AGENT before config.identity.agent (A21, A27)
 │   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
 │   │   └── inbox-tx.ts        # run-4: transactional inbox helper logic shared by hooks/inbox-tx.mjs and `mehmory inbox-tx` (A15, A17)
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
@@ -46,7 +47,8 @@ mehmory/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
 │   │   └── distill.ts         # Record → inbox entry distillation (D)
 │   ├── core/                  # (continued) run-3 additions:
-│   │   └── scopes.ts          # run 3: project discovery + alias resolution, one scope grammar (L)
+│   │   └── scopes.ts          # run 3: project discovery + alias resolution, one scope grammar (L);
+│                               #   run-5: agent-scope discovery under agents/<name>/
 │   └── cli/                   # run 3: the CLI — argument parsing, exit codes, --json envelope;
 │                               # no business logic (A17). Bundled to dist/cli.mjs, excluded from
 │                               # the library's importable entry.
@@ -101,6 +103,7 @@ mehmory/
 │   ├── cli-init-codex.test.ts # run-4: `mehmory init --host codex` install/uninstall
 │   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
 │   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
+│   ├── agent.test.ts          # run-5: src/core/agent.ts name resolution + validation
 │   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)

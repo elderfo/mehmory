@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-BOUZAFX2.mjs";
+} from "./chunk-ZRHJOCHJ.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -34,7 +34,7 @@ import {
   stat,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-EAC7QWRN.mjs";
+} from "./chunk-PWAGXRFX.mjs";
 
 // src/core/store.ts
 import { join } from "path";
@@ -240,7 +240,7 @@ Token estimation uses chars/4 with \xB120% tolerance.
 - **Caveman-telegraphic bullets** \u2014 short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** \u2014 avoid elaborate sentences
 - **Wikilinks** \u2014 use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** \u2014 user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`
+- **Scope rule** \u2014 user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) \u2192 \`agents/<name>/\`, by the entry's \`agent=\` stamp
 
 ## Secret Filter Limitation
 
