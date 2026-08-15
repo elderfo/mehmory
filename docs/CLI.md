@@ -49,6 +49,14 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   - `--global` — the global scope (`identity.md`, `global/pages/`). Treated as first-class,
     not as "every project" — it is the most personal content in the store and must not
     require touching every project to reach.
+  - `--agent [<name>]` — one agent scope (`agents/<name>/`). The value is optional: with no
+    value, the scope resolves from `MEHMORY_AGENT`, falling back to `identity.agent` in
+    `config.json`; bare `--agent` in a session with no agent name is a usage error. Unlike
+    `--project`, the name must match **exactly** — there is no substring pass and
+    `identity.aliases` is not consulted, because that table maps project keys. The flag is
+    what separates the two namespaces: `--agent` only ever resolves against agent scopes and
+    `--project` only ever against project keys, even when a name is a substring of a key.
+    Agent scopes appear in output labelled `agent:<name>`.
   - `--all` — every scope.
   - A command that cannot act on a scope it was given (for example, a command with no
     per-project meaning) rejects it with exit 1 rather than silently ignoring the flag.
@@ -153,7 +161,7 @@ you've ever run a session with mehmory active — the cold-start path. Defaults:
   recorded scope in the state file differs from the flags you passed. Reaching `done` deletes
   the state file.
 
-### `mehmory search <query> [--project [<key>]|--global|--all] [--limit N] [--json]`
+### `mehmory search <query> [--project [<key>]|--global|--agent [<name>]|--all] [--limit N] [--json]`
 
 Scans **pages, archive, and log** across the selected scopes and returns ranked hits as
 `{path, scope, score, snippet, stale}`. `--limit` defaults to 10, capped at 100. The scan
@@ -232,13 +240,18 @@ Aggregates only fields that actually exist in `stats.jsonl`: per-hook invocation
 age (from `inbox.md`'s mtime) and integrate cadence (from `log.md`). Nothing is synthesized
 for a metric the store doesn't record.
 
+`--agent` is accepted by the parser and rejected by the command with exit 1, exactly as
+`--global` is: every record in `stats.jsonl` carries a project key, so an agent scope has
+nothing to aggregate. `--all` still aggregates project records only; agent scopes enter the
+report solely through the directory-derived figures (inbox age, integrate cadence).
+
 Also broken down **per harness** (issue #14 story 39): every `stats.jsonl` record carries
 `host`, so the report includes an invocation count and a captured-entry count for each
 harness seen — `claude-code`, `codex`, or both, whichever actually wrote records in the
 selected scope. Text output adds one indented line per harness under `captured`; `--json`
 carries the same data as `data.hosts: [{host, count, capturedEntries}]`.
 
-### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
+### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --agent [<name>] | --all`
 
 `[--dry-run] [--export <path>] [--yes]`
 
@@ -250,6 +263,7 @@ Deletes. Preview-first, then a typed confirmation token **scaled to the blast ra
 | `--project [<key>]` | the **resolved** project key (never the substring you typed) |
 | `--session <id>` | the last 8 characters of the session id, as shown in the preview |
 | `--global` | `global` |
+| `--agent [<name>]` | the **resolved** agent name (never the empty string a bare `--agent` types) |
 | a page slug | the page's slug |
 
 **Confirmation is two invocations, not an interactive prompt.** The first run prints the
@@ -268,8 +282,8 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
 
 - A bare page slug that resolves in more than one scope exits 1, listing the candidates —
   it never deletes from both. The error's `fix` is the disambiguated command:
-  `mehmory purge <slug> --project <key>` (or `mehmory purge <slug> --global`). Passing a
-  scope beside a slug is a *qualifier*, not a second target.
+  `mehmory purge <slug> --project <key>` (or `--global`, or `--agent <name>` for a page in
+  an agent scope). Passing a scope beside a slug is a *qualifier*, not a second target.
 - A wrong token — or no token at all, which includes running the command on a terminal with
   nothing piped in — exits 4 and changes nothing.
 - `--export <path>` copies the targets before deleting; if the export fails, the command
@@ -287,7 +301,14 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
   the command's own `--help` text, and in `docs/PRIVACY.md`.
 - Within that limit, `--session` reaches **every inbox in the store**, not just the scope you
   would otherwise be in. Session ids are unique, and a session that touched two projects is
-  exactly the case where a scoped purge would silently leave a copy behind.
+  exactly the case where a scoped purge would silently leave a copy behind. Agent scopes are
+  not among those inboxes and are left untouched: capture always writes the *project* inbox,
+  so an agent scope has none.
+- `--agent <name>` deletes `agents/<name>/` **and sweeps every project inbox for
+  un-integrated entries stamped `agent=<name>`**. Removing the directory alone would not
+  delete the agent: the next integration would route those surviving entries straight back
+  into a fresh scope. Other agents, projects, and `global/` are untouched.
+- `--all` removes `agents/` alongside `global/` and `projects/`.
 
 ### `mehmory inbox-tx <append|snapshot|clear> [--json]`
 

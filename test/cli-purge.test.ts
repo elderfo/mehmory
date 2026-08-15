@@ -53,6 +53,40 @@ function seedStore(): void {
   );
 }
 
+const OTHER_KEY = 'github.com/acme/gadgets';
+
+/** An agent scope: `identity.md` is what makes the directory one, and it has no inbox. */
+function seedAgent(name: string): void {
+  write(`agents/${name}/identity.md`, `# ${name}\n`);
+  write(`agents/${name}/pages/habits.md`, `# ${name} habits\n`);
+}
+
+/**
+ * `seedStore()` plus two agent scopes and two project inboxes carrying `agent=` stamps.
+ *
+ * The second project is what proves KTD8: deleting `agents/scout/` alone leaves stamped
+ * entries in *every* inbox, and the next integration would rebuild the scope from them.
+ */
+function seedAgentStore(): void {
+  seedStore();
+  seedAgent('scout');
+  seedAgent('probe');
+  write(
+    `projects/${KEY}/inbox.md`,
+    '- keep this one <!--mehmory id=00000000000000a1 src=session-keep ts=2026-07-30T10:00:00Z-->\n' +
+      '- scout said this <!--mehmory id=00000000000000b1 src=session-a host=claude-code agent=scout ts=2026-07-30T10:00:00Z-->\n' +
+      '- probe said this <!--mehmory id=00000000000000b2 src=session-a host=claude-code agent=probe ts=2026-07-30T10:00:00Z-->\n'
+  );
+  write(
+    `projects/${OTHER_KEY}/inbox.md`,
+    '- scout said this too <!--mehmory id=00000000000000b3 src=session-b0000000 host=claude-code agent=scout ts=2026-07-30T10:00:00Z-->\n'
+  );
+}
+
+function inboxOf(key: string): string {
+  return readFileSync(join(home(), 'projects', key, 'inbox.md'), 'utf-8');
+}
+
 describe('mehmory purge', () => {
   it('exits 4 and changes nothing when the typed token is wrong', () => {
     seedStore();
@@ -249,5 +283,103 @@ describe('mehmory purge', () => {
     const run = runCli(['purge', '--all', '--global']);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('deletes one thing at a time');
+  });
+});
+
+describe('mehmory purge --agent', () => {
+  it('removes the scope and every entry stamped with that name (KTD8)', () => {
+    seedAgentStore();
+    const run = runCliTyped(['purge', '--agent', 'scout'], 'scout');
+
+    expect(run.status).toBe(0);
+    expect(existsSync(join(home(), 'agents', 'scout'))).toBe(false);
+    // Without the stamp sweep the next integration rebuilds the scope from these.
+    expect(inboxOf(KEY)).not.toContain('scout said this');
+    expect(inboxOf(OTHER_KEY)).not.toContain('scout said this too');
+  });
+
+  it('leaves other agents, projects and global intact', () => {
+    seedAgentStore();
+    expect(runCliTyped(['purge', '--agent', 'scout'], 'scout').status).toBe(0);
+
+    expect(existsSync(join(home(), 'agents', 'probe', 'identity.md'))).toBe(true);
+    expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(true);
+    expect(existsSync(join(home(), 'global', 'identity.md'))).toBe(true);
+    expect(inboxOf(KEY)).toContain('keep this one');
+    expect(inboxOf(KEY)).toContain('probe said this');
+  });
+
+  it('reports no match for an unknown name rather than creating one', () => {
+    seedAgentStore();
+    const run = runCli(['purge', '--agent', 'ghost']);
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('no agent scope matches `ghost`');
+    expect(existsSync(join(home(), 'agents', 'ghost'))).toBe(false);
+  });
+
+  it('pins the token to the resolved name, not the selector the user typed', () => {
+    seedAgentStore();
+    // Bare `--agent` is the case where the two can differ: nothing was typed at all.
+    writeFileSync(join(home(), 'config.json'), JSON.stringify({ identity: { agent: 'scout' } }));
+
+    const wrong = runCliTyped(['purge', '--agent'], '');
+    expect(wrong.status).toBe(4);
+    expect(wrong.stderr).toContain("'scout' | mehmory purge --agent");
+    expect(existsSync(join(home(), 'agents', 'scout'))).toBe(true);
+
+    const right = runCliTyped(['purge', '--agent'], 'scout');
+    expect(right.status).toBe(0);
+    expect(existsSync(join(home(), 'agents', 'scout'))).toBe(false);
+  });
+
+  it('--all removes agents/ along with global/ and projects/', () => {
+    seedAgentStore();
+    expect(runCliTyped(['purge', '--all'], 'DELETE ALL').status).toBe(0);
+
+    expect(existsSync(join(home(), 'agents'))).toBe(false);
+    expect(existsSync(join(home(), 'global'))).toBe(false);
+    expect(existsSync(join(home(), 'projects'))).toBe(false);
+  });
+
+  it('--project leaves every agent scope intact', () => {
+    seedAgentStore();
+    expect(runCliTyped(['purge', '--project', KEY], KEY).status).toBe(0);
+
+    expect(existsSync(join(home(), 'projects', KEY))).toBe(false);
+    expect(existsSync(join(home(), 'agents', 'scout', 'identity.md'))).toBe(true);
+    expect(existsSync(join(home(), 'agents', 'probe', 'identity.md'))).toBe(true);
+  });
+
+  it('--global still touches only global/identity.md and global/pages/', () => {
+    seedAgentStore();
+    expect(runCliTyped(['purge', '--global'], 'global').status).toBe(0);
+
+    expect(existsSync(join(home(), 'global', 'identity.md'))).toBe(false);
+    expect(existsSync(join(home(), 'agents', 'scout', 'identity.md'))).toBe(true);
+    expect(existsSync(join(home(), 'agents', 'probe', 'identity.md'))).toBe(true);
+  });
+
+  it('--session leaves agent scopes untouched — they hold no inbox', () => {
+    seedAgentStore();
+    const id = 'session-b0000000';
+    expect(runCliTyped(['purge', '--session', id], id.slice(-8)).status).toBe(0);
+
+    expect(inboxOf(OTHER_KEY)).not.toContain('scout said this too');
+    expect(existsSync(join(home(), 'agents', 'scout', 'identity.md'))).toBe(true);
+    expect(existsSync(join(home(), 'agents', 'scout', 'pages', 'habits.md'))).toBe(true);
+  });
+
+  it('resolves a page slug against agent scopes, and --agent qualifies it', () => {
+    seedAgentStore();
+    const ambiguous = runCli(['purge', 'habits']);
+    expect(ambiguous.status).toBe(1);
+    expect(ambiguous.stderr).toContain('agent:probe, agent:scout');
+    expect(ambiguous.stderr).toContain('mehmory purge habits --agent probe');
+
+    const run = runCliTyped(['purge', 'habits', '--agent', 'probe'], 'habits');
+    expect(run.status).toBe(0);
+    expect(existsSync(join(home(), 'agents', 'probe', 'pages', 'habits.md'))).toBe(false);
+    expect(existsSync(join(home(), 'agents', 'scout', 'pages', 'habits.md'))).toBe(true);
   });
 });

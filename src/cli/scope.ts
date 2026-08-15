@@ -8,24 +8,27 @@
  */
 
 import { join } from 'node:path';
+import { resolveAgentName } from '../core/agent.js';
 import { mehmoryHome } from '../core/home.js';
 import { resolveProjectKey } from '../core/identity.js';
-import { resolveScope } from '../core/scopes.js';
+import { AGENT_SCOPE_PREFIX, resolveAgentScope, resolveScope } from '../core/scopes.js';
 import type { MehmoryConfig } from '../core/config.js';
 import type { FlagSpec, FlagValue } from './args.js';
 import { usageError, type CommandResult } from './command.js';
 
-/** The three scope flags, in the shape `parseFlags` wants. Spread into a command's spec. */
+/** The four scope flags, in the shape `parseFlags` wants. Spread into a command's spec. */
 export const SCOPE_FLAGS: FlagSpec = {
   project: 'optional',
   global: 'boolean',
   all: 'boolean',
+  agent: 'optional',
 };
 
 /** The resolved scope a command acts on. */
 export type ScopeSelection =
   | { readonly kind: 'project'; readonly key: string; readonly dir: string }
   | { readonly kind: 'global'; readonly dir: string }
+  | { readonly kind: 'agent'; readonly name: string; readonly dir: string }
   | { readonly kind: 'all' };
 
 export type ScopeOutcome =
@@ -33,17 +36,22 @@ export type ScopeOutcome =
   | { readonly ok: false; readonly result: CommandResult };
 
 /**
- * Map `--project [<key>] | --global | --all` onto a scope.
+ * Map `--project [<key>] | --global | --agent [<name>] | --all` onto a scope.
  *
  * No flag at all means the current directory's project, which is the same thing bare
  * `--project` means. Ambiguity is exit 1 listing the candidates, never a guess.
+ *
+ * `--agent` is a separate flag rather than a differently-shaped value for `--project`
+ * because the *flag* is what separates the namespaces (KTD4): `--project` resolves only
+ * against `listProjects()` and `--agent` only against `listAgentScopes()`, so the
+ * substring pass in `resolveScope` can never wander into an agent's self.
  */
 export function selectScope(
   flags: ReadonlyMap<string, FlagValue>,
   cwd: string,
   config: MehmoryConfig
 ): ScopeOutcome {
-  const named = (['project', 'global', 'all'] as const).filter(name => flags.has(name));
+  const named = (['project', 'global', 'all', 'agent'] as const).filter(name => flags.has(name));
   if (named.length > 1) {
     return {
       ok: false,
@@ -58,6 +66,8 @@ export function selectScope(
   if (flags.has('global')) {
     return { ok: true, scope: { kind: 'global', dir: join(mehmoryHome(), 'global') } };
   }
+
+  if (flags.has('agent')) return selectAgent(flags.get('agent'), config);
 
   const selector = flags.get('project');
   if (typeof selector === 'string') {
@@ -93,6 +103,41 @@ export function selectScope(
   return { ok: true, scope: { kind: 'project', key, dir } };
 }
 
+/**
+ * `--agent [<name>]`: an exact name, or bare, meaning the agent running this session.
+ *
+ * Bare with no name resolvable is a usage error rather than a silent fall-through to the
+ * project scope — an unnamed agent has no self to address, and quietly answering about
+ * something else is worse than saying so.
+ */
+function selectAgent(selector: FlagValue | undefined, config: MehmoryConfig): ScopeOutcome {
+  const typed = typeof selector === 'string' ? selector.trim() : '';
+  const name =
+    typed === ''
+      ? resolveAgentName(process.env['MEHMORY_AGENT'], config.identity.agent)
+      : typed;
+  if (name === undefined) {
+    return {
+      ok: false,
+      result: usageError(
+        'bare `--agent` needs a named agent: neither MEHMORY_AGENT nor `identity.agent` is set',
+        'mehmory --agent <name>'
+      ),
+    };
+  }
+
+  const agent = resolveAgentScope(name);
+  if (agent === undefined) {
+    // Never created on demand: an agent scope appears when integration routes a fact
+    // into it, and a typo must not mint an empty self.
+    return {
+      ok: false,
+      result: usageError(`no agent scope matches \`${name}\``, 'mehmory status'),
+    };
+  }
+  return { ok: true, scope: { kind: 'agent', name: agent.name, dir: agent.dir } };
+}
+
 /** Human label for a scope, used in output and in the `scope` field of `--json` data. */
 export function scopeLabel(scope: ScopeSelection): string {
   switch (scope.kind) {
@@ -100,6 +145,8 @@ export function scopeLabel(scope: ScopeSelection): string {
       return scope.key;
     case 'global':
       return 'global';
+    case 'agent':
+      return AGENT_SCOPE_PREFIX + scope.name;
     case 'all':
       return 'all';
   }

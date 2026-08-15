@@ -170,6 +170,20 @@ describe('mehmory stats', () => {
     expect(run.stderr).toContain('Fix: mehmory stats --all');
   });
 
+  it('accepts `--agent` as a flag but rejects it as a scope, with exit 1', () => {
+    // Same shape as `--global`: stats.jsonl carries a project key on every record, so
+    // an agent scope has nothing to aggregate.
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    mkdirSync(join(home(), 'agents', 'scout'), { recursive: true });
+    writeFileSync(join(home(), 'agents', 'scout', 'identity.md'), '# scout\n');
+
+    const run = runCli(['stats', '--agent', 'scout'], { cwd });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('stats.jsonl is keyed by project');
+    expect(run.stderr).toContain('Fix: mehmory stats --all');
+  });
+
   it('rejects combined scope flags with exit 1', () => {
     const cwd = createTempDir('mehmory-cli-cwd');
     expect(runCli(['init'], { cwd }).status).toBe(0);

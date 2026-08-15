@@ -3,13 +3,31 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { envelopeOf, runCli } from './cli-fixture.js';
 
 function home(): string {
   return process.env.MEHMORY_HOME ?? '';
+}
+
+/** An agent scope: `identity.md` is what makes the directory one (KTD4). */
+function seedAgent(name: string): string {
+  const pagesDir = join(home(), 'agents', name, 'pages');
+  mkdirSync(pagesDir, { recursive: true });
+  writeFileSync(join(home(), 'agents', name, 'identity.md'), `# ${name}\n`);
+  return pagesDir;
+}
+
+function writeConfig(config: Record<string, unknown>): void {
+  writeFileSync(join(home(), 'config.json'), JSON.stringify(config));
+}
+
+/** The `scope` label of every hit an invocation returned, sorted. */
+function hitScopes(args: readonly string[], cwd: string): string[] {
+  const data = envelopeOf(runCli([...args, '--json'], { cwd }))['data'] as Record<string, unknown>;
+  return (data['hits'] as { scope: string }[]).map(h => h.scope).sort();
 }
 
 /** A discoverable project with a `pages/` dir ready to hold fixture pages. */
@@ -134,5 +152,113 @@ describe('mehmory search', () => {
     ] as Record<string, unknown>;
     const scopes = (data['hits'] as { scope: string }[]).map(h => h.scope).sort();
     expect(scopes).toEqual(['github.com/acme/widgets', 'global']);
+  });
+
+  it('`--all` spans agent scopes too, labelled apart from project keys', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    const { pagesDir } = seedProject('github.com/acme/widgets');
+    writeFileSync(join(pagesDir, 'notes.md'), '# Notes\n\nkumquat sighting\n');
+    mkdirSync(join(home(), 'global', 'pages'), { recursive: true });
+    writeFileSync(join(home(), 'global', 'pages', 'g.md'), '# Global\n\nkumquat reference\n');
+    writeFileSync(join(seedAgent('scout'), 'self.md'), '# Self\n\nkumquat preference\n');
+
+    expect(hitScopes(['search', 'kumquat', '--all'], cwd)).toEqual([
+      'agent:scout',
+      'github.com/acme/widgets',
+      'global',
+    ]);
+  });
+
+  it('`--agent <name>` resolves to that agent scope and nothing else', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    const { pagesDir } = seedProject('github.com/acme/widgets');
+    writeFileSync(join(pagesDir, 'notes.md'), '# Notes\n\nkumquat sighting\n');
+    writeFileSync(join(seedAgent('scout'), 'self.md'), '# Self\n\nkumquat preference\n');
+
+    expect(hitScopes(['search', 'kumquat', '--agent', 'scout'], cwd)).toEqual(['agent:scout']);
+  });
+
+  it('`--agent` with an unknown name reports no match rather than creating one', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    seedAgent('scout');
+
+    const run = runCli(['search', 'kumquat', '--agent', 'ghost'], { cwd });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('no agent scope matches `ghost`');
+    expect(existsSync(join(home(), 'agents', 'ghost'))).toBe(false);
+  });
+
+  it('bare `--agent` resolves the current session’s name from config', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    writeFileSync(join(seedAgent('scout'), 'self.md'), '# Self\n\nkumquat preference\n');
+    writeConfig({ identity: { agent: 'scout' } });
+
+    expect(hitScopes(['search', 'kumquat', '--agent'], cwd)).toEqual(['agent:scout']);
+  });
+
+  it('bare `--agent` resolves MEHMORY_AGENT ahead of config', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    writeFileSync(join(seedAgent('probe'), 'self.md'), '# Self\n\nkumquat preference\n');
+    seedAgent('scout');
+    writeConfig({ identity: { agent: 'scout' } });
+
+    process.env['MEHMORY_AGENT'] = 'probe';
+    try {
+      expect(hitScopes(['search', 'kumquat', '--agent'], cwd)).toEqual(['agent:probe']);
+    } finally {
+      delete process.env['MEHMORY_AGENT'];
+    }
+  });
+
+  it('bare `--agent` is a usage error when no name resolves', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    seedAgent('scout');
+
+    const run = runCli(['search', 'kumquat', '--agent'], { cwd });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('bare `--agent` needs a named agent');
+  });
+
+  it('rejects `--agent` combined with `--project` or `--global`', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    seedAgent('scout');
+
+    for (const other of ['--project', '--global']) {
+      const run = runCli(['search', 'kumquat', '--agent', 'scout', other], { cwd });
+      expect(run.status, other).toBe(1);
+      expect(run.stderr, other).toContain('cannot be combined');
+    }
+  });
+
+  it('keeps the two namespaces apart when a name is a substring of a key', () => {
+    // KTD4: the flag separates the namespaces, not the key shape. `--project scout`
+    // still resolves the project by substring; `--agent scout` never sees it.
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    const { pagesDir } = seedProject('github.com/acme/scout');
+    writeFileSync(join(pagesDir, 'notes.md'), '# Notes\n\nkumquat sighting\n');
+    writeFileSync(join(seedAgent('scout'), 'self.md'), '# Self\n\nkumquat preference\n');
+
+    expect(hitScopes(['search', 'kumquat', '--agent', 'scout'], cwd)).toEqual(['agent:scout']);
+    expect(hitScopes(['search', 'kumquat', '--project', 'scout'], cwd)).toEqual([
+      'github.com/acme/scout',
+    ]);
+  });
+
+  it('`--agent` never resolves a project key, even a full one', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    seedProject('github.com/acme/scout');
+
+    const run = runCli(['search', 'kumquat', '--agent', 'github.com/acme/scout'], { cwd });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('no agent scope matches');
   });
 });

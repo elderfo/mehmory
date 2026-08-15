@@ -5,7 +5,12 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
-import { listAgentScopes, listProjects, resolveScope } from '../src/core/scopes.js';
+import {
+  listAgentScopes,
+  listProjects,
+  resolveAgentScope,
+  resolveScope,
+} from '../src/core/scopes.js';
 import { agentScopePaths } from '../src/core/capture.js';
 
 /** Create `projects/<key>/inbox.md`, which is what makes a directory a project. */
@@ -124,6 +129,25 @@ describe('resolveScope', () => {
 
     expect(resolveScope('ghost', loadConfig()).kind).toBe('none');
   });
+
+  it('never crosses into agent scopes (KTD4)', () => {
+    // `--project` resolves only against `listProjects()`. An agent named `scout` is
+    // not a project, and naming it must not produce one.
+    seedAgentScope('scout');
+
+    expect(resolveScope('scout', loadConfig()).kind).toBe('none');
+  });
+
+  it('still matches a project key by substring even when an agent shares the token', () => {
+    // The segment count does not separate the namespaces — the flag does. `scout`
+    // resolving to `github.com/acme/scout` under `--project` is deliberate (KTD4).
+    seedProject('github.com/acme/scout');
+    seedAgentScope('scout');
+
+    expect(
+      (r => r.kind === 'match' && r.project.key)(resolveScope('scout', loadConfig()))
+    ).toBe('github.com/acme/scout');
+  });
 });
 
 /** Create `agents/<name>/identity.md`, which is what makes a directory an agent scope. */
@@ -222,5 +246,54 @@ describe('agentScopePaths', () => {
     agentScopePaths('scout');
 
     expect(existsSync(join(mehmoryHome(), 'agents'))).toBe(false);
+  });
+});
+
+describe('resolveAgentScope', () => {
+  it('matches an agent scope by its exact name', () => {
+    seedAgentScope('scout');
+
+    expect(resolveAgentScope('scout')).toEqual({
+      name: 'scout',
+      dir: join(mehmoryHome(), 'agents', 'scout'),
+    });
+  });
+
+  it('matches exactly, never by substring (KTD4)', () => {
+    // Unlike `resolveScope`, there is no substring pass: an agent name is one segment
+    // and a near miss must not silently address a different agent's self.
+    seedAgentScope('scout');
+
+    expect(resolveAgentScope('sc')).toBeUndefined();
+    expect(resolveAgentScope('scoutmaster')).toBeUndefined();
+  });
+
+  it('reports no match for an unknown name rather than inventing a scope', () => {
+    seedAgentScope('scout');
+
+    expect(resolveAgentScope('probe')).toBeUndefined();
+    expect(existsSync(join(mehmoryHome(), 'agents', 'probe'))).toBe(false);
+  });
+
+  it('never crosses into project keys (KTD4)', () => {
+    seedProject('github.com/acme/scout');
+
+    expect(resolveAgentScope('scout')).toBeUndefined();
+    expect(resolveAgentScope('github.com/acme/scout')).toBeUndefined();
+  });
+
+  it('ignores identity.aliases — that table maps project keys only (KTD4)', () => {
+    seedAgentScope('scout');
+    writeConfig({ identity: { aliases: { probe: 'scout' } } });
+
+    expect(resolveAgentScope('probe')).toBeUndefined();
+  });
+
+  it('refuses an unsafe name without composing a path', () => {
+    seedAgentScope('scout');
+
+    for (const name of ['..', '.', '', 'Scout', 'global', 'a/b', '../../tmp/pwned']) {
+      expect(resolveAgentScope(name), name).toBeUndefined();
+    }
   });
 });

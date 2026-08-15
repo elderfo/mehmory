@@ -15,11 +15,11 @@ import { atomicWrite, listDir, mkdir, pathExists, readFile, remove, removeDir, s
 import { mehmoryHome } from './home.js';
 import { commitPaths } from './git.js';
 import { clearInboxEntries, readInboxEntries } from './inbox.js';
-import { listProjects } from './scopes.js';
+import { AGENT_SCOPE_PREFIX, listAgentScopes, listProjects } from './scopes.js';
 import type { MehmoryError } from './errors.js';
 
-/** The five things a user can delete, in ascending blast radius. */
-export type PurgeForm = 'page' | 'session' | 'global' | 'project' | 'all';
+/** The six things a user can delete, in ascending blast radius. */
+export type PurgeForm = 'page' | 'session' | 'global' | 'agent' | 'project' | 'all';
 
 /** Inbox entries a `--session` purge removes, grouped by the inbox holding them. */
 export interface InboxEdit {
@@ -55,6 +55,9 @@ export function findPages(slug: string): readonly { scope: string; path: string 
   const candidates: { scope: string; dir: string }[] = [
     { scope: 'global', dir: join(home, 'global', 'pages') },
     ...listProjects().map(p => ({ scope: p.key, dir: join(p.dir, 'pages') })),
+    // An agent scope holds pages like any other, so a bare slug must reach it — the
+    // prefix is what keeps its label from reading as a project key.
+    ...listAgentScopes().map(a => ({ scope: AGENT_SCOPE_PREFIX + a.name, dir: join(a.dir, 'pages') })),
   ];
   for (const { scope, dir } of candidates) {
     const path = join(dir, `${slug}.md`);
@@ -63,7 +66,13 @@ export function findPages(slug: string): readonly { scope: string; path: string 
   return found.sort((a, b) => a.scope.localeCompare(b.scope));
 }
 
-/** Every inbox in the store, with the key its lock uses. */
+/**
+ * Every inbox in the store, with the key its lock uses.
+ *
+ * Deliberately *not* extended to agent scopes: capture always writes the project inbox
+ * (KTD3/R6), so an agent scope has no inbox to enumerate. `--session` therefore leaves
+ * agent scopes untouched, which is correct rather than a gap.
+ */
 function allInboxes(): readonly { inboxFile: string; key: string }[] {
   const home = mehmoryHome();
   return [
@@ -121,6 +130,34 @@ export function planProject(key: string, dir: string): PurgePlan {
 }
 
 /**
+ * The plan for `--agent [<name>]`: the scope directory **and** every stamp that would
+ * rebuild it (KTD8).
+ *
+ * Removing `agents/<name>/` alone does not delete the agent. Every un-integrated entry
+ * carrying `agent=<name>` survives in its project inbox, and the next integration
+ * routes it straight back into a fresh scope — so the sweep is part of the deletion,
+ * not a courtesy. Same shape as `planSession`, keyed on the stamp instead of `src`.
+ */
+export function planAgent(name: string, dir: string): PurgePlan {
+  const edits: InboxEdit[] = [];
+  for (const { inboxFile, key } of allInboxes()) {
+    const ids = readInboxEntries(inboxFile)
+      .filter(entry => entry.agent === name)
+      .map(entry => entry.id);
+    if (ids.length > 0) edits.push({ inboxFile, key, ids });
+  }
+  return {
+    form: 'agent',
+    label: `agent ${name}`,
+    // The **resolved** name, exactly as `planProject` pins the resolved key: a bare
+    // `--agent` types nothing at all, and an empty string must never confirm a delete.
+    token: name,
+    paths: pathExists(dir) ? [dir] : [],
+    inboxEdits: edits,
+  };
+}
+
+/**
  * The plan for `--global`: `identity.md` and `global/pages/`.
  *
  * A scope in its own right, not a subset of `--all`: this is the most personal content
@@ -144,7 +181,9 @@ export function planAll(): PurgePlan {
     form: 'all',
     label: 'all memory in ' + home,
     token: 'DELETE ALL',
-    paths: [join(home, 'global'), join(home, 'projects')].filter(p => pathExists(p)),
+    paths: [join(home, 'global'), join(home, 'projects'), join(home, 'agents')].filter(p =>
+      pathExists(p)
+    ),
     inboxEdits: [],
   };
 }

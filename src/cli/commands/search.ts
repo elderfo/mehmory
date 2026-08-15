@@ -10,7 +10,7 @@
 import { join } from 'node:path';
 import { storeExists } from '../../core/capture.js';
 import { mehmoryHome } from '../../core/home.js';
-import { listProjects } from '../../core/scopes.js';
+import { AGENT_SCOPE_PREFIX, listAgentScopes, listProjects } from '../../core/scopes.js';
 import { searchScope, type SearchHit } from '../../core/search.js';
 import { scopeFiles } from '../../core/status.js';
 import { ARCHIVE_DIR } from '../../schema/format.js';
@@ -24,11 +24,13 @@ const MAX_LIMIT = 100;
 export const command: Command = {
   name: 'search',
   summary: 'rank hits across the pages, archive and log of the selected scopes',
-  usage: 'mehmory search <query> [--project [<key>]|--global|--all] [--limit N] [--json]',
+  usage:
+    'mehmory search <query> [--project [<key>]|--global|--agent [<name>]|--all] [--limit N] [--json]',
   help: [
     '  <query>           text to search for',
     '  --project [<key>] one project; bare means the current directory (default)',
     '  --global          the global scope',
+    '  --agent [<name>]  one agent scope; bare means the agent running this session',
     '  --all             every scope in the store',
     '  --limit N         maximum hits to return (default 10, capped at 100)',
     '  --json            emit the single-line JSON envelope instead of text',
@@ -55,15 +57,16 @@ export const command: Command = {
     if (!selected.ok) return selected.result;
     const scope = selected.scope;
 
+    // Every scope but `--all` names exactly one directory, and `scopeLabel` is already
+    // the label those hits carry — the fan-out is the only case that has to enumerate.
     const targets: readonly { readonly label: string; readonly dir: string }[] =
       scope.kind === 'all'
         ? [
             { label: 'global', dir: join(mehmoryHome(), 'global') },
             ...listProjects().map(p => ({ label: p.key, dir: p.dir })),
+            ...listAgentScopes().map(a => ({ label: AGENT_SCOPE_PREFIX + a.name, dir: a.dir })),
           ]
-        : scope.kind === 'global'
-          ? [{ label: 'global', dir: scope.dir }]
-          : [{ label: scope.key, dir: scope.dir }];
+        : [{ label: scopeLabel(scope), dir: scope.dir }];
 
     const warnings: string[] = [];
     let hits: SearchHit[] = [];

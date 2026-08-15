@@ -15,10 +15,12 @@ import { relative } from 'node:path';
 import { storeExists } from '../../core/capture.js';
 import { readStdin } from '../../core/fs.js';
 import { mehmoryHome } from '../../core/home.js';
+import { AGENT_SCOPE_PREFIX } from '../../core/scopes.js';
 import {
   executePurge,
   findPages,
   historyNotice,
+  planAgent,
   planAll,
   planGlobal,
   planIsEmpty,
@@ -37,7 +39,14 @@ import {
   type Command,
   type CommandResult,
 } from '../command.js';
-import { selectScope, SCOPE_FLAGS } from '../scope.js';
+import { scopeLabel, selectScope, SCOPE_FLAGS } from '../scope.js';
+
+/** The scope flag that narrows an ambiguous page slug to the scope holding it. */
+function scopeQualifier(scope: string): string {
+  return scope.startsWith(AGENT_SCOPE_PREFIX)
+    ? `--agent ${scope.slice(AGENT_SCOPE_PREFIX.length)}`
+    : `--project ${scope}`;
+}
 
 /**
  * Exit 4's code. CLI-level, like `E_USAGE`: declining a confirmation is not a library
@@ -58,13 +67,16 @@ export const command: Command = {
   name: 'purge',
   summary: 'delete memory from the working tree and commit the removal',
   usage:
-    'mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all [--dry-run] [--export <path>] [--yes]',
+    'mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --agent [<name>] | --all [--dry-run] [--export <path>] [--yes]',
   help: [
     '  <page-slug>       one page; ambiguous across scopes exits 1 listing candidates,',
-    '                    which `--project <key>` or `--global` beside the slug resolves',
+    '                    which `--project <key>`, `--global` or `--agent <name>` beside',
+    '                    the slug resolves',
     '  --session <id>    un-integrated inbox entries captured by that session',
     '  --project [<key>] one project; bare means the current directory',
     '  --global          identity.md and global/pages/',
+    '  --agent [<name>]  one agent scope, plus every inbox entry stamped with that name;',
+    '                    bare means the agent running this session',
     '  --all             everything in the store',
     '  --dry-run         preview the targets; deletes nothing',
     '  --export <path>   copy the targets there first; aborts if the copy fails',
@@ -101,6 +113,7 @@ export const command: Command = {
       parsed.flags.has('session') ? '--session' : undefined,
       parsed.flags.has('project') ? '--project' : undefined,
       parsed.flags.has('global') ? '--global' : undefined,
+      parsed.flags.has('agent') ? '--agent' : undefined,
       parsed.flags.has('all') ? '--all' : undefined,
     ].filter((form): form is string => form !== undefined);
 
@@ -219,10 +232,10 @@ function buildPlan(
     let restrict: string | undefined;
     if (flags.has('global')) {
       restrict = 'global';
-    } else if (flags.has('project')) {
+    } else if (flags.has('project') || flags.has('agent')) {
       const scoped = selectScope(flags, ctx.cwd, ctx.config);
       if (!scoped.ok) return { result: scoped.result };
-      restrict = scoped.scope.kind === 'project' ? scoped.scope.key : undefined;
+      restrict = scoped.scope.kind === 'all' ? undefined : scopeLabel(scoped.scope);
     }
 
     const pages = findPages(slug).filter(page => restrict === undefined || page.scope === restrict);
@@ -243,7 +256,7 @@ function buildPlan(
           `\`${slug}\` exists in ${String(pages.length)} scopes: ${pages.map(p => p.scope).join(', ')}`,
           other === undefined
             ? `mehmory purge ${slug} --global`
-            : `mehmory purge ${slug} --project ${other.scope}`
+            : `mehmory purge ${slug} ${scopeQualifier(other.scope)}`
         ),
       };
     }
@@ -252,6 +265,15 @@ function buildPlan(
 
   if (flags.has('all')) return { plan: planAll() };
   if (flags.has('global')) return { plan: planGlobal() };
+
+  if (flags.has('agent')) {
+    const scoped = selectScope(flags, ctx.cwd, ctx.config);
+    if (!scoped.ok) return { result: scoped.result };
+    if (scoped.scope.kind !== 'agent') {
+      return { result: usageError('`--agent` did not resolve to an agent', 'mehmory status') };
+    }
+    return { plan: planAgent(scoped.scope.name, scoped.scope.dir) };
+  }
 
   if (flags.has('project')) {
     const scoped = selectScope(flags, ctx.cwd, ctx.config);

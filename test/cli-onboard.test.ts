@@ -284,4 +284,36 @@ describe('mehmory onboard', () => {
     const data = envelopeOf(run)['data'] as Record<string, unknown>;
     expect(data['appended']).toBe(0);
   });
+
+  it('rejects `--agent`: onboard writes an inbox and an agent scope has none', () => {
+    // Trap KTD3: `onboard` spreads SCOPE_FLAGS, so `--agent` is parseable here for free.
+    // Honouring it would create `agents/<name>/inbox.md`, the one file the scope may
+    // never have. Rejected the way `--all` already is.
+    const project = fakeProject();
+    const claudeHome = createFakeClaudeHome({
+      [project]: { 'session-a': transcript('session-a', ['use pnpm, never npm']) },
+    });
+    expect(runCli(['init'], { cwd: project, claudeHome }).status).toBe(0);
+    mkdirSync(join(home(), 'agents', 'scout'), { recursive: true });
+    writeFileSync(join(home(), 'agents', 'scout', 'identity.md'), '# scout\n');
+    const before = treeDigest(home());
+
+    const run = runCli(['onboard', '--agent', 'scout'], { cwd: project, claudeHome });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('`--agent`');
+    expect(existsSync(join(home(), 'agents', 'scout', 'inbox.md'))).toBe(false);
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it('rejects `--agent` for an unknown name without creating the directory', () => {
+    const project = fakeProject();
+    const claudeHome = createFakeClaudeHome({
+      [project]: { 'session-a': transcript('session-a', ['use pnpm, never npm']) },
+    });
+    expect(runCli(['init'], { cwd: project, claudeHome }).status).toBe(0);
+
+    const run = runCli(['onboard', '--agent', 'ghost'], { cwd: project, claudeHome });
+    expect(run.status).toBe(1);
+    expect(existsSync(join(home(), 'agents'))).toBe(false);
+  });
 });

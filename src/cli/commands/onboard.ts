@@ -59,6 +59,15 @@ export const command: Command = {
         'mehmory onboard --global'
       );
     }
+    // `--agent` rides in on `SCOPE_FLAGS`, so it parses here for free — and honouring it
+    // would create `agents/<name>/inbox.md`, the one file an agent scope may never have
+    // (KTD3). Rejected the same way `--all` is, before anything is written.
+    if (scoped.scope.kind === 'agent') {
+      return usageError(
+        '`onboard` writes an inbox and an agent scope has none, so `--agent` has no meaning',
+        'mehmory onboard --project'
+      );
+    }
 
     const caps: Record<string, number> = {
       sessions: DEFAULT_SESSION_CAP,

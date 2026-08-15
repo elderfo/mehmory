@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 import { storeExists } from '../../core/capture.js';
 import { mehmoryHome } from '../../core/home.js';
-import { listProjects } from '../../core/scopes.js';
+import { listAgentScopes, listProjects } from '../../core/scopes.js';
 import { aggregateStats } from '../../core/stats-report.js';
 import { inboxAgeMs, integrateTimestamps, scopeFiles } from '../../core/status.js';
 import { flagString, parseFlags } from '../args.js';
@@ -28,7 +28,8 @@ export const command: Command = {
     '  --since <iso>     only records at or after this ISO-8601 timestamp',
     '  --json            emit the single-line JSON envelope instead of text',
     '',
-    '  `--global` is accepted but rejected: stats.jsonl records project keys only.',
+    '  `--global` and `--agent` are accepted but rejected: stats.jsonl records project',
+    '  keys only.',
   ],
 
   run(ctx) {
@@ -50,11 +51,12 @@ export const command: Command = {
     const selected = selectScope(parsed.flags, ctx.cwd, ctx.config);
     if (!selected.ok) return selected.result;
     const scope = selected.scope;
-    if (scope.kind === 'global') {
+    if (scope.kind === 'global' || scope.kind === 'agent') {
       // Accepted by the parser, rejected by the command (criterion 12): every stats
-      // record carries a project key, so there is nothing global to aggregate.
+      // record carries a project key, so neither `global/` nor an agent scope has
+      // anything to aggregate.
       return usageError(
-        '`stats --global` has no records: stats.jsonl is keyed by project',
+        `\`stats --${scope.kind}\` has no records: stats.jsonl is keyed by project`,
         'mehmory stats --all'
       );
     }
@@ -70,7 +72,12 @@ export const command: Command = {
       ...(since !== undefined ? { since } : {}),
     });
 
-    const dirs = keys.map(key => join(mehmoryHome(), 'projects', key));
+    // Agent scopes carry no stats records, but they do have a `log.md`, so `--all`
+    // includes them in the two directory-derived figures below and nowhere else.
+    const dirs = [
+      ...keys.map(key => join(mehmoryHome(), 'projects', key)),
+      ...(scope.kind === 'all' ? listAgentScopes().map(a => a.dir) : []),
+    ];
     const inboxAge = oldestInboxAgeMs(dirs);
     const cadence = integrateCadenceDays(dirs);
 

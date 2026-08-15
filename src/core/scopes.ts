@@ -72,6 +72,16 @@ export function listProjects(): readonly ProjectScope[] {
   );
 }
 
+/**
+ * Scope-label prefix for an agent scope (`agent:scout`).
+ *
+ * Agent names and project keys live in separate namespaces (KTD4), and a scope *label*
+ * is where the two would otherwise meet: `findPages` and `search --all` mix them in one
+ * list. The prefix keeps a name from ever reading as a key, and is what `--agent` in a
+ * suggested fix is derived from.
+ */
+export const AGENT_SCOPE_PREFIX = 'agent:';
+
 /** One discovered agent scope (R2). */
 export interface AgentScope {
   /** The agent's name, which is its single directory segment under `agents/`. */
@@ -160,4 +170,18 @@ export function resolveScope(
     return { kind: 'ambiguous', candidates: candidates.map(p => p.key).sort() };
   }
   return { kind: 'none' };
+}
+
+/**
+ * Resolve an agent name to its scope, or `undefined` when nothing matches (KTD4).
+ *
+ * Exact only, and only over `listAgentScopes()`. Two deliberate differences from
+ * `resolveScope`: there is no substring pass, because an agent name is a single
+ * segment and a near miss would silently address a different agent's self; and
+ * `config.identity.aliases` is never consulted, because that table maps *project*
+ * keys and an alias pointing at an agent name would cross the namespaces the flag
+ * exists to keep apart.
+ */
+export function resolveAgentScope(name: string): AgentScope | undefined {
+  return listAgentScopes().find(agent => agent.name === name);
 }
