@@ -622,7 +622,9 @@ function validated(value, source) {
     kind: "actionable",
     what: `${source} is "${value}", which is not a safe agent name`,
     consequence: "This agent is treated as unnamed and gets no agent scope",
-    fix: `set ${source} to a lowercase name matching [a-z0-9._-]{1,64}`
+    // Names every rule the value will actually be judged against: a fix a user can
+    // follow and still be refused is worse than none.
+    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
   });
   return void 0;
 }

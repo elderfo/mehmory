@@ -327,11 +327,15 @@ function exportTargets(plan: PurgePlan, dest: string): void {
   // whole rather than the doomed entries alone: a rewritten job loses entries, and a
   // dropped one loses everything, so the original is what makes either recoverable.
   for (const edit of plan.queueEdits ?? []) {
-    // Skipped rather than exported when it is already gone: the queue is live, and a
-    // SessionStart claiming this job between planning and export moves the file. Nothing
-    // is lost by skipping — the job left the queue on its own.
-    if (!pathExists(edit.jobPath)) continue;
-    copyTree(edit.jobPath, join(dest, relative(home, edit.jobPath)));
+    // Attempted rather than existence-checked: the queue is live, so a check would only
+    // narrow the window between it and the copy, never close it — a SessionStart can
+    // claim this job at any instant and move the file. Nothing is lost when it is gone;
+    // the job left the queue under its own power.
+    try {
+      copyTree(edit.jobPath, join(dest, relative(home, edit.jobPath)));
+    } catch {
+      continue;
+    }
   }
 }
 
@@ -417,21 +421,21 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
   // back into an inbox we just swept and rebuild the scope.
   for (const edit of plan.queueEdits ?? []) {
     // The queue is live: `claimJob` moves a job to `claimed/` as a session drains it, so
-    // the file can be gone by now. `remove` and `readFile` both throw on ENOENT, and a
-    // purge that crashes mid-run instead of returning a `PurgeOutcome` is the one shape
-    // this command must never take.
-    if (!pathExists(edit.jobPath)) continue;
+    // the file can be gone or change shape at any instant. Every operation here is
+    // attempted rather than guarded by an existence check, which could only narrow the
+    // race and never close it — and a purge that throws mid-run instead of returning a
+    // `PurgeOutcome` is the one shape this command must never take, because the caller
+    // is then left unable to tell what was already deleted.
     entries += edit.removed;
-    if (edit.keep.length === 0) {
-      remove(edit.jobPath);
-      continue;
-    }
     try {
+      if (edit.keep.length === 0) {
+        remove(edit.jobPath);
+        continue;
+      }
       const parsed: unknown = JSON.parse(readFile(edit.jobPath));
       if (typeof parsed !== 'object' || parsed === null) {
-        // Same reasoning as the catch below: the file changed shape since planning, and
-        // leaving it would leave the stamps that rebuild the scope. Dropping under-reaches
-        // nothing; keeping it does.
+        // Changed shape since planning. Leaving it would leave the stamps that rebuild
+        // the scope, so dropping under-reaches nothing while keeping it does.
         remove(edit.jobPath);
         continue;
       }
@@ -440,8 +444,10 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
         JSON.stringify({ ...(parsed as Record<string, unknown>), entries: edit.keep }, null, 2)
       );
     } catch {
-      // Unreadable now though it parsed at plan time: drop it rather than leave stamps.
-      remove(edit.jobPath);
+      // Already drained, or unreadable now though it parsed at plan time. Either way the
+      // stamps are not ours to clear any more, and the drain appended them to an inbox
+      // the sweep above already covered.
+      continue;
     }
   }
 
