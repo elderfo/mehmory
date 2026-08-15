@@ -265,6 +265,26 @@ describe('buildInjection', () => {
 });
 
 describe('sub-budget allocation (KTD6)', () => {
+  it('keeps the slot flat at a lowered budget, so the three shares match unnamed', () => {
+    // Copilot caught this: scaling the slot with the total made the three shares get
+    // computed from a larger number, so a named agent on budget_tokens 400 saw identity
+    // 120 where an unnamed agent sees 100. The slot is additive, never a widener.
+    const parts = (withAgent: boolean): InjectionPart[] => [
+      { label: 'identity', content: sized('a', 400) },
+      { label: 'project', content: sized('b', 400) },
+      { label: 'index', content: sized('c', 900) },
+      ...(withAgent ? [{ label: 'agent' as const, content: sized('g', 400) }] : []),
+    ];
+
+    const unnamed = buildInjection(parts(false), { budgetTokens: 400 });
+    const named = buildInjection(parts(true), { budgetTokens: 600 });
+
+    expect(estimateTokens(named.identity)).toBe(estimateTokens(unnamed.identity));
+    expect(estimateTokens(named.project)).toBe(estimateTokens(unnamed.project));
+    expect(estimateTokens(named.index)).toBe(estimateTokens(unnamed.index));
+    expect(estimateTokens(named.agent ?? '')).toBe(200);
+  });
+
   it('never sums its floors past a budget too small to seat them', () => {
     // Copilot caught this: identity and the agent slot are each floored at one token so
     // neither is emptied, but two independent floors could sum to 2 against a budget of

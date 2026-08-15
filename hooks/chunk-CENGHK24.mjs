@@ -461,8 +461,14 @@ function commitPaths(paths, message, cwd) {
 function buildInjection(parts, options = {}) {
   const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
   const isNamed = parts.some((p) => p.label === "agent");
-  const nominalTotal = INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS;
-  const agentSlot = isNamed ? Math.min(INJECTION_AGENT_TOKENS, Math.floor(budget * INJECTION_AGENT_TOKENS / nominalTotal)) : 0;
+  const agentSlot = isNamed ? budget - INJECTION_AGENT_TOKENS >= 1 ? INJECTION_AGENT_TOKENS : (
+    // Nothing would be left for the three shares, so the slot stops being flat and
+    // takes its nominal fraction instead — otherwise it would outrank identity on a
+    // budget that cannot seat either.
+    Math.floor(
+      budget * INJECTION_AGENT_TOKENS / (INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS)
+    )
+  ) : 0;
   const scale = (budget - agentSlot) / INJECTION_BUDGET_TOKENS;
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);

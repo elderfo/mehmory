@@ -87,11 +87,21 @@ export function buildInjection(
   // an unnamed agent gets at the same configured budget, plus one slot on top (R10) —
   // and a raised or lowered budget_tokens scales all three together, as it always did.
   const isNamed = parts.some(p => p.label === 'agent');
-  // The slot is a constant, except on a budget too small to seat it — there it falls
-  // back to its nominal share (200 of 1000) so it cannot swallow the whole allocation.
-  const nominalTotal = INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS;
+  // The slot is a flat constant, so the three shares below are always computed from
+  // `budget_tokens` itself — a named agent sees exactly what an unnamed one sees at the
+  // same setting, plus the slot. Scaling the slot with the total instead would compute
+  // those shares from a larger number and quietly widen them: at budget_tokens 400 a
+  // named agent would get identity 120 where an unnamed agent gets 100. It yields only
+  // on a budget too small to seat it at all, and never takes the last token.
   const agentSlot = isNamed
-    ? Math.min(INJECTION_AGENT_TOKENS, Math.floor((budget * INJECTION_AGENT_TOKENS) / nominalTotal))
+    ? budget - INJECTION_AGENT_TOKENS >= 1
+      ? INJECTION_AGENT_TOKENS
+      : // Nothing would be left for the three shares, so the slot stops being flat and
+        // takes its nominal fraction instead — otherwise it would outrank identity on a
+        // budget that cannot seat either.
+        Math.floor(
+          (budget * INJECTION_AGENT_TOKENS) / (INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS)
+        )
     : 0;
   const scale = (budget - agentSlot) / INJECTION_BUDGET_TOKENS;
   // The two slots that are never emptied keep at least one token even when their share
