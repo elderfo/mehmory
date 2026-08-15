@@ -36,7 +36,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-CSWK42GF.mjs";
+} from "./chunk-N6JFN7S3.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";

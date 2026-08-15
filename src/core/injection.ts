@@ -67,7 +67,9 @@ export interface InjectionOptions {
  * - The agent slot exists only when an agent part was passed, so an unnamed agent's
  *   allocation is byte-identical to before agent scopes existed
  * - Truncates in priority order: index, then project, then the agent slot, then identity
- * - Identity and the agent slot are never dropped entirely (truncated, always present)
+ * - Identity is never dropped entirely (truncated, always present). The agent slot is
+ *   held to the same rule wherever the budget can seat it, but yields to zero on a budget
+ *   too small for both — identity is the one that must survive.
  * - Data-only framing is applied AFTER truncation (framing never pushes over budget)
  * - Return frame always satisfies totalTokens ≤ budget_tokens
  *

@@ -318,6 +318,18 @@ describe('inbox entry agent (R7, KTD5, FORMAT_VERSION 3)', () => {
     expect(line).toMatch(INBOX_ENTRY_PATTERN);
   });
 
+  it('keeps an entry whose agent= was hand-edited to nothing', () => {
+    // The inbox is a file people edit. A `\S+` value group would fail the whole line on
+    // this typo, losing the entry rather than just its attribution — the same silent
+    // whole-entry drop a stricter trailer causes across versions.
+    const parsed = parseInboxEntries(withAgentValue(''));
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.agent).toBeUndefined();
+    expect(parsed[0]?.text).toBe(named.text);
+    expect(parsed[0]?.host).toBe('claude-code');
+  });
+
   it('drops a traversal agent value but keeps the entry', () => {
     // The inbox is a human-editable file every agent in a repo writes to, and the value
     // read back out of it reaches a routing decision that composes a filesystem path.

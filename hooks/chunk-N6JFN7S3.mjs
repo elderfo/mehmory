@@ -664,7 +664,7 @@ function parseIndexLine(line) {
 var INBOX_ENTRY_ID_LENGTH = 16;
 var INBOX_HOSTS = ["claude-code", "codex"];
 var DEFAULT_INBOX_HOST = "claude-code";
-var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S+))? ts=(\S+)-->$/;
+var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 function inboxEntryId(seed) {
   return createHash2("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }

@@ -168,9 +168,14 @@ export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
  * agent's entry omits the segment entirely rather than carrying a sentinel, exactly as
  * a pre-`host=` line omits its host. There is no default to fall back to — an entry
  * either names an agent or names none.
+ *
+ * Its value group is `\S*`, not `\S+`, so a hand-edited `agent=` with nothing after it
+ * still matches. The inbox is a file people edit, and requiring a non-empty value would
+ * make that typo fail the whole line — losing the entry rather than its attribution.
+ * Validation below discards the empty value; the entry survives unattributed.
  */
 export const INBOX_ENTRY_PATTERN =
-  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S+))? ts=(\S+)-->$/;
+  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 
 /** One parsed inbox entry. */
 export interface InboxEntry {
