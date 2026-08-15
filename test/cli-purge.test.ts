@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
+import { executePurge, planAgent } from '../src/core/purge.js';
 import { CLI, envelopeOf, runCli, treeDigest, type CliRun } from './cli-fixture.js';
 
 function home(): string {
@@ -326,6 +327,47 @@ describe('mehmory purge --agent', () => {
 
     expect(runCliTyped(['purge', '--agent', 'scout'], 'scout').status).toBe(0);
     expect(existsSync(join(queueDir, 'deadbeefdeadbeef.json'))).toBe(false);
+  });
+
+  it('survives a queued job that vanishes between planning and execution', () => {
+    // The queue is live — claimJob moves a job to claimed/ as a session drains it — so
+    // the file can be gone by the time the purge runs. A destructive command must return
+    // a structured outcome rather than throw ENOENT out of executePurge. Driven at the
+    // core level because the window is between plan and execute, which the CLI does in
+    // one process and gives a test no seam to reach into.
+    seedAgentStore();
+    const queueDir = join(home(), '.state', 'queue');
+    mkdirSync(queueDir, { recursive: true });
+    const jobPath = join(queueDir, 'facefacefaceface.json');
+    writeFileSync(
+      jobPath,
+      JSON.stringify({
+        _jobType: 'distill-final',
+        key: KEY,
+        entries: [
+          {
+            id: 'cccccccccccccccc',
+            text: 'scout queued this',
+            src: 'sess-q',
+            host: 'claude-code',
+            agent: 'scout',
+            ts: '2026-08-15T12:00:00.000Z',
+          },
+        ],
+      })
+    );
+
+    const plan = planAgent('scout', join(home(), 'agents', 'scout'));
+    expect(plan.queueEdits ?? []).toHaveLength(1);
+
+    // Something else drains the job after the plan is made.
+    rmSync(jobPath);
+
+    const exportDir = join(createTempDir('mehmory-purge-export'), 'out');
+    const outcome = executePurge(plan, exportDir);
+
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(home(), 'agents', 'scout'))).toBe(false);
   });
 
   it('rewrites a queued job shared with another agent instead of dropping it', () => {

@@ -327,6 +327,10 @@ function exportTargets(plan: PurgePlan, dest: string): void {
   // whole rather than the doomed entries alone: a rewritten job loses entries, and a
   // dropped one loses everything, so the original is what makes either recoverable.
   for (const edit of plan.queueEdits ?? []) {
+    // Skipped rather than exported when it is already gone: the queue is live, and a
+    // SessionStart claiming this job between planning and export moves the file. Nothing
+    // is lost by skipping — the job left the queue on its own.
+    if (!pathExists(edit.jobPath)) continue;
     copyTree(edit.jobPath, join(dest, relative(home, edit.jobPath)));
   }
 }
@@ -412,6 +416,11 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
   // Queued jobs, after the inboxes: a job left behind would drain its stamped entries
   // back into an inbox we just swept and rebuild the scope.
   for (const edit of plan.queueEdits ?? []) {
+    // The queue is live: `claimJob` moves a job to `claimed/` as a session drains it, so
+    // the file can be gone by now. `remove` and `readFile` both throw on ENOENT, and a
+    // purge that crashes mid-run instead of returning a `PurgeOutcome` is the one shape
+    // this command must never take.
+    if (!pathExists(edit.jobPath)) continue;
     entries += edit.removed;
     if (edit.keep.length === 0) {
       remove(edit.jobPath);

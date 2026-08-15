@@ -28,7 +28,8 @@ export interface InjectionPart {
 
 /**
  * Injected frame: every part, truncated to budget, wrapped in data-only framing.
- * `agent` is empty whenever the caller passed no agent part (an unnamed agent).
+ * `agent` is absent whenever the caller passed no agent part (an unnamed agent), so
+ * `undefined` is what distinguishes unnamed from an agent whose content is empty.
  */
 export interface InjectionFrame {
   readonly identity: string;
