@@ -298,6 +298,69 @@ describe('mehmory purge --agent', () => {
     expect(inboxOf(OTHER_KEY)).not.toContain('scout said this too');
   });
 
+  it('sweeps queued distill jobs, so the scope cannot drain back (KTD8)', () => {
+    // SessionEnd distills but defers the write: entries wait in .state/queue until a
+    // later SessionStart drains them into an inbox, and applyDistillJob preserves the
+    // agent stamp. Sweeping only the inboxes leaves those, and the next session rebuilds
+    // the scope the user just deleted.
+    seedAgentStore();
+    const queueDir = join(home(), '.state', 'queue');
+    mkdirSync(queueDir, { recursive: true });
+    writeFileSync(
+      join(queueDir, 'deadbeefdeadbeef.json'),
+      JSON.stringify({
+        _jobType: 'distill-final',
+        key: KEY,
+        entries: [
+          {
+            id: 'aaaaaaaaaaaaaaaa',
+            text: 'scout queued this',
+            src: 'sess-q',
+            host: 'claude-code',
+            agent: 'scout',
+            ts: '2026-08-15T12:00:00.000Z',
+          },
+        ],
+      })
+    );
+
+    expect(runCliTyped(['purge', '--agent', 'scout'], 'scout').status).toBe(0);
+    expect(existsSync(join(queueDir, 'deadbeefdeadbeef.json'))).toBe(false);
+  });
+
+  it('rewrites a queued job shared with another agent instead of dropping it', () => {
+    seedAgentStore();
+    const queueDir = join(home(), '.state', 'queue');
+    mkdirSync(queueDir, { recursive: true });
+    const jobPath = join(queueDir, 'cafecafecafecafe.json');
+    const entry = (id: string, agent: string, text: string): Record<string, unknown> => ({
+      id,
+      text,
+      src: 'sess-q',
+      host: 'claude-code',
+      agent,
+      ts: '2026-08-15T12:00:00.000Z',
+    });
+    writeFileSync(
+      jobPath,
+      JSON.stringify({
+        _jobType: 'distill-final',
+        key: KEY,
+        entries: [
+          entry('aaaaaaaaaaaaaaaa', 'scout', 'scout queued this'),
+          entry('bbbbbbbbbbbbbbbb', 'probe', 'probe queued this'),
+        ],
+      })
+    );
+
+    expect(runCliTyped(['purge', '--agent', 'scout'], 'scout').status).toBe(0);
+
+    expect(existsSync(jobPath)).toBe(true);
+    const rewritten = readFileSync(jobPath, 'utf8');
+    expect(rewritten).not.toContain('scout queued this');
+    expect(rewritten).toContain('probe queued this');
+  });
+
   it('leaves other agents, projects and global intact', () => {
     seedAgentStore();
     expect(runCliTyped(['purge', '--agent', 'scout'], 'scout').status).toBe(0);

@@ -12,7 +12,7 @@
 
 import { join, relative } from 'node:path';
 import { atomicWrite, listDir, mkdir, pathExists, readFile, remove, removeDir, stat } from './fs.js';
-import { mehmoryHome } from './home.js';
+import { mehmoryHome, statePath } from './home.js';
 import { commitPaths } from './git.js';
 import { clearInboxEntries, readInboxEntries } from './inbox.js';
 import { AGENT_SCOPE_PREFIX, listAgentScopes, listProjects } from './scopes.js';
@@ -40,6 +40,8 @@ export interface PurgePlan {
   /** Files and directories to remove, absolute. */
   readonly paths: readonly string[];
   readonly inboxEdits: readonly InboxEdit[];
+  /** Queued distill jobs to rewrite or drop. Only `--agent` populates this today. */
+  readonly queueEdits?: readonly QueueEdit[];
 }
 
 /** A bare page slug that exists in more than one scope. Never deleted from both. */
@@ -98,6 +100,55 @@ function inboxEditsMatching(match: (entry: InboxEntry) => boolean): InboxEdit[] 
   return edits;
 }
 
+/** A queued `distill-final` job holding entries stamped with the purged agent. */
+export interface QueueEdit {
+  /** Absolute path of the job file. */
+  readonly jobPath: string;
+  /** Entries that survive; empty means the whole job goes. */
+  readonly keep: readonly Record<string, unknown>[];
+  /** How many entries the purge removes from this job. */
+  readonly removed: number;
+}
+
+/**
+ * Queued jobs carrying entries stamped with `name`.
+ *
+ * SessionEnd distills but defers the write: entries live in `.state/queue/*.json` until a
+ * later SessionStart drains them back into an inbox. Sweeping only the inboxes would leave
+ * those stamps behind, and `applyDistillJob` preserves `agent` when it drains — so the
+ * next session would rebuild the scope the user just deleted. `--agent` claims to remove
+ * every stamp that would rebuild the agent, and this is the other half of that claim.
+ *
+ * A job mixing two agents' entries is rewritten rather than deleted, so retiring one agent
+ * never discards another's pending work.
+ */
+function queueEditsForAgent(name: string): QueueEdit[] {
+  const edits: QueueEdit[] = [];
+  for (const dir of [statePath('queue'), join(statePath('queue'), 'claimed')]) {
+    if (!pathExists(dir)) continue;
+    for (const file of listDir(dir)) {
+      if (!file.endsWith('.json')) continue;
+      const jobPath = join(dir, file);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFile(jobPath));
+      } catch {
+        continue; // malformed job; claimJob skips it too
+      }
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      const raw = (parsed as Record<string, unknown>)['entries'];
+      if (!Array.isArray(raw)) continue;
+      const entries = raw.filter(
+        (e): e is Record<string, unknown> => typeof e === 'object' && e !== null
+      );
+      const keep = entries.filter(e => e['agent'] !== name);
+      if (keep.length === entries.length) continue;
+      edits.push({ jobPath, keep, removed: entries.length - keep.length });
+    }
+  }
+  return edits;
+}
+
 /**
  * The plan for `--session <id>`.
  *
@@ -151,8 +202,10 @@ export function planProject(key: string, dir: string): PurgePlan {
  */
 export function planAgent(name: string, dir: string): PurgePlan {
   const edits = inboxEditsMatching(entry => entry.agent === name);
+  const queueEdits = queueEditsForAgent(name);
   return {
     form: 'agent',
+    queueEdits,
     label: `agent ${name}`,
     // The **resolved** name, exactly as `planProject` pins the resolved key: a bare
     // `--agent` types nothing at all, and an empty string must never confirm a delete.
@@ -195,12 +248,19 @@ export function planAll(): PurgePlan {
 
 /** True when the plan would delete nothing. */
 export function planIsEmpty(plan: PurgePlan): boolean {
-  return plan.paths.length === 0 && plan.inboxEdits.length === 0;
+  return (
+    plan.paths.length === 0 &&
+    plan.inboxEdits.length === 0 &&
+    (plan.queueEdits ?? []).length === 0
+  );
 }
 
 /** Number of inbox entries a plan removes. */
 export function plannedEntries(plan: PurgePlan): number {
-  return plan.inboxEdits.reduce((sum, edit) => sum + edit.ids.length, 0);
+  return (
+    plan.inboxEdits.reduce((sum, edit) => sum + edit.ids.length, 0) +
+    (plan.queueEdits ?? []).reduce((sum, edit) => sum + edit.removed, 0)
+  );
 }
 
 /**
@@ -340,6 +400,27 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
   let entries = 0;
   for (const edit of plan.inboxEdits) {
     entries += clearInboxEntries(edit.inboxFile, edit.key, edit.ids).removed;
+  }
+
+  // Queued jobs, after the inboxes: a job left behind would drain its stamped entries
+  // back into an inbox we just swept and rebuild the scope.
+  for (const edit of plan.queueEdits ?? []) {
+    entries += edit.removed;
+    if (edit.keep.length === 0) {
+      remove(edit.jobPath);
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(readFile(edit.jobPath));
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      atomicWrite(
+        edit.jobPath,
+        JSON.stringify({ ...(parsed as Record<string, unknown>), entries: edit.keep }, null, 2)
+      );
+    } catch {
+      // Unreadable now though it parsed at plan time: drop it rather than leave stamps.
+      remove(edit.jobPath);
+    }
   }
 
   if (removed === 0 && entries === 0) return { ok: true, removed, entries };

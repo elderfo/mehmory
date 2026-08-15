@@ -215,7 +215,7 @@ Captured entries awaiting integration.
  * warning to it would fire on every code-only bump with nothing the user could do about
  * it. Interpolated into the template below so the two can never disagree.
  */
-export const TEMPLATE_SCHEMA_VERSION = '1';
+export const TEMPLATE_SCHEMA_VERSION = '2';
 
 /** Template for SCHEMA.md (embedded copy of assets/SCHEMA.md) */
 const SCHEMA_TEMPLATE = `---
@@ -302,7 +302,7 @@ Token estimation uses chars/4 with ±20% tolerance.
 - **Caveman-telegraphic bullets** — short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** — avoid elaborate sentences
 - **Wikilinks** — use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** — user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) → \`agents/<name>/\`, by the entry's \`agent=\` stamp
+- **Scope rule** — route by what a fact is *about*: user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) → \`agents/<name>/\`. The \`agent=\` stamp names *whose* scope a self-fact belongs to; it is set on every entry that agent captured, so it never decides *whether* a fact is a self-fact
 
 ## Secret Filter Limitation
 

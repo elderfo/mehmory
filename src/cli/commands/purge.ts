@@ -63,6 +63,17 @@ const E_ABORTED = 'E_ABORTED';
 const SESSION_REACH =
   '`--session` reaches un-integrated inbox entries only — `src=<id>` in the entry trailer is the only place session provenance survives. Content already integrated into a page is not reachable by session id. Within that limit it reaches every inbox in the store, not just the current scope.';
 
+/**
+ * The same disclosure for `--agent`, and the same reason: the sweep reaches past the
+ * scope directory in a way the flag name does not suggest.
+ *
+ * The stamp records which agent was *running* when an entry was captured, not what the
+ * entry is about, so every capture a named agent made carries it — including the project
+ * observations that integration would have filed to the project scope.
+ */
+const AGENT_REACH =
+  '`--agent` deletes the agent scope and every un-integrated inbox entry stamped with that name, in every project. The stamp marks which agent captured an entry, not what it is about, so this also deletes that agent\'s un-integrated project observations. Integrated pages are untouched — integrate first to keep that work.';
+
 export const command: Command = {
   name: 'purge',
   summary: 'delete memory from the working tree and commit the removal',
@@ -88,6 +99,8 @@ export const command: Command = {
     "    printf '%s\\n' '<token>' | mehmory purge --all",
     '',
     `  ${SESSION_REACH}`,
+    '',
+    `  ${AGENT_REACH}`,
     '',
     '  Purge deletes from the working tree and never rewrites git history.',
   ],
@@ -157,13 +170,18 @@ export const command: Command = {
       token: plan.token,
       dryRun,
       ...(plan.form === 'session' ? { reach: SESSION_REACH } : {}),
+      ...(plan.form === 'agent' ? { reach: AGENT_REACH } : {}),
     };
 
     if (planIsEmpty(plan)) {
       return { exit: EXIT.OK, lines: [`nothing to delete for ${plan.label}`], data };
     }
 
-    const notice = [...historyNotice(plan), ...(plan.form === 'session' ? [`note: ${SESSION_REACH}`] : [])];
+    const notice = [
+      ...historyNotice(plan),
+      ...(plan.form === 'session' ? [`note: ${SESSION_REACH}`] : []),
+      ...(plan.form === 'agent' ? [`note: ${AGENT_REACH}`] : []),
+    ];
 
     if (dryRun) {
       return {

@@ -103,11 +103,21 @@ Four more things follow from working-tree deletion:
    are the most personal content in the store, and purge lets you reach them without deleting
    every project's memory along with them.
 4. **`--agent <name>` is its own scope** too, in the same sense — `agents/<name>/` holds what
-   one agent is, not what one project is, and purge lets you delete that agent without
-   touching any project's memory, `global/`, or any other agent. It also sweeps every project
-   inbox for un-integrated entries stamped `agent=<name>`, because removing the directory
-   alone would not delete the agent: the next integration would route the surviving entries
-   straight back into a fresh scope.
+   one agent is, not what one project is — and purge deletes it without touching `global/`,
+   any integrated project page, or any other agent.
+
+   **It reaches further than the directory, and further than self-facts.** Removing
+   `agents/<name>/` alone would not delete the agent: an un-integrated entry stamped
+   `agent=<name>` would be routed straight back into a fresh scope by the next integration,
+   so purge sweeps those stamps out of every inbox. But the stamp records *which agent was
+   running* when an entry was captured, not what the entry is about — every capture a named
+   agent makes carries it. So `--agent scout` also deletes scout's un-integrated *project*
+   observations: build steps, layout, conventions it noticed while working, which would have
+   been filed to the project scope had you integrated first.
+
+   Integrated pages are untouched, so integrating before you purge is how you keep that
+   work. Purging an agent that has captured but never integrated throws away everything it
+   saw.
 
    The two neighbouring scopes do **not** reach it, and both limits surprise people:
 

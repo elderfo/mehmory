@@ -20,14 +20,18 @@ interface TxResult {
   stderr: string;
 }
 
-function tx(subcommand: string, input: unknown): TxResult {
+function tx(
+  subcommand: string,
+  input: unknown,
+  extraEnv: Record<string, string> = {}
+): TxResult {
   if (!existsSync(HELPER)) {
     throw new Error(`${HELPER} is missing — run \`pnpm build\` before \`pnpm test\`.`);
   }
   const run = spawnSync(process.execPath, [HELPER, subcommand], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf-8',
-    env: hermeticEnv(),
+    env: hermeticEnv(extraEnv),
     // Outside the repo: a bundle that still needs node_modules fails here.
     cwd: process.env.MEHMORY_HOME,
   });
@@ -86,6 +90,33 @@ describe('inbox-tx append', () => {
     const body = readFileSync(inbox, 'utf-8');
     expect(body).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(body).toContain('deploy key');
+  });
+});
+
+describe('inbox-tx append agent attribution', () => {
+  // The remember skill shells out to this helper from inside the agent's own process,
+  // so an unstamped entry is permanently misfiled: integrate reads a missing `agent=`
+  // as "this is a project fact", never as "the stamp was dropped".
+  it('stamps the running agent on the appended entry', () => {
+    json(
+      tx(
+        'append',
+        { inbox, key, entries: [{ text: 'scout prefers ripgrep', src: 'sess-a' }] },
+        { MEHMORY_AGENT: 'scout' }
+      )
+    );
+    expect(readFileSync(inbox, 'utf-8')).toContain('agent=scout');
+  });
+
+  it('omits the segment entirely when no agent is named', () => {
+    json(
+      tx(
+        'append',
+        { inbox, key, entries: [{ text: 'unnamed fact', src: 'sess-a' }] },
+        { MEHMORY_AGENT: '' }
+      )
+    );
+    expect(readFileSync(inbox, 'utf-8')).not.toContain('agent=');
   });
 });
 

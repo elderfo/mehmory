@@ -21,7 +21,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const command: Command = {
   name: 'stats',
   summary: 'aggregate hook latency, injection size and capture volume from stats.jsonl',
-  usage: 'mehmory stats [--project [<key>]|--global|--all] [--since <iso>] [--json]',
+  usage: 'mehmory stats [--project [<key>]|--global|--agent [<name>]|--all] [--since <iso>] [--json]',
   help: [
     '  --project [<key>] one project; bare means the current directory (default)',
     '  --all             every project in the store',

@@ -121,12 +121,15 @@ mehmory/
 ├── CODE_OF_CONDUCT.md          # Contributor Covenant 2.1
 ├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
-    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21 (C, X)
+    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
+    │                          # run-4: A22–A26; run-5: A27 (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
     ├── CONFIG.md              # run 3: all 14 config groups, real defaults, unhonored keys (X)
     ├── UPGRADE.md             # run 3: schema_version drift (X)
+    ├── plans/                 # tracked implementation-plan artifacts, one file per feature
+    │                          # (unified plan contract: Product Contract + how to build it)
     └── agents/                # where the engineering skills look for repo conventions:
         ├── issue-tracker.md   # GitHub Issues via `gh`
         ├── triage-labels.md   # the five canonical triage roles

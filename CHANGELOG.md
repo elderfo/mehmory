@@ -11,11 +11,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Agent scopes: per-agent memory beside the shared project scope.** A third scope,
+  `agents/<name>/`, holds what an agent *is* — its preferences, its style, what it has
+  learned about itself — alongside `global/` (facts about you) and `projects/<key>/` (facts
+  about the repo). An agent declares its name through `MEHMORY_AGENT`, falling back to the
+  new `identity.agent` config key; instances that share a model can then accumulate distinct
+  selves instead of pooling into one. Captured entries carry an `agent=` stamp,
+  `/mehmory:integrate` files self-facts into that agent's scope, and `--agent [<name>]`
+  addresses it from `search` and `purge`. A named agent's SessionStart injection grows by a
+  fixed 200-token slot for its own content.
+
+  An agent that declares no name is unaffected: capture, recall, injection budget and
+  on-disk layout are all unchanged, and no agent scope is created for it.
+
 - **Portable Agent Plugins packaging.** The root `plugin.json` and `skills/` directory now
   expose the Agent Plugins v1.0.0 surface while preserving Claude Code's compatibility
   manifest and lifecycle hooks.
 
 ### Changed
+
+- **`FORMAT_VERSION` is 3 and `schema_version` is 2.** Inbox entries gained an optional
+  `agent=` field; older entries are not rewritten and still parse. Downgrading is not
+  symmetric — an older build cannot parse a line carrying `agent=` at all, so integrate
+  before rolling back. `SCHEMA.md`'s scope rule gained a third clause, so `doctor` now
+  reports drift against a customized copy; adopt the new rule to route agent facts.
 
 - **Skill metadata is portable across clients.** Skill `allowed-tools` values now use the
   Agent Skills space-separated format, and the generated hook chunks are tracked so clean

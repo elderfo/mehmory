@@ -2,7 +2,8 @@
  * Injection frame assembly: formatting and framing for SessionStart injection.
  *
  * Coordinates with tokens.ts for budget enforcement (identity 200 / project 200 / index 400 = 800,
- * plus a fixed 200-token agent slot on top when the running agent is named).
+ * scaled to `injection.budget_tokens`, plus a fixed 200-token agent slot on top when the
+ * running agent is named).
  * Data-only framing is applied AFTER truncation, wrapping the content in an explicit
  * data-only wrapper so the model treats injected memory as facts, not instructions.
  */
@@ -12,7 +13,6 @@ import {
   estimateTokens,
   INJECTION_AGENT_TOKENS,
   INJECTION_IDENTITY_TOKENS,
-  INJECTION_INDEX_TOKENS,
   INJECTION_PROJECT_TOKENS,
   INJECTION_BUDGET_TOKENS,
   TOKENS_PER_CHAR,
@@ -34,7 +34,7 @@ export interface InjectionFrame {
   readonly identity: string;
   readonly project: string;
   readonly index: string;
-  readonly agent: string;
+  readonly agent?: string;
   readonly totalTokens: number;
 }
 
@@ -60,8 +60,9 @@ export interface InjectionOptions {
  * Build an injection frame from identity, project, index, and (optionally) agent parts.
  *
  * Contract:
- * - Identity, project, and the agent slot get fixed sub-budgets; the index gets whatever
- *   the total leaves over, so raising `budgetTokens` widens the index alone (R10)
+ * - The agent slot is a fixed 200 tokens; identity, project and the index split the rest
+ *   of the budget 1:1:2, so a named agent gets the same three shares an unnamed one gets
+ *   at the same configured budget, plus one slot (R10)
  * - The agent slot exists only when an agent part was passed, so an unnamed agent's
  *   allocation is byte-identical to before agent scopes existed
  * - Truncates in priority order: index, then project, then the agent slot, then identity
@@ -81,24 +82,23 @@ export function buildInjection(
     options.budgetTokens !== undefined && options.budgetTokens > 0
       ? options.budgetTokens
       : INJECTION_BUDGET_TOKENS;
-  // Fixed per-label sub-budgets, not a ratio scaled to the total: scaling would hand
-  // identity 250 and project 250 the moment the agent slot raised the total, which is
-  // exactly what R10 forbids. Identity, project, and the agent slot are constants and
-  // the index absorbs the remainder, so `budget_tokens + INJECTION_AGENT_TOKENS`
-  // widens nothing but the index and adds one slot.
-  //
-  // Below the nominal sum the whole allocation still scales down together, so a
-  // deliberately small budget_tokens tightens every part instead of spending the lot on
-  // identity and project and starving the index to nothing.
-  const agentSlot = parts.some(p => p.label === 'agent') ? INJECTION_AGENT_TOKENS : 0;
-  const nominal =
-    INJECTION_IDENTITY_TOKENS + INJECTION_PROJECT_TOKENS + INJECTION_INDEX_TOKENS + agentSlot;
-  const scale = budget < nominal ? budget / nominal : 1;
-  // The two slots that are never emptied keep at least one token even when the scaled
-  // share floors to zero — a zero sub-budget truncates to the empty string.
+  // The agent slot is a fixed addition; the original three keep the 1:1:2 split of the
+  // budget *net of that slot*. So a named agent gets exactly the identity/project/index
+  // an unnamed agent gets at the same configured budget, plus one slot on top (R10) —
+  // and a raised or lowered budget_tokens scales all three together, as it always did.
+  const isNamed = parts.some(p => p.label === 'agent');
+  // The slot is a constant, except on a budget too small to seat it — there it falls
+  // back to its nominal share (200 of 1000) so it cannot swallow the whole allocation.
+  const nominalTotal = INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS;
+  const agentSlot = isNamed
+    ? Math.min(INJECTION_AGENT_TOKENS, Math.floor((budget * INJECTION_AGENT_TOKENS) / nominalTotal))
+    : 0;
+  const scale = (budget - agentSlot) / INJECTION_BUDGET_TOKENS;
+  // The two slots that are never emptied keep at least one token even when their share
+  // floors to zero — a zero sub-budget truncates to the empty string.
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
-  const agentBudget = agentSlot === 0 ? 0 : Math.max(1, Math.floor(agentSlot * scale));
+  const agentBudget = isNamed ? Math.max(1, agentSlot) : 0;
   // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the sub-budgets
   // always sum to exactly `budget` after flooring.
   const indexBudget = Math.max(0, budget - identityBudget - projectBudget - agentBudget);

@@ -36,7 +36,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-2KJOWJLD.mjs";
+} from "./chunk-CSWK42GF.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
@@ -381,7 +381,6 @@ function completeJob(jobId) {
 var TOKENS_PER_CHAR = 0.25;
 var INJECTION_IDENTITY_TOKENS = 200;
 var INJECTION_PROJECT_TOKENS = 200;
-var INJECTION_INDEX_TOKENS = 400;
 var INJECTION_BUDGET_TOKENS = 800;
 var INJECTION_AGENT_TOKENS = 200;
 function estimateTokens(text) {
@@ -461,12 +460,13 @@ function commitPaths(paths, message, cwd) {
 // src/core/injection.ts
 function buildInjection(parts, options = {}) {
   const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
-  const agentSlot = parts.some((p) => p.label === "agent") ? INJECTION_AGENT_TOKENS : 0;
-  const nominal = INJECTION_IDENTITY_TOKENS + INJECTION_PROJECT_TOKENS + INJECTION_INDEX_TOKENS + agentSlot;
-  const scale = budget < nominal ? budget / nominal : 1;
+  const isNamed = parts.some((p) => p.label === "agent");
+  const nominalTotal = INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS;
+  const agentSlot = isNamed ? Math.min(INJECTION_AGENT_TOKENS, Math.floor(budget * INJECTION_AGENT_TOKENS / nominalTotal)) : 0;
+  const scale = (budget - agentSlot) / INJECTION_BUDGET_TOKENS;
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
-  const agentBudget = agentSlot === 0 ? 0 : Math.max(1, Math.floor(agentSlot * scale));
+  const agentBudget = isNamed ? Math.max(1, agentSlot) : 0;
   const indexBudget = Math.max(0, budget - identityBudget - projectBudget - agentBudget);
   let identityContent = "";
   let projectContent = "";

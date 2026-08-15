@@ -46,6 +46,7 @@
     "./core/tokens": "./dist/core/tokens.js",
     "./core/injection": "./dist/core/injection.js",
     "./core/scopes": "./dist/core/scopes.js",
+    "./core/agent": "./dist/core/agent.js",
     "./schema/format": "./dist/schema/format.js",
     "./transcript/reader": "./dist/transcript/reader.js",
     "./distill/patterns": "./dist/distill/patterns.js",

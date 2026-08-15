@@ -30,7 +30,7 @@ describe('help and version', () => {
   it('exits 0 for `<cmd> --help` and prints that command’s documented flags', () => {
     const run = runCli(['stats', '--help']);
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain('mehmory stats [--project [<key>]|--global|--all] [--since <iso>] [--json]');
+    expect(run.stdout).toContain('mehmory stats [--project [<key>]|--global|--agent [<name>]|--all] [--since <iso>] [--json]');
     expect(run.stdout).toContain('--since <iso>');
   });
 

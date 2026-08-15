@@ -301,15 +301,15 @@ describe('sub-budget allocation (KTD6)', () => {
     expect(estimateTokens(frame.identity)).toBe(200);
     expect(estimateTokens(frame.project)).toBe(200);
     expect(estimateTokens(frame.index)).toBe(400);
-    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
+    expect(estimateTokens(frame.agent ?? '')).toBe(INJECTION_AGENT_TOKENS);
     expect(frame.totalTokens).toBe(INJECTION_BUDGET_TOKENS + INJECTION_AGENT_TOKENS);
   });
 
   it('grows a raised budget by the same fixed slot', () => {
     const frame = buildInjection(
       [
-        { label: 'identity', content: sized('a', 300) },
-        { label: 'project', content: sized('b', 300) },
+        { label: 'identity', content: sized('a', 400) },
+        { label: 'project', content: sized('b', 400) },
         { label: 'index', content: sized('c', 1200) },
         { label: 'agent', content: sized('g', 300) },
       ],
@@ -317,11 +317,68 @@ describe('sub-budget allocation (KTD6)', () => {
     );
 
     expect(frame.totalTokens).toBe(1400);
-    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
-    expect(estimateTokens(frame.identity)).toBe(200);
-    expect(estimateTokens(frame.project)).toBe(200);
-    // The raised budget widens the index alone.
-    expect(estimateTokens(frame.index)).toBe(800);
+    // The slot is the only fixed part: the other three split the configured 1200 in
+    // the same 1:1:2 they always have, so a raised budget widens all of them.
+    expect(estimateTokens(frame.agent ?? '')).toBe(INJECTION_AGENT_TOKENS);
+    expect(estimateTokens(frame.identity)).toBe(300);
+    expect(estimateTokens(frame.project)).toBe(300);
+    expect(estimateTokens(frame.index)).toBe(600);
+  });
+
+  it('scales all three parts up with a raised unnamed budget', () => {
+    // Regression: pinning identity and project at their constants above the nominal
+    // sum truncated a raised-budget user's identity at 200 tokens where 500 fit.
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: sized('a', 600) },
+        { label: 'project', content: sized('b', 600) },
+        { label: 'index', content: sized('c', 1200) },
+      ],
+      { budgetTokens: 2000 }
+    );
+
+    expect(estimateTokens(frame.identity)).toBe(500);
+    expect(estimateTokens(frame.project)).toBe(500);
+    expect(estimateTokens(frame.index)).toBe(1000);
+    expect(frame.totalTokens).toBe(2000);
+  });
+
+  it('scales all three parts down with a lowered unnamed budget', () => {
+    const frame = buildInjection(
+      [
+        { label: 'identity', content: sized('a', 300) },
+        { label: 'project', content: sized('b', 300) },
+        { label: 'index', content: sized('c', 900) },
+      ],
+      { budgetTokens: 400 }
+    );
+
+    expect(estimateTokens(frame.identity)).toBe(100);
+    expect(estimateTokens(frame.project)).toBe(100);
+    expect(estimateTokens(frame.index)).toBe(200);
+    expect(frame.totalTokens).toBe(400);
+  });
+
+  it('gives a named agent the unnamed shares at the same configured budget', () => {
+    // The property R10 actually asks for: the slot is additive, it does not reshape
+    // what identity, project and index would have got without it.
+    const configured = 1200;
+    const base: InjectionPart[] = [
+      { label: 'identity', content: sized('a', 600) },
+      { label: 'project', content: sized('b', 600) },
+      { label: 'index', content: sized('c', 1200) },
+    ];
+
+    const unnamed = buildInjection(base, { budgetTokens: configured });
+    const named = buildInjection([...base, { label: 'agent', content: sized('g', 300) }], {
+      budgetTokens: configured + INJECTION_AGENT_TOKENS,
+    });
+
+    expect(estimateTokens(named.identity)).toBe(estimateTokens(unnamed.identity));
+    expect(estimateTokens(named.project)).toBe(estimateTokens(unnamed.project));
+    expect(estimateTokens(named.index)).toBe(estimateTokens(unnamed.index));
+    expect(estimateTokens(named.agent ?? '')).toBe(INJECTION_AGENT_TOKENS);
+    expect(named.totalTokens).toBe(configured + INJECTION_AGENT_TOKENS);
   });
 
   it('leaves the other three parts intact when the agent scope is empty', () => {
@@ -364,7 +421,7 @@ describe('truncation order with an agent slot', () => {
     expect(frame.index.length).toBe(1600);
     expect(frame.identity.length).toBe(800);
     expect(frame.project.length).toBe(800);
-    expect(frame.agent.length).toBe(800);
+    expect((frame.agent ?? '').length).toBe(800);
   });
 
   it('truncates the project next when the index is already within its share', () => {
@@ -381,7 +438,7 @@ describe('truncation order with an agent slot', () => {
     expect(frame.project.length).toBe(800);
     expect(frame.index.length).toBe(1600);
     expect(frame.identity.length).toBe(800);
-    expect(frame.agent.length).toBe(800);
+    expect((frame.agent ?? '').length).toBe(800);
   });
 
   it('truncates the agent slot next, and never empties it', () => {
@@ -395,8 +452,8 @@ describe('truncation order with an agent slot', () => {
       named
     );
 
-    expect(frame.agent.length).toBeGreaterThan(0);
-    expect(estimateTokens(frame.agent)).toBe(INJECTION_AGENT_TOKENS);
+    expect((frame.agent ?? '').length).toBeGreaterThan(0);
+    expect(estimateTokens(frame.agent ?? '')).toBe(INJECTION_AGENT_TOKENS);
     // Identity is untouched: the agent slot yields first.
     expect(frame.identity.length).toBe(800);
   });
@@ -414,8 +471,8 @@ describe('truncation order with an agent slot', () => {
 
     expect(frame.totalTokens).toBeLessThanOrEqual(3);
     expect(frame.identity.length).toBeGreaterThan(0);
-    expect(frame.agent.length).toBeGreaterThan(0);
-    expect(estimateTokens(frame.agent)).toBeLessThanOrEqual(estimateTokens(frame.identity));
+    expect((frame.agent ?? '').length).toBeGreaterThan(0);
+    expect(estimateTokens(frame.agent ?? '')).toBeLessThanOrEqual(estimateTokens(frame.identity));
   });
 });
 

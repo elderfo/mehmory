@@ -11,7 +11,8 @@ import { storeExists } from '../../core/capture.js';
 import { mehmoryHome } from '../../core/home.js';
 import { resolveProjectKey } from '../../core/identity.js';
 import { buildStatus } from '../../core/status.js';
-import { resolveScope } from '../../core/scopes.js';
+import { listAgentScopes, resolveAgentScope, resolveScope } from '../../core/scopes.js';
+import { currentAgentName } from '../../core/agent.js';
 import { parseFlags } from '../args.js';
 import { EXIT, storeMissing, usageError, type Command } from '../command.js';
 
@@ -40,8 +41,17 @@ export const command: Command = {
         : join(mehmoryHome(), 'projects', key);
 
     const report = buildStatus(key, dir);
+
+    // Every `--agent` failure path sends the user here, so this is where the answer has
+    // to be: who am I resolving as, and which agent scopes exist to name.
+    const agent = currentAgentName(ctx.config);
+    const agentHasScope = agent !== undefined && resolveAgentScope(agent) !== undefined;
+    const agentScopes = listAgentScopes().map(a => a.name);
+
     const lines = [
       `scope    project ${report.key}`,
+      `agent    ${agent === undefined ? 'unnamed' : agent + (agentHasScope ? '' : ' (no scope yet)')}`,
+      `agents   ${agentScopes.length === 0 ? 'none' : agentScopes.join(', ')}`,
       `store    ${report.dir}`,
       `pages    ${String(report.pages)}`,
       `index    ${String(report.indexLines)} lines, ${String(report.demoted)} demoted`,
@@ -55,7 +65,7 @@ export const command: Command = {
     return {
       exit: EXIT.OK,
       lines,
-      data: { scope: 'project', ...report },
+      data: { scope: 'project', ...report, agent: agent ?? null, agents: agentScopes },
       warnings: report.warnings,
     };
   },

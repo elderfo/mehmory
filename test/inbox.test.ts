@@ -348,18 +348,25 @@ describe('the golden inbox integration reads (R8, KTD7)', () => {
       `- scout prefers terse reports <!--mehmory id=${inboxEntryId('g1')} src=s host=claude-code agent=scout ts=${at(1)}-->`,
       `- probe checks the slow paths first <!--mehmory id=${inboxEntryId('g2')} src=s host=claude-code agent=probe ts=${at(2)}-->`,
       `- the build runs pnpm build <!--mehmory id=${inboxEntryId('g3')} src=s host=claude-code ts=${at(3)}-->`,
+      // The case that decides whether the routing rule is read correctly: a repo fact
+      // that carries a stamp, because every entry a named agent captures carries one.
+      // It must reach integration stamped, so the rule can route it on subject and send
+      // it to the project scope rather than into scout's private one.
+      `- the slow suite is cli-purge <!--mehmory id=${inboxEntryId('g5')} src=s host=claude-code agent=scout ts=${at(5)}-->`,
       `- a hand-edited line with a hostile stamp <!--mehmory id=${inboxEntryId('g4')} src=s host=claude-code agent=../../global ts=${at(4)}-->`,
     ];
     atomicWrite(inboxFile(), `${lines.join('\n')}\n`);
 
     const snapshot = snapshotClearInbox(inboxFile(), KEY);
 
-    expect(snapshot).toHaveLength(4);
-    expect(snapshot.map(e => e.agent)).toEqual(['scout', 'probe', undefined, undefined]);
+    expect(snapshot).toHaveLength(5);
+    expect(snapshot.map(e => e.agent)).toEqual(['scout', 'probe', undefined, 'scout', undefined]);
     // The two unattributed classes are indistinguishable on purpose: an entry that never
     // carried a name and one whose name was refused both reach integration with nothing
     // to route on, so neither can reach an agent scope (R8).
     expect(snapshot.filter(e => e.agent === undefined)).toHaveLength(2);
+    // A stamp is not a subject. Two entries carry scout's name; only one is about scout.
+    expect(snapshot.filter(e => e.agent === 'scout')).toHaveLength(2);
     // Nothing survives that could compose a path outside agents/.
     for (const e of snapshot) {
       expect(e.agent === undefined || isSafeAgentName(e.agent)).toBe(true);

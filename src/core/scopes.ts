@@ -108,7 +108,12 @@ export function listAgentScopes(): readonly AgentScope[] {
       const found: AgentScope[] = [];
       for (const name of listDir(root)) {
         const dir = join(root, name);
-        if (!stat(dir)?.isDirectory()) continue;
+        // `pathExists` first: `stat` is `statSync`, which throws on a dangling symlink or
+        // a permission-denied entry rather than returning undefined, and the whole loop
+        // runs inside `failOpen` — so one bad entry would collapse the entire listing to
+        // empty instead of being skipped. `listProjects` guards the same call for the same
+        // reason.
+        if (!pathExists(dir) || !stat(dir)?.isDirectory()) continue;
         if (!pathExists(join(dir, 'identity.md'))) continue;
         // A directory whose name is not a safe agent name was not created by mehmory
         // and can never be addressed: `agentScopePaths` throws on it, so listing it

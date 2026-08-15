@@ -3,6 +3,7 @@
  * plus the exit code asserted, so a check that silently stops firing fails here.
  */
 
+import { TEMPLATE_SCHEMA_VERSION } from '../src/core/store.js';
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -101,7 +102,7 @@ describe('mehmory doctor', () => {
     writeFileSync(join(home(), 'SCHEMA.md'), '---\nschema_version: "0"\n---\n\n# old\n');
     const found = findings(fixture);
     expect(found.get('schema_version')).toMatchObject({ level: 'warn' });
-    expect(found.get('schema_version')?.message).toContain('this build ships 1');
+    expect(found.get('schema_version')?.message).toContain(`this build ships ${TEMPLATE_SCHEMA_VERSION}`);
   });
 
   it('warns when no hook has ever reported', () => {

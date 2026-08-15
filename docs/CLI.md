@@ -233,7 +233,7 @@ pages are falling off the front of the wiki. Warnings are read via `peekWarnings
 `status` does not consume the warning channel that the next `SessionStart` also reads; run it
 as many times as you like without losing that signal.
 
-### `mehmory stats [--project [<key>]|--global|--all] [--since <iso>] [--json]`
+### `mehmory stats [--project [<key>]|--global|--agent [<name>]|--all] [--since <iso>] [--json]`
 
 Aggregates only fields that actually exist in `stats.jsonl`: per-hook invocation counts,
 `ms` p50/p95, injection token p50/p95, pointers offered, and captured entries — plus inbox
