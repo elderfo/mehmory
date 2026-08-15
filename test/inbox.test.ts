@@ -434,6 +434,27 @@ describe('agent attribution on capture (R7)', () => {
     delete process.env.MEHMORY_AGENT;
   });
 
+  it('lets two named agents share one project scope, each entry keeping its own name', () => {
+    // AE2 / KD4: the project scope is collaboration, not leakage. Two named agents in one
+    // repo write the same inbox and each reads what the other put there — only the self
+    // is separate. This is the half of the feature that is about *not* isolating things,
+    // so it needs a test as much as the isolation does.
+    const inbox = scopePaths(KEY).inboxFile;
+
+    process.env.MEHMORY_AGENT = 'scout';
+    const fromScout = rememberEntry('the release ritual is pnpm build then tag', 's1', 'claude-code', configWithAgent(''));
+    process.env.MEHMORY_AGENT = 'probe';
+    const fromProbe = rememberEntry('the slow test is cli-purge', 's2', 'claude-code', configWithAgent(''));
+
+    appendInboxEntries(inbox, [fromScout, fromProbe], KEY);
+
+    const shared = readInboxEntries(inbox);
+    expect(shared).toHaveLength(2);
+    expect(shared.map(e => e.agent)).toEqual(['scout', 'probe']);
+    // One inbox, one project key — neither agent got a scope of its own to write into.
+    expect(shared.every(e => e.text.length > 0)).toBe(true);
+  });
+
   it('stamps the resolved name onto every entry distillDelta produces', () => {
     process.env.MEHMORY_AGENT = 'scout';
 
