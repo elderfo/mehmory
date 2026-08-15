@@ -108,8 +108,9 @@ export function buildInjection(
         )
     : 0;
   const scale = (budget - agentSlot) / INJECTION_BUDGET_TOKENS;
-  // The two slots that are never emptied keep at least one token even when their share
-  // floors to zero — a zero sub-budget truncates to the empty string.
+  // Identity keeps at least one token even when its share floors to zero — a zero
+  // sub-budget truncates to the empty string. The agent slot gets the same floor, then
+  // the clamp below takes it back when the budget cannot seat both.
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
   // Floored at one token so a named agent is never emptied — but clamped to what is
@@ -182,7 +183,7 @@ export function buildInjection(
       projectTruncated = result.text;
       projectTokens = result.tokens;
     }
-    // Priority 3: Truncate the agent slot (kept, never emptied)
+    // Priority 3: Truncate the agent slot (kept whenever its sub-budget seated it)
     else if (agentTokens > agentBudget) {
       const result = truncateToTokens(agentTruncated, agentBudget);
       agentTruncated = result.text;

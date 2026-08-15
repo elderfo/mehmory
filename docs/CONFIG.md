@@ -68,8 +68,10 @@ its own scope is injected too, and it gets a fixed 200-token slot **on top of**
 The three shares above are computed from `budget_tokens` alone, so they come out exactly as
 an unnamed agent gets them at the same setting: the slot is purely additive, and an unnamed
 agent's allocation is byte-identical to what it was before agent scopes existed.
-Truncation runs in priority order — index, then project, then the agent slot, then identity
-— and the agent and identity slots are never emptied, only shortened.
+Truncation runs in priority order — index, then project, then the agent slot, then identity.
+Identity is never emptied, only shortened. The agent slot is held to the same rule wherever
+the budget can seat it, and yields entirely only on a budget too small for both — identity
+is the one that must survive.
 
 ## `decay`
 
