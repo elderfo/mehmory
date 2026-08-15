@@ -942,12 +942,15 @@ function staleSessionStartWarning(project) {
 function sessionEndLogTag(sessionId) {
   return `(session ${sessionId})`;
 }
-function finalizeSession(sessionId, transcriptPath, project, host, config = loadConfig()) {
+function finalizeSession(sessionId, transcriptPath, project, host, config = loadConfig(), options = {}) {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
   if (isPaused(sessionId)) {
     deleteSessionState(sessionId);
     markSessionFinalized(sessionId);
     return { capturedEntries: 0 };
+  }
+  if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath) && readSessionState(sessionId).transcript_path !== void 0) {
+    return { capturedEntries: 0, deferred: true };
   }
   const home = mehmoryHome();
   const paths = scopePaths(project);

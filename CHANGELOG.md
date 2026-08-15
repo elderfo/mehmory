@@ -21,6 +21,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Agent Skills space-separated format, and the generated hook chunks are tracked so clean
   marketplace checkouts contain every runtime bundle.
 
+### Fixed
+
+- **ACP sessions no longer lose their transcript to a finalize race.** The Claude Agent SDK
+  (ACP) writes its rollout *after* `SessionEnd` fires, so `finalizeSession` was retiring the
+  session and capturing nothing when the file had not yet reached disk. It now defers a
+  named-but-absent transcript, leaving the session pending so the next start's sweep captures
+  it once the rollout lands; a transcript that never appears still retires after the sweep's
+  idle window.
+
 ### Security
 
 - **Skills no longer install npm packages implicitly.** Missing `mehmory` binaries now stop

@@ -379,6 +379,25 @@ export function staleSessionStartWarning(project: string): string | undefined {
 /** Outcome of `finalizeSession`, surfaced to the adapter's stats line. */
 export interface FinalizeSessionResult {
   readonly capturedEntries: number;
+  /**
+   * True when finalization was deferred because a named transcript had not yet reached disk.
+   * The session is left pending (state kept, no marker) so a later sweep retries it.
+   */
+  readonly deferred?: boolean;
+}
+
+/** Options for `finalizeSession`. */
+export interface FinalizeSessionOptions {
+  /**
+   * When true, a named-but-absent transcript defers finalization instead of retiring the
+   * session. The Claude Agent SDK (ACP) writes its rollout *after* SessionEnd fires, so an
+   * absent transcript at that moment is a not-yet-flushed session, not an empty one:
+   * finalizing would capture nothing and lose the content the file is about to hold. The
+   * pending sweep (`finalizePendingSessions`) passes no options, so once its idle window has
+   * elapsed it force-finalizes — a transcript that never lands still retires rather than
+   * retrying forever.
+   */
+  readonly deferWhenTranscriptAbsent?: boolean;
 }
 
 /**
@@ -426,7 +445,8 @@ export function finalizeSession(
   transcriptPath: string | undefined,
   project: string,
   host: InboxHost,
-  config: MehmoryConfig = loadConfig()
+  config: MehmoryConfig = loadConfig(),
+  options: FinalizeSessionOptions = {}
 ): FinalizeSessionResult {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
 
@@ -434,6 +454,24 @@ export function finalizeSession(
     deleteSessionState(sessionId);
     markSessionFinalized(sessionId);
     return { capturedEntries: 0 };
+  }
+
+  // A named transcript that has not reached disk is a not-yet-flushed session, not an empty
+  // one (ACP writes its rollout after SessionEnd fires). Retiring it here captures nothing and
+  // loses the content once the file lands, so defer: leave the state pending for a later
+  // start's sweep, which passes no options and force-finalizes after its idle window if the
+  // transcript never appears. Recovery relies on `transcript_path` being persisted in the
+  // session state (`rememberSessionOrigin`), which is what keeps the session eligible in
+  // `listPendingSessions`. Guard on that: only defer when the persisted state actually carries
+  // a transcript path, so a session that could never be swept (state written without one, or
+  // `rememberSessionOrigin` failed) is retired now rather than stranded in perpetual pending.
+  if (
+    options.deferWhenTranscriptAbsent &&
+    transcriptPath &&
+    !pathExists(transcriptPath) &&
+    readSessionState(sessionId).transcript_path !== undefined
+  ) {
+    return { capturedEntries: 0, deferred: true };
   }
 
   const home = mehmoryHome();
