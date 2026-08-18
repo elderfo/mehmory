@@ -1,0 +1,109 @@
+import { describe, it, expect } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { isSafeAgentName, resolveAgentName } from '../src/core/agent.js';
+import { statePath } from '../src/core/home.js';
+
+/** Contents of the store's errors.log ('' when nothing was logged). */
+function errorsLog(): string {
+  const path = statePath('errors.log');
+  return existsSync(path) ? readFileSync(path, 'utf-8') : '';
+}
+
+describe('isSafeAgentName', () => {
+  it('accepts a lowercase single segment over the safe class', () => {
+    expect(isSafeAgentName('scout')).toBe(true);
+    expect(isSafeAgentName('scout_2.0-x')).toBe(true);
+    expect(isSafeAgentName('scout-2.0')).toBe(true);
+  });
+
+  it('rejects the empty string', () => {
+    expect(isSafeAgentName('')).toBe(false);
+  });
+
+  it('rejects a 65-character name and accepts a 64-character one', () => {
+    expect(isSafeAgentName('a'.repeat(64))).toBe(true);
+    expect(isSafeAgentName('a'.repeat(65))).toBe(false);
+  });
+
+  it('rejects `.` and `..`', () => {
+    expect(isSafeAgentName('.')).toBe(false);
+    expect(isSafeAgentName('..')).toBe(false);
+  });
+
+  it('rejects path separators and traversal', () => {
+    for (const name of ['a/b', '../a', 'a/../b', '\\a', 'a\\b', '/scout']) {
+      expect(isSafeAgentName(name), name).toBe(false);
+    }
+  });
+
+  it('rejects whitespace', () => {
+    for (const name of ['my agent', ' scout', 'scout ', ' ']) {
+      expect(isSafeAgentName(name), name).toBe(false);
+    }
+  });
+
+  it('rejects uppercase', () => {
+    expect(isSafeAgentName('Scout')).toBe(false);
+    expect(isSafeAgentName('scout')).toBe(true);
+  });
+
+  it('rejects each reserved token', () => {
+    for (const name of ['global', 'projects', 'agents', 'all']) {
+      expect(isSafeAgentName(name), name).toBe(false);
+    }
+  });
+});
+
+describe('resolveAgentName', () => {
+  it('resolves a valid MEHMORY_AGENT value', () => {
+    expect(resolveAgentName('scout', '')).toBe('scout');
+  });
+
+  it('falls back to config.identity.agent when the environment is unset', () => {
+    expect(resolveAgentName(undefined, 'archivist')).toBe('archivist');
+  });
+
+  it('prefers the environment value when both are set', () => {
+    expect(resolveAgentName('scout', 'archivist')).toBe('scout');
+  });
+
+  it('resolves unnamed when neither is set', () => {
+    expect(resolveAgentName(undefined, undefined)).toBeUndefined();
+    expect(resolveAgentName('', '')).toBeUndefined();
+  });
+
+  it('resolves unnamed for a name that could escape the store root', () => {
+    for (const name of ['a/b', '..', '.hidden', 'my agent', 'a\\b']) {
+      expect(resolveAgentName(name, undefined), name).toBeUndefined();
+    }
+  });
+
+  it('rejects `Scout` and accepts `scout`', () => {
+    expect(resolveAgentName('Scout', undefined)).toBeUndefined();
+    expect(resolveAgentName('scout', undefined)).toBe('scout');
+  });
+
+  it('resolves unnamed for each reserved token', () => {
+    for (const name of ['global', 'projects', 'agents', 'all']) {
+      expect(resolveAgentName(name, undefined), name).toBeUndefined();
+    }
+  });
+
+  it('refuses an invalid environment name rather than falling through to config', () => {
+    expect(resolveAgentName('../evil', 'archivist')).toBeUndefined();
+  });
+
+  it('warns naming the rejected value and MEHMORY_AGENT as its source', () => {
+    expect(() => resolveAgentName('../evil', undefined)).not.toThrow();
+    const log = errorsLog();
+    expect(log).toContain('../evil');
+    expect(log).toContain('MEHMORY_AGENT');
+  });
+
+  it('warns naming the rejected value and config.identity.agent as its source', () => {
+    expect(() => resolveAgentName(undefined, 'Scout')).not.toThrow();
+    const log = errorsLog();
+    expect(log).toContain('Scout');
+    expect(log).toContain('config.identity.agent');
+  });
+});

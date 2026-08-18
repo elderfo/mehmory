@@ -3,9 +3,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isSafeAgentName } from '../core/agent.js';
 
 /** Format version, bumped when the template or structure changes deliberately (U1). */
-export const FORMAT_VERSION = 2;
+export const FORMAT_VERSION = 3;
 
 /** Page type enumeration for frontmatter. */
 export const PAGE_TYPES = ['decision', 'procedure', 'entity', 'preference', 'gotcha'] as const;
@@ -149,9 +150,9 @@ export type InboxHost = (typeof INBOX_HOSTS)[number];
 export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
 
 /**
- * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 2):
+ * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 3):
  *
- *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex> ts=<iso8601>-->`
+ *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex>[ agent=<name>] ts=<iso8601>-->`
  *
  * The text is human-readable markdown; the trailing HTML comment carries machine
  * identity and is invisible in rendered markdown. Exactly one line per entry, so a
@@ -162,9 +163,19 @@ export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
  * written under FORMAT_VERSION 1 have no `host=` segment at all, and the transactional
  * helper that builds entries pre-dates host-threading too. `parseInboxEntries` fills
  * the gap with `DEFAULT_INBOX_HOST`; `serializeInboxEntry` always emits the field.
+ *
+ * `agent` follows `host` and is optional in both directions (R7, KTD5): an unnamed
+ * agent's entry omits the segment entirely rather than carrying a sentinel, exactly as
+ * a pre-`host=` line omits its host. There is no default to fall back to — an entry
+ * either names an agent or names none.
+ *
+ * Its value group is `\S*`, not `\S+`, so a hand-edited `agent=` with nothing after it
+ * still matches. The inbox is a file people edit, and requiring a non-empty value would
+ * make that typo fail the whole line — losing the entry rather than its attribution.
+ * Validation below discards the empty value; the entry survives unattributed.
  */
 export const INBOX_ENTRY_PATTERN =
-  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))? ts=(\S+)-->$/;
+  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 
 /** One parsed inbox entry. */
 export interface InboxEntry {
@@ -181,6 +192,13 @@ export interface InboxEntry {
    * returns.
    */
   readonly host?: InboxHost;
+  /**
+   * Agent that captured the entry, when one was named (R7). Absent for an unnamed
+   * agent and for every entry written before FORMAT_VERSION 3 — and absent, too, for a
+   * line whose stamped value fails `isSafeAgentName`, since the value becomes a
+   * directory segment under `agents/` and the inbox is hand-editable.
+   */
+  readonly agent?: string;
   /** ISO-8601 capture timestamp. */
   readonly ts: string;
 }
@@ -214,7 +232,12 @@ export function serializeInboxEntry(entry: InboxEntry): string {
     .replace(/--(!?)>/g, '--$1\\>')
     .trim();
   const host = entry.host ?? DEFAULT_INBOX_HOST;
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
+  // Omitted entirely when there is no name — no sentinel to teach every reader about.
+  // Revalidated here as well as on parse (KTD5): this is the write boundary, and an
+  // unsafe value must never reach the file in the first place.
+  const agent =
+    entry.agent !== undefined && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : '';
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
 }
 
 /**
@@ -226,7 +249,7 @@ export function parseInboxEntries(content: string): InboxEntry[] {
   for (const line of content.split('\n')) {
     const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
     if (!m) continue;
-    const [, text, id, src, rawHost, ts] = m;
+    const [, text, id, src, rawHost, rawAgent, ts] = m;
     if (text === undefined || id === undefined || src === undefined || ts === undefined) {
       continue;
     }
@@ -237,11 +260,17 @@ export function parseInboxEntries(content: string): InboxEntry[] {
       rawHost !== undefined && (INBOX_HOSTS as readonly string[]).includes(rawHost)
         ? (rawHost as InboxHost)
         : DEFAULT_INBOX_HOST;
+    // Unlike `host`, a missing agent has no default — and a *present* one is only kept
+    // when it is safe (KTD5). The inbox is hand-editable and shared by every agent in a
+    // repo, so a stamped `agent=../../global` read back here would reach a routing
+    // decision that composes a filesystem path. The value is dropped, the entry is not.
+    const agent = rawAgent !== undefined && isSafeAgentName(rawAgent) ? rawAgent : undefined;
     entries.push({
       id,
       text: text.replace(/--(!?)\\>/g, '--$1>').replace(/\\n/g, '\n'),
       src,
       host,
+      ...(agent !== undefined ? { agent } : {}),
       ts,
     });
   }

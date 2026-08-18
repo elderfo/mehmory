@@ -66,6 +66,8 @@ export interface MehmoryConfig {
   };
   readonly identity: {
     readonly aliases: Record<string, string>;
+    /** Default agent name, used when `MEHMORY_AGENT` is unset. Empty means unnamed. */
+    readonly agent: string;
   };
   readonly lock: {
     readonly retry_count: number;
@@ -144,6 +146,7 @@ const DEFAULTS: MehmoryConfig = {
   },
   identity: {
     aliases: {},
+    agent: '',
   },
   lock: {
     retry_count: 50,

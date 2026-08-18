@@ -56,8 +56,21 @@ This budget governs **stored memory only**. `SessionStart` also emits a fixed
 do with it — and is capped by its own test rather than by this key.
 
 - `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
-  index content. At the default 800, the split is identity 200 / project 200 / index 400;
-  below 800, sub-budgets scale proportionally. **Honored** (`buildInjection`).
+  index content. At the default 800, the split is identity 200 / project 200 / index 400.
+  All three scale with the total in that 1:1:2 ratio, so raising or lowering
+  `budget_tokens` moves them together — 2000 gives identity 500 / project 500 / index 1000
+  — and the index absorbs whatever the flooring leaves over. **Honored**
+  (`buildInjection`).
+
+**The named-agent share.** When the running agent has a name (see `identity.agent` below),
+its own scope is injected too, taking a fourth share of the *same* `budget_tokens` rather
+than adding to it. Its nominal size is identity's, so a named frame's nominal split is
+identity 200 / agent 200 / project 200 / index 400 and every share scales to the configured
+budget against that total of 1000: at the default 800 a named agent gets identity 160 /
+agent 160 / project 160 / index 320. `budget_tokens` stays a hard cap either way, and an
+unnamed agent's allocation is byte-identical to what it was before agent scopes existed.
+Truncation runs in priority order — index, then project, then the agent share, then identity.
+Identity is never emptied, only shortened.
 
 ## `decay`
 
@@ -189,13 +202,32 @@ through.
 ## `identity`
 
 ```json
-{ "identity": { "aliases": {} } }
+{ "identity": { "aliases": {}, "agent": "" } }
 ```
 
 - `aliases` — maps a project key you no longer want (a split-off or merged repo) to the key
   its memory should resolve to instead. **Honored** (`src/core/identity.ts`,
   `src/core/scopes.ts`) — scope resolution checks aliases before matching a `--project`
   selector.
+- `agent` — the name of the agent running on this machine. A named agent gets a scope of its
+  own at `agents/<name>/` holding what it is — its preferences, its style, its non-project
+  knowledge — captures stamped with that name, and that scope injected at `SessionStart`.
+  Empty (the default) means unnamed: no agent scope, and capture, recall, and on-disk layout
+  are exactly as they were before agent scopes existed. **Honored** (`src/core/agent.ts`,
+  `src/core/capture.ts`).
+
+  The name must be a single path segment matching `[a-z0-9._-]+`, at most 64 characters, and
+  may not be `.`, start with a dot, or be one of the tokens the scope grammar already owns
+  (`global`, `projects`, `agents`, `all`). An invalid name is **refused, never rewritten**:
+  mehmory warns with `E_AGENT_NAME_INVALID` and the agent runs unnamed rather than adopting
+  a mangled identity.
+
+  **`identity.agent` is store-wide, not per process.** It is one value in one
+  `config.json`, so every agent on the machine that reads it resolves to the same name and
+  the same scope. If you run more than one agent here, leave it unset and name each process
+  through the `MEHMORY_AGENT` environment variable at launch instead — that is what the
+  environment variable is for, and it takes precedence over this key when both are set.
+  `mehmory init` never writes an agent name, so having one stays an explicit act.
 
 ## `lock`
 
@@ -263,6 +295,25 @@ signal is which real turn it dropped.
 Not a `config.json` key — an environment variable that overrides the store's location for
 every command and hook. Every path example in this document, and in every other doc in this
 set, should be read relative to `$MEHMORY_HOME` when it's set, not literally `~/.mehmory`.
+
+## `MEHMORY_AGENT`
+
+Not a `config.json` key — the environment variable that names the agent running this
+process. It takes precedence over `identity.agent`, which is the machine-wide default
+underneath it, and it is the only way to give two agents on one machine different names:
+`config.json` is store-wide, so a name set there applies to every process that does not
+override it.
+
+Set it and the agent gets a scope of its own at `~/.mehmory/agents/<name>/`. Leave it
+unset with no `identity.agent` either and the agent runs unnamed — it captures to and
+recalls from the project scope and `global/` exactly as it always has, and no agent scope
+is created for it.
+
+The same value on two different surfaces unifies them: one agent reachable over two
+platforms shares one memory when both sessions declare the same name.
+
+An unusable name is refused rather than repaired, and the agent runs unnamed — see
+`E_AGENT_NAME_INVALID` in `docs/TROUBLESHOOTING.md`.
 
 ## `CODEX_HOME`
 

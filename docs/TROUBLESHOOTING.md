@@ -193,6 +193,20 @@ Reported as a **warning**, not an error: the hooks are what capture and inject, 
 keep working. What you will notice instead is the inbox filling up and never being merged
 into the wiki.
 
+## E_AGENT_NAME_INVALID (actionable)
+
+`MEHMORY_AGENT`, or `identity.agent` in `config.json`, holds a value that cannot be a
+directory name under `agents/`. Consequence: *this agent runs unnamed* — it captures and
+recalls the project and global scopes exactly as before, but gets no agent scope of its own
+and stamps no attribution on what it captures. Fix: set the name to 1-64 characters of
+`[a-z0-9._-]`, not starting with a dot, and not one of `global`, `projects`, `agents`, `all`.
+
+An invalid name is refused rather than rewritten, and does not fall back to the other source:
+a hashed or substituted name would be unreadable, and silently adopting `config.identity.agent`
+after rejecting `MEHMORY_AGENT` would file this agent's memory under a different identity than
+the one it declared. Lowercase only, because `Scout` and `scout` would share one directory on a
+case-insensitive filesystem.
+
 ## CLI-level codes (not in `ERROR_KINDS`)
 
 These three shapes are raised by `src/cli/` and never by a library function, so they are

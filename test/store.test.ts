@@ -6,9 +6,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { initStore } from '../src/core/store.js';
+import { initStore, TEMPLATE_SCHEMA_VERSION } from '../src/core/store.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { pathExists, readFile, mkdir, atomicWrite, listDir } from '../src/core/fs.js';
+import { agentScopePaths } from '../src/core/capture.js';
 import { createTempDir, cleanupTempDir } from './helpers.js';
 
 // Note: test/setup.ts already guards MEHMORY_HOME to prevent touching ~/.mehmory
@@ -95,7 +96,7 @@ describe('initStore', () => {
     expect(pathExists(schemaPath)).toBe(true);
 
     const content = readFile(schemaPath);
-    expect(content).toContain('schema_version: "1"');
+    expect(content).toContain(`schema_version: "${TEMPLATE_SCHEMA_VERSION}"`);
     expect(content).toContain('user-editable guidance');
   });
 
@@ -318,5 +319,36 @@ describe('SCHEMA.md / SCHEMA_TEMPLATE drift', () => {
     );
 
     expect(written).toBe(asset);
+  });
+});
+
+describe('the agents/ root is created lazily (R11)', () => {
+  it('is absent from a fresh store where no agent is ever named', () => {
+    initStore();
+
+    // Pinned as an exact listing: an eager `mkdir` in `initStore` would add a
+    // top-level directory to every store, including ones that never name an agent.
+    expect([...listDir(mehmoryHome())].sort()).toEqual([
+      '.git',
+      '.gitignore',
+      '.state',
+      'SCHEMA.md',
+      'config.json',
+      'global',
+      'projects',
+    ]);
+  });
+
+  it('appears on the first named-agent write', () => {
+    initStore();
+    const home = mehmoryHome();
+    expect(pathExists(join(home, 'agents'))).toBe(false);
+
+    const paths = agentScopePaths('scout');
+    mkdir(paths.pagesDir);
+    atomicWrite(paths.identityFile, '# Who I am\n');
+
+    expect(pathExists(join(home, 'agents'))).toBe(true);
+    expect(listDir(join(home, 'agents'))).toEqual(['scout']);
   });
 });

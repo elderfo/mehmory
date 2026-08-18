@@ -19,6 +19,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { currentAgentName } from './agent.js';
 import { type MehmoryConfig } from './config.js';
 import { statePath } from './home.js';
 import { atomicWrite, pathExists, readFile, remove } from './fs.js';
@@ -87,6 +88,27 @@ function declaredHost(input: Record<string, unknown>): InboxHost | undefined {
   return value as InboxHost;
 }
 
+/**
+ * Why `agent` has no declared counterpart to `host`.
+ *
+ * `host` accepts a top-level override because a *better* source than the running
+ * process exists: the session that produced the entry recorded its own harness, so a
+ * re-appended entry stays attributed to it. There is no such source for the agent —
+ * session state records none — so a declared `agent` could only ever be a guess, and
+ * this helper runs inside the agent's own process, where `MEHMORY_AGENT` is the
+ * authoritative answer.
+ *
+ * A declared value is refused rather than ignored, for the same reason an unknown
+ * `host` is refused: `agent=` is the routing decision integrate reads, so a wrong or
+ * silently-dropped one files the memory into the wrong scope permanently, and that is
+ * invisible once written.
+ */
+function rejectDeclaredAgent(input: Record<string, unknown>): void {
+  if (input['agent'] !== undefined) {
+    throw new TxError('"agent" cannot be declared; it comes from MEHMORY_AGENT');
+  }
+}
+
 function doAppend(
   input: Record<string, unknown>,
   config: MehmoryConfig
@@ -97,6 +119,12 @@ function doAppend(
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
 
   const host = declaredHost(input);
+  rejectDeclaredAgent(input);
+  // The running agent, resolved once for the whole append the way `secrets` is: the CLI
+  // and the bundled helper both run in the agent's own process (R1). Without this the
+  // remember path drops the stamp that `distillDelta`/`rememberEntry` set, and integrate
+  // reads a missing `agent=` as "project fact", never as "stamp lost".
+  const agent = currentAgentName(config);
   // Config is threaded from the adapter (A21); `redact` never reads it itself, and one
   // read serves the whole append rather than one per entry (criterion 13).
   const secrets = config.secrets;
@@ -111,6 +139,7 @@ function doAppend(
       text,
       src,
       ...(entryHost !== undefined ? { host: entryHost } : {}),
+      ...(agent !== undefined ? { agent } : {}),
       ts,
     };
   });

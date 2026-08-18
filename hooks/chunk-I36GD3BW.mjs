@@ -63,7 +63,14 @@ var ERROR_KINDS = {
   E_CODEX_HOOKS_UNWIRED: "actionable",
   /** The mehmory skills are not installed for Codex, so the judgment-work commands
    * (integrate, lint, onboard) are unavailable there. Capture still runs. */
-  E_CODEX_SKILLS_MISSING: "actionable"
+  E_CODEX_SKILLS_MISSING: "actionable",
+  // ─── Run 5 (agent scopes) ───
+  /** A declared agent name is not usable as a directory segment, so the agent runs
+   * unnamed and gets no agent scope. Its own code rather than `E_CONFIG_PARSE`: the
+   * name usually comes from the environment rather than config, and the hourly warning
+   * rate limit is per code — sharing a bucket would let an unrelated config warning
+   * suppress the one that tells an operator which agent is misconfigured. */
+  E_AGENT_NAME_INVALID: "actionable"
 };
 var logFileSizeState = null;
 var cliMode = false;
@@ -412,7 +419,8 @@ var DEFAULTS = {
     cache_ttl_ms: 3e5
   },
   identity: {
-    aliases: {}
+    aliases: {},
+    agent: ""
   },
   lock: {
     retry_count: 50,
@@ -588,6 +596,40 @@ function tryProjectLock(key, fn) {
 
 // src/schema/format.ts
 import { createHash as createHash2 } from "crypto";
+
+// src/core/agent.ts
+var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
+var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
+var MAX_AGENT_NAME_LENGTH = 64;
+function isSafeAgentName(name) {
+  if (name.length === 0 || name.length > MAX_AGENT_NAME_LENGTH) return false;
+  if (!SAFE_AGENT_NAME.test(name)) return false;
+  if (name.startsWith(".")) return false;
+  return !RESERVED_AGENT_NAMES.includes(name);
+}
+function resolveAgentName(envValue, configValue) {
+  if (envValue) return validated(envValue, "MEHMORY_AGENT");
+  if (configValue) return validated(configValue, "config.identity.agent");
+  return void 0;
+}
+function currentAgentName(config) {
+  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+}
+function validated(value, source) {
+  if (isSafeAgentName(value)) return value;
+  logError({
+    code: "E_AGENT_NAME_INVALID",
+    kind: "actionable",
+    what: `${source} is "${value}", which is not a safe agent name`,
+    consequence: "This agent is treated as unnamed and gets no agent scope",
+    // Names every rule the value will actually be judged against: a fix a user can
+    // follow and still be refused is worse than none.
+    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
+  });
+  return void 0;
+}
+
+// src/schema/format.ts
 var FRONTMATTER_DIVIDER = "---";
 function readFrontmatter(contents) {
   const lines = contents.split("\n");
@@ -624,30 +666,33 @@ function parseIndexLine(line) {
 var INBOX_ENTRY_ID_LENGTH = 16;
 var INBOX_HOSTS = ["claude-code", "codex"];
 var DEFAULT_INBOX_HOST = "claude-code";
-var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))? ts=(\S+)-->$/;
+var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 function inboxEntryId(seed) {
   return createHash2("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }
 function serializeInboxEntry(entry) {
   const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
   const host = entry.host ?? DEFAULT_INBOX_HOST;
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
+  const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
 }
 function parseInboxEntries(content) {
   const entries = [];
   for (const line of content.split("\n")) {
     const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
     if (!m) continue;
-    const [, text, id, src, rawHost, ts] = m;
+    const [, text, id, src, rawHost, rawAgent, ts] = m;
     if (text === void 0 || id === void 0 || src === void 0 || ts === void 0) {
       continue;
     }
     const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
+    const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
     entries.push({
       id,
       text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
       src,
       host,
+      ...agent !== void 0 ? { agent } : {},
       ts
     });
   }
@@ -1143,6 +1188,8 @@ export {
   atomicWrite,
   appendRecord,
   loadConfig,
+  isSafeAgentName,
+  currentAgentName,
   withProjectLock,
   tryProjectLock,
   readFrontmatter,

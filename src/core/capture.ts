@@ -27,7 +27,8 @@ import { commitPaths } from './git.js';
 import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
-import { buildInjection } from './injection.js';
+import { currentAgentName, isSafeAgentName } from './agent.js';
+import { buildInjection, type InjectionPart } from './injection.js';
 import { estimateTokens } from './tokens.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 import { readSession } from '../transcript/host.js';
@@ -58,6 +59,51 @@ export function scopePaths(key: string): ScopePaths {
     inboxFile: join(projectDir, 'inbox.md'),
     logFile: join(projectDir, 'log.md'),
     pagesDir: join(projectDir, 'pages'),
+  };
+}
+
+/**
+ * Absolute paths of the files one agent scope is made of (R2).
+ *
+ * Deliberately not `ScopePaths`: there is no `inboxFile`, because capture always
+ * appends to the *project* inbox (R6) and the agent name rides on the entry (KD3).
+ * A separate type is what makes an agent inbox unrepresentable rather than merely
+ * discouraged — the same reason `listAgentScopes` keys on `identity.md`.
+ */
+export interface AgentScopePaths {
+  /** `<home>/agents/<name>` — where this agent's own memory lives. */
+  readonly agentDir: string;
+  /** What this agent is; the page its sessions inject as their self. */
+  readonly identityFile: string;
+  readonly indexFile: string;
+  readonly pagesDir: string;
+  readonly logFile: string;
+}
+
+/**
+ * Resolve the file paths an agent name maps to. Creates nothing — the `agents/`
+ * root appears on the first write into it, never at `initStore`, so a store where
+ * no agent is ever named has the layout it had before agent scopes existed (R11).
+ *
+ * Throws on a name `isSafeAgentName` rejects rather than returning a path or
+ * `undefined`. Every caller reaches here through `resolveAgentName` or
+ * `parseInboxEntries`, both of which already validate, so an unsafe name arriving
+ * here is a broken invariant and not a case to branch on; an `undefined` return
+ * would instead invite `paths?.pagesDir` chains that silently skip the write. Core
+ * callers run inside `failOpen`, which turns the throw into a logged degradation
+ * (A2) — the same posture `inbox-tx.ts` takes for a value that failed validation.
+ */
+export function agentScopePaths(name: string): AgentScopePaths {
+  if (!isSafeAgentName(name)) {
+    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
+  }
+  const agentDir = join(mehmoryHome(), 'agents', name);
+  return {
+    agentDir,
+    identityFile: join(agentDir, 'identity.md'),
+    indexFile: join(agentDir, 'index.md'),
+    pagesDir: join(agentDir, 'pages'),
+    logFile: join(agentDir, 'log.md'),
   };
 }
 
@@ -142,10 +188,17 @@ export function skillRef(host: InboxHost, skill: string): string {
 }
 
 /**
- * Compose the SessionStart injection for a scope: identity + project + index, budget-
- * truncated by `buildInjection` to `config.injection.budget_tokens`, wrapped in an
- * explicit data-only frame so the model reads injected memory as facts rather than as
- * instructions.
+ * Compose the SessionStart injection for a scope: identity + project + index, plus the
+ * running agent's own scope when it is named (R9) — budget-truncated by `buildInjection`
+ * to `config.injection.budget_tokens`, wrapped in an explicit data-only frame so the
+ * model reads injected memory as facts rather than as instructions.
+ *
+ * `config.injection.budget_tokens` stays the cap for named and unnamed alike; the agent
+ * part takes a share of it rather than raising it. An unnamed agent passes no agent part
+ * at all, so its frame is identical to before agent scopes existed.
+ *
+ * Only the resolved agent's own directory is ever read, which is what keeps one agent's
+ * self out of another's session.
  *
  * Empty scope → empty text, so a paused or failed session and an empty store are
  * distinguishable (U7: silence is reserved for paused/failed).
@@ -161,7 +214,8 @@ export function buildScopeInjection(
     () => {
       const paths = scopePaths(key);
       const projectIndex = join(paths.projectDir, 'index.md');
-      const frame = buildInjection([
+      const agent = currentAgentName(config);
+      const parts: InjectionPart[] = [
         { label: 'identity', content: readIfPresent(join(paths.globalDir, 'identity.md')) },
         { label: 'project', content: readIfPresent(join(paths.projectDir, 'project.md')) },
         {
@@ -170,10 +224,23 @@ export function buildScopeInjection(
             pathExists(projectIndex) ? projectIndex : join(paths.globalDir, 'index.md')
           ),
         },
-      ], { budgetTokens: config.injection.budget_tokens, secrets: config.secrets });
+      ];
+      // The part is passed even when the agent's identity.md is absent, so a named
+      // agent's allocation does not depend on whether it has written a self yet.
+      if (agent !== undefined) {
+        parts.push({
+          label: 'agent',
+          content: readIfPresent(agentScopePaths(agent).identityFile),
+        });
+      }
+      const frame = buildInjection(parts, {
+        budgetTokens: config.injection.budget_tokens,
+        secrets: config.secrets,
+      });
 
       const sections: string[] = [];
       if (frame.identity) sections.push(`# identity\n${frame.identity}`);
+      if (agent !== undefined && frame.agent) sections.push(`# agent ${agent}\n${frame.agent}`);
       if (frame.project) sections.push(`# project ${key}\n${frame.project}`);
       if (frame.index) sections.push(`# index\n${frame.index}`);
       if (sections.length === 0) return { text: '', tokens: 0 };
@@ -239,11 +306,13 @@ export function distillDelta(
       }
 
       const ts = new Date().toISOString();
+      const agent = currentAgentName(config);
       const entries = distill(records, sessionId, config.secrets).map(entry => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
         host,
+        ...(agent !== undefined ? { agent } : {}),
         ts,
       }));
 
@@ -283,7 +352,15 @@ export function rememberEntry(
 ): InboxEntry {
   const clean = redact(text, config.secrets).trim();
   const ts = new Date().toISOString();
-  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, host, ts };
+  const agent = currentAgentName(config);
+  return {
+    id: inboxEntryId(`${sessionId}:${clean}`),
+    text: clean,
+    src: sessionId,
+    host,
+    ...(agent !== undefined ? { agent } : {}),
+    ts,
+  };
 }
 
 /** Append one `## <iso> <op> | <summary>` line to a scope's log.md (spec log format). */
@@ -347,11 +424,19 @@ export function applyDistillJob(
         typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
           ? (rawHost as InboxHost)
           : undefined;
+      // Same reason as `host`, for `agent` (R7): the payload is JSON round-tripped, so a
+      // SessionEnd capture deferred to the next session would land unattributed if the
+      // field were not carried across. Revalidated, per KTD5, because the queue file on
+      // disk is a read boundary like the inbox itself.
+      const rawAgent = e['agent'];
+      const agent =
+        typeof rawAgent === 'string' && isSafeAgentName(rawAgent) ? rawAgent : undefined;
       entries.push({
         id: e['id'],
         text: redact(e['text'], config.secrets),
         src: e['src'],
         ...(host !== undefined ? { host } : {}),
+        ...(agent !== undefined ? { agent } : {}),
         ts: e['ts'],
       });
     }

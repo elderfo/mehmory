@@ -33,6 +33,13 @@ which project this session belongs to. The scope root is then
 `$HOME_DIR/projects/<key>/`; user-level facts (preferences, tooling, style) belong in
 `$HOME_DIR/global/` instead — use that scope's `inbox.md`, `index.md` and `pages/`.
 
+A named agent has a third scope, `$HOME_DIR/agents/<name>/`, holding what that agent is:
+its own preferences, style and non-project knowledge. It has an `identity.md`, an
+`index.md` and a `pages/` directory, but no inbox of its own — every entry lands in the
+project inbox and is routed out of it by its stamp (step 4). `ls "$HOME_DIR/agents"`
+lists the agent scopes that exist; create `agents/<name>/` on the first entry that routes
+there, giving it an `identity.md` and an `index.md` like any other scope.
+
 ## 2. Read before you write
 
 Read, in this order: `$HOME_DIR/SCHEMA.md` (the user's conventions win over anything in
@@ -53,6 +60,27 @@ stderr line to the user and change nothing.
 
 For every snapshot entry:
 
+- **Scope — decide by subject first, then read the stamp.** Ask what the entry is *about*:
+  repo facts (build steps, layout, this codebase's conventions) go to the project scope;
+  facts about the human (preferences, tooling, style) go to `global/`; an agent's own
+  self-facts (how it works, what it prefers, what it has learned about itself) go to
+  `agents/<name>/`.
+
+  Only when the subject is a self-fact does the stamp matter, and then it answers exactly
+  one question: *whose* scope. The `agent=` value is set on **every** entry captured while
+  that agent was running — the snapshot carries it as the entry's `agent` field, mirroring
+  the entry line's `- <text> <!--mehmory id=... src=... host=...[ agent=<name>] ts=...-->`
+  — so it means "scout was running", never "this is about scout". A repo fact stamped
+  `agent=scout` is still a repo fact and goes to the project scope, exactly as an unstamped
+  one would. Treating the stamp as the filing rule would move the shared project knowledge
+  into one agent's private scope, which is the opposite of what these scopes are for.
+
+  Two rules bound it. File a *self-fact* stamped `agent=scout` into `agents/scout/`
+  whatever your own name is — attribution is the entry's, not yours. And never route an
+  entry with **no** stamp into any agent scope; with no name it cannot be anyone's self, so
+  it is a project or `global/` fact. A stamped name that fails validation is dropped when
+  the entry is parsed, so it reaches you unattributed; treat it as unstamped rather than
+  guessing at the name.
 - **Existing topic** — open the page and edit it. Supersession is editing: when a new
   fact contradicts a line, **rewrite that line**, do not append a second contradicting
   bullet and do not annotate the old one as outdated. Git history is the audit trail.

@@ -448,3 +448,38 @@ sync with the portable metadata and are not presented as portable Agent Plugins 
 **Rejected:** Removing `.claude-plugin/` and `hooks/` in favor of the portable manifest alone —
 Agent Plugins v1 standardizes skills and MCP servers, while Claude Code still owns its plugin
 manifest and lifecycle-hook conventions.
+
+## Architectural Decisions — Run 5
+
+Established in run 5 (agent scopes). Binding on later run-5 units.
+
+### A27. The agent name is environment-primary; A23 still governs the host
+
+A23 has the host declared as an argument on the hook command and threaded from a single
+core module, with environment detection only as a fallback for a hand-written config. The
+agent name inverts that precedence: `src/core/agent.ts` resolves `MEHMORY_AGENT` first and
+`config.identity.agent` second. Nothing is added to `hooks/hooks.json` and `runHook` gains
+no positional.
+
+The two are not the same kind of fact. A23's reasoning is that mehmory writes both hook
+configurations itself, so it can always declare the host rather than infer it — the wiring
+is mehmory's own. mehmory does not launch the agent. The name is a launch-time property of
+a process mehmory does not start and cannot see coming: it does not exist when `init` writes
+the hook configuration, and one `hooks.json` is shared by every agent the machine ever runs,
+so a positional could only ever carry one name. Whoever starts the process is the only party
+that knows which agent it is, and the environment is the channel they already have.
+
+`config.identity.agent` sits underneath as the store-wide default for the single-agent
+machine, which is why it loses to the environment rather than winning: a machine running
+several agents leaves the config key unset and names each process at launch.
+
+**Rejected:** *An `--agent` positional mirroring `--host`* — mehmory would have to know the
+name at install time, when no agent exists yet, and could not vary it per launched process.
+*Detecting the agent* — there is nothing to detect; no agent announces what it is, and
+guessing from the host is precisely the conflation (several agents resolving to one
+`claude-code`) that agent scopes exist to undo.
+
+**WORLD_MODEL check.** Narrows A23 to the host rather than overturning it — the host stays
+declared and threaded — and upholds A21: config still arrives as a parameter, and the
+environment is read once at the resolution site the way `mehmoryHome()` reads
+`MEHMORY_HOME`.
