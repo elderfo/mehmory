@@ -49,10 +49,16 @@ export function isSafeAgentName(name: string): boolean {
  *
  * An absent value is the empty string or `undefined`; only a non-empty value is a
  * declaration, and it is validated exactly as written.
+ *
+ * `configValue` is `unknown` because it is: `loadConfig` deep-merges unvalidated JSON and
+ * casts, so `identity.agent` carries whatever the file held. A wrong type is refused on
+ * the same warn-and-degrade path as a badly spelled name rather than reaching the string
+ * checks below and throwing — the same guard `parseInboxEntry` already applies to a
+ * stamped value it did not write.
  */
 export function resolveAgentName(
   envValue: string | undefined,
-  configValue: string | undefined
+  configValue: unknown
 ): string | undefined {
   if (envValue) return validated(envValue, 'MEHMORY_AGENT');
   if (configValue) return validated(configValue, 'config.identity.agent');
@@ -72,12 +78,15 @@ export function currentAgentName(config: MehmoryConfig): string | undefined {
 }
 
 /** The name if safe; otherwise unnamed, with a warning naming the value and its source. */
-function validated(value: string, source: string): string | undefined {
-  if (isSafeAgentName(value)) return value;
+function validated(value: unknown, source: string): string | undefined {
+  if (typeof value === 'string' && isSafeAgentName(value)) return value;
+  // A non-string is described by its type: `"[object Object]"` names nothing the user
+  // can find in their config, while `a number` points straight at the line to change.
+  const shown = typeof value === 'string' ? `"${value}"` : `a ${typeof value}`;
   logError({
     code: 'E_AGENT_NAME_INVALID',
     kind: 'actionable',
-    what: `${source} is "${value}", which is not a safe agent name`,
+    what: `${source} is ${shown}, which is not a safe agent name`,
     consequence: 'This agent is treated as unnamed and gets no agent scope',
     // Names every rule the value will actually be judged against: a fix a user can
     // follow and still be refused is worse than none.

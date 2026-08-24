@@ -36,7 +36,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-I36GD3BW.mjs";
+} from "./chunk-SHVREXTP.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
@@ -458,11 +458,11 @@ function commitPaths(paths, message, cwd) {
 
 // src/core/injection.ts
 function buildInjection(parts, options = {}) {
-  const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
   const isNamed = parts.some((part) => part.label === "agent");
   const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
+  const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
   const scale = budget / nominalTotal;
-  const identityBudget = Math.floor(INJECTION_IDENTITY_TOKENS * scale);
+  const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
   const indexBudget = budget - identityBudget - agentBudget - projectBudget;

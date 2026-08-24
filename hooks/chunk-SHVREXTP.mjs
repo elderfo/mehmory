@@ -616,11 +616,12 @@ function currentAgentName(config) {
   return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
 }
 function validated(value, source) {
-  if (isSafeAgentName(value)) return value;
+  if (typeof value === "string" && isSafeAgentName(value)) return value;
+  const shown = typeof value === "string" ? `"${value}"` : `a ${typeof value}`;
   logError({
     code: "E_AGENT_NAME_INVALID",
     kind: "actionable",
-    what: `${source} is "${value}", which is not a safe agent name`,
+    what: `${source} is ${shown}, which is not a safe agent name`,
     consequence: "This agent is treated as unnamed and gets no agent scope",
     // Names every rule the value will actually be judged against: a fix a user can
     // follow and still be refused is worse than none.

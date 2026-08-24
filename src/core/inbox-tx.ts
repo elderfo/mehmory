@@ -102,10 +102,16 @@ function declaredHost(input: Record<string, unknown>): InboxHost | undefined {
  * `host` is refused: `agent=` is the routing decision integrate reads, so a wrong or
  * silently-dropped one files the memory into the wrong scope permanently, and that is
  * invisible once written.
+ *
+ * Checked on the payload *and* on every entry: refusing only the top level would leave an
+ * `entries[i].agent` silently dropped and the running agent stamped in its place — the
+ * exact ignored-not-refused outcome this exists to prevent. (`host` differs: it takes a
+ * top-level override because session state is a better source than the running process,
+ * so the two are not one rule.)
  */
-function rejectDeclaredAgent(input: Record<string, unknown>): void {
+function rejectDeclaredAgent(input: Record<string, unknown>, where: string): void {
   if (input['agent'] !== undefined) {
-    throw new TxError('"agent" cannot be declared; it comes from MEHMORY_AGENT');
+    throw new TxError(`"agent" cannot be declared${where}; it comes from MEHMORY_AGENT`);
   }
 }
 
@@ -119,7 +125,7 @@ function doAppend(
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
 
   const host = declaredHost(input);
-  rejectDeclaredAgent(input);
+  rejectDeclaredAgent(input, '');
   // The running agent, resolved once for the whole append the way `secrets` is: the CLI
   // and the bundled helper both run in the agent's own process (R1). Without this the
   // remember path drops the stamp that `distillDelta`/`rememberEntry` set, and integrate
@@ -131,6 +137,7 @@ function doAppend(
   const ts = new Date().toISOString();
   const entries: InboxEntry[] = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
+    rejectDeclaredAgent(entry, ` on entries[${String(i)}]`);
     const text = redact(requireString(entry, 'text'), secrets);
     const src = requireString(entry, 'src');
     const entryHost = host ?? readSessionState(src).host;

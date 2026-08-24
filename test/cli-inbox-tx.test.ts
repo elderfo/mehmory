@@ -184,6 +184,21 @@ describe('mehmory inbox-tx append — agent attribution', () => {
     expect(agentsIn(body)).toEqual([]);
   });
 
+  it('rejects a declared agent on an entry, not just at the top level', () => {
+    // The rationale for `agent` is "refused rather than ignored"; a per-entry value that
+    // is silently dropped stamps the running agent instead, which is invisible once
+    // written and files the memory into the wrong scope permanently.
+    seed();
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'entry-declared agent', src: 'sess-a', agent: 'scout' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('agent');
+    expect(readFileSync(inbox, 'utf-8')).not.toContain('entry-declared agent');
+  });
+
   it('rejects a declared agent in the payload rather than filing the fact under it', () => {
     seed();
     const result = tx('append', {

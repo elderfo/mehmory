@@ -13,7 +13,7 @@ import {
   redact,
   remove,
   statePath
-} from "./chunk-I36GD3BW.mjs";
+} from "./chunk-SHVREXTP.mjs";
 
 // src/core/inbox-tx.ts
 import { randomBytes } from "crypto";
@@ -55,9 +55,9 @@ function declaredHost(input) {
   }
   return value;
 }
-function rejectDeclaredAgent(input) {
+function rejectDeclaredAgent(input, where) {
   if (input["agent"] !== void 0) {
-    throw new TxError('"agent" cannot be declared; it comes from MEHMORY_AGENT');
+    throw new TxError(`"agent" cannot be declared${where}; it comes from MEHMORY_AGENT`);
   }
 }
 function doAppend(input, config) {
@@ -66,12 +66,13 @@ function doAppend(input, config) {
   const raw = input["entries"];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
   const host = declaredHost(input);
-  rejectDeclaredAgent(input);
+  rejectDeclaredAgent(input, "");
   const agent = currentAgentName(config);
   const secrets = config.secrets;
   const ts = (/* @__PURE__ */ new Date()).toISOString();
   const entries = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
+    rejectDeclaredAgent(entry, ` on entries[${String(i)}]`);
     const text = redact(requireString(entry, "text"), secrets);
     const src = requireString(entry, "src");
     const entryHost = host ?? readSessionState(src).host;

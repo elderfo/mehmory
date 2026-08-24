@@ -307,6 +307,27 @@ describe('sub-budget allocation (KTD6)', () => {
     }
   });
 
+  it('never drops identity that had content, at any budget it accepts', () => {
+    // The companion to the cap above. A budget small enough that identity's share floors
+    // to zero is degenerate, not a tighter budget: the boundary must refuse it, because
+    // the truncation loop below has no floor of its own to fall back on.
+    for (const budgetTokens of [1, 2, 3, 4, 5, 17, 400, 800, 2000]) {
+      const parts: InjectionPart[] = [
+        { label: 'identity', content: sized('a', 50) },
+        { label: 'project', content: sized('b', 50) },
+        { label: 'index', content: sized('c', 50) },
+      ];
+
+      expect(buildInjection(parts, { budgetTokens }).identity, `unnamed @ ${String(budgetTokens)}`)
+        .not.toBe('');
+      expect(
+        buildInjection([...parts, { label: 'agent', content: sized('g', 50) }], { budgetTokens })
+          .identity,
+        `named @ ${String(budgetTokens)}`
+      ).not.toBe('');
+    }
+  });
+
   /** Content sized to `tokens` under the chars/4 heuristic. */
   function sized(char: string, tokens: number): string {
     return char.repeat(tokens * 4);

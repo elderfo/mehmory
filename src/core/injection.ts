@@ -67,7 +67,9 @@ export interface InjectionOptions {
  * - Passing no agent part leaves the split byte-identical to before agent scopes existed
  * - Truncates in priority order: index detail first, then project, then agent, then
  *   identity last
- * - Identity is never dropped entirely (may be truncated, but always present)
+ * - Identity is never dropped entirely (may be truncated, but always present) — its
+ *   sub-budget is floored at one token so even a budget below the four the nominal split
+ *   needs spends what it has on identity rather than emptying it
  * - Data-only framing is applied AFTER truncation (framing never pushes over budget)
  * - Return frame always satisfies totalTokens ≤ budget_tokens
  *
@@ -79,18 +81,23 @@ export function buildInjection(
   parts: InjectionPart[],
   options: InjectionOptions = {}
 ): InjectionFrame {
-  const budget =
-    options.budgetTokens !== undefined && options.budgetTokens > 0
-      ? options.budgetTokens
-      : INJECTION_BUDGET_TOKENS;
   // The agent's nominal share is identity's — an agent's self is worth what the user's
   // self is worth — so a named frame's nominal total is 1000 rather than 800. Every share
   // scales to `budget` against that total, which is what keeps `budget_tokens` a real cap
   // and leaves the unnamed split (scale = budget/800) exactly as it was.
   const isNamed = parts.some(part => part.label === 'agent');
   const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
+  const budget =
+    options.budgetTokens !== undefined && options.budgetTokens > 0
+      ? options.budgetTokens
+      : INJECTION_BUDGET_TOKENS;
   const scale = budget / nominalTotal;
-  const identityBudget = Math.floor(INJECTION_IDENTITY_TOKENS * scale);
+  // Floored at one token, the smallest share that can still carry text. Below a budget of
+  // 4 (5 named) every scaled share rounds to zero, and truncating to a zero sub-budget
+  // empties the part outright — which for identity is the one thing the contract above
+  // says never happens. Identity is the only share with the floor because it is the only
+  // one promised to survive; the others are all allowed to reach empty.
+  const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
   // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the sub-budgets

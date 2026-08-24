@@ -100,6 +100,17 @@ describe('resolveAgentName', () => {
     expect(log).toContain('MEHMORY_AGENT');
   });
 
+  it('degrades to unnamed instead of throwing on a non-string config value', () => {
+    // `loadConfig()` deep-merges unvalidated JSON and casts, so `identity.agent` can be
+    // any JSON value. A wrong type must take the same warn-and-degrade path as a badly
+    // spelled name, not crash the caller (A2).
+    for (const value of [42, true, ['scout'], { name: 'scout' }] as unknown[]) {
+      const label = JSON.stringify(value);
+      expect(() => resolveAgentName(undefined, value), label).not.toThrow();
+      expect(resolveAgentName(undefined, value), label).toBeUndefined();
+    }
+  });
+
   it('warns naming the rejected value and config.identity.agent as its source', () => {
     expect(() => resolveAgentName(undefined, 'Scout')).not.toThrow();
     const log = errorsLog();
