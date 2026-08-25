@@ -102,6 +102,7 @@ Three more things follow from working-tree deletion:
 3. **`--global` is its own scope**, not "every project" — `identity.md` and `global/pages/`
    are the most personal content in the store, and purge lets you reach them without deleting
    every project's memory along with them.
+
 **The agent scope is a separation-of-concerns boundary, not a security boundary.** An agent
 name is self-declared and unauthenticated: mehmory takes whatever `MEHMORY_AGENT` or
 `identity.agent` says, validates only that it is a safe directory segment, and never verifies

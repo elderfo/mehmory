@@ -24,3 +24,6 @@ site/.vitepress/cache/
 
 # Skill-owned local state (auto-land ledger etc.)
 .elderfo/
+
+# Local session artifacts written by the Codex host, never part of the repo.
+.context/
