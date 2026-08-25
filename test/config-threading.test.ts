@@ -167,8 +167,11 @@ describe('stop.capture_threshold reaches the Stop hook', () => {
     const first = runHook('stop', { session_id: 's1' }, { cwd });
     expect(first.stdout).toBe('{}');
 
+    // Claude Code's block shape is `hookSpecificOutput.additionalContext` — it blocks
+    // like `decision: block` without rendering as a hook error. What matters here is
+    // that the threshold fired, not which envelope carried it.
     const second = runHook('stop', { session_id: 's1' }, { cwd });
-    expect(outputJson(second)['decision']).toBe('block');
+    expect(outputJson(second)['hookSpecificOutput']).toMatchObject({ hookEventName: 'Stop' });
   });
 });
 

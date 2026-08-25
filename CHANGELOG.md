@@ -37,6 +37,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before rolling back. `SCHEMA.md`'s scope rule gained a third clause, so `doctor` now
   reports drift against a customized copy; adopt the new rule to route agent facts.
 
+- **The Stop nudge no longer reads as a hook error on Claude Code.** The once-per-threshold
+  request to save learnings is carried as `hookSpecificOutput.additionalContext` rather than
+  `{"decision": "block"}`. Both block the turn identically — same re-invoke, same
+  `stop_hook_active` guard on the next Stop — but the transcript now shows
+  `Stop hook feedback: …` instead of `Stop hook error: …`, with no error toast. The reason
+  text also dropped from ~700 to ~310 characters: the literal `inbox-tx` command is now
+  emitted only for Codex, where skill invocation is not a slash command. Codex keeps
+  `{"decision": "block"}`, the only shape its Stop event accepts.
+
 - **Skill metadata is portable across clients.** Skill `allowed-tools` values now use the
   Agent Skills space-separated format, and the generated hook chunks are tracked so clean
   marketplace checkouts contain every runtime bundle.
