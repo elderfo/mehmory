@@ -453,8 +453,9 @@ describe('sub-budget allocation (KTD6)', () => {
     );
 
     // An empty agent file costs the other three nothing beyond their narrowed shares:
-    // the slack is simply available to whichever part is over, so the frame still fills
-    // the budget rather than leaving the agent's 160 tokens unused.
+    // its tokens are simply available to whichever part is over. Nothing expands to
+    // consume the slack — `buildInjection` only truncates — so the frame ends up under
+    // the cap rather than at it.
     expect(frame.agent).toBe('');
     expect(frame.totalTokens).toBeLessThanOrEqual(INJECTION_BUDGET_TOKENS);
     // Identity was never reached by the ladder: trimming index and project alone brought

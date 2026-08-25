@@ -37,10 +37,12 @@ A named agent has a third scope, `$HOME_DIR/agents/<name>/`, holding what that a
 its own preferences, style and non-project knowledge. It has an `identity.md`, an
 `index.md` and a `pages/` directory, but no inbox of its own — every entry lands in the
 project inbox and is routed out of it by its stamp (step 4).
-`ls "$HOME_DIR/agents" 2>/dev/null` lists the agent scopes that exist — no output, whether
-the directory is empty or absent, means none exist yet and is never a reason to stop.
-Create `agents/<name>/` on the first entry that routes there, giving it an `identity.md`
-and an `index.md` like any other scope.
+
+The agent scopes that exist are the subdirectories of `$HOME_DIR/agents/`. That directory
+is missing until the first agent-scoped write, and missing or empty both mean the same
+thing — no agent scopes yet — so neither is a failure or a reason to stop. Create
+`agents/<name>/` on the first entry that routes there, giving it an `identity.md` and an
+`index.md` like any other scope.
 
 ## 2. Read before you write
 
