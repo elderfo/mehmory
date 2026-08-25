@@ -27,6 +27,8 @@ mehmory/
 │   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
 │   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
+│   │   ├── agent.ts           # run-5: which agent is running — name resolution, MEHMORY_AGENT before config.identity.agent (A21, A27)
+│   │   ├── agent-name.ts      # run-5: the single-segment agent-name rule, import-free so schema/format.ts can share it without pulling in errors.ts
 │   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
 │   │   └── inbox-tx.ts        # run-4: transactional inbox helper logic shared by hooks/inbox-tx.mjs and `mehmory inbox-tx` (A15, A17)
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
@@ -101,6 +103,7 @@ mehmory/
 │   ├── cli-init-codex.test.ts # run-4: `mehmory init --host codex` install/uninstall
 │   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
 │   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
+│   ├── agent.test.ts          # run-5: src/core/agent.ts name resolution + validation
 │   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
@@ -118,7 +121,8 @@ mehmory/
 ├── CODE_OF_CONDUCT.md          # Contributor Covenant 2.1
 ├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
-    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21 (C, X)
+    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
+    │                          # run-4: A22–A26; run-5: A27 (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)

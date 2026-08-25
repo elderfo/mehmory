@@ -8,10 +8,12 @@ import {
   appendInboxEntries,
   appendRecord,
   atomicWrite,
+  currentAgentName,
   deleteSessionState,
   failOpen,
   inboxEntryId,
   isPaused,
+  isSafeAgentName,
   isSessionFinalized,
   listDir,
   listPendingSessions,
@@ -34,7 +36,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-EAC7QWRN.mjs";
+} from "./chunk-NEVGDLYA.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
@@ -456,14 +458,18 @@ function commitPaths(paths, message, cwd) {
 
 // src/core/injection.ts
 function buildInjection(parts, options = {}) {
+  const isNamed = parts.some((part) => part.label === "agent");
+  const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
   const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
-  const scale = budget / INJECTION_BUDGET_TOKENS;
-  const identityBudget = Math.floor(INJECTION_IDENTITY_TOKENS * scale);
+  const scale = budget / nominalTotal;
+  const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
+  const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
-  const indexBudget = budget - identityBudget - projectBudget;
+  const indexBudget = budget - identityBudget - agentBudget - projectBudget;
   let identityContent = "";
   let projectContent = "";
   let indexContent = "";
+  let agentContent = "";
   for (const part of parts) {
     const redacted = redact(part.content, options.secrets);
     switch (part.label) {
@@ -476,17 +482,22 @@ function buildInjection(parts, options = {}) {
       case "index":
         indexContent = redacted;
         break;
+      case "agent":
+        agentContent = redacted;
+        break;
     }
   }
   let identityTruncated = identityContent;
   let projectTruncated = projectContent;
   let indexTruncated = indexContent;
+  let agentTruncated = agentContent;
   let identityTokens = estimateTokens(identityTruncated);
   let projectTokens = estimateTokens(projectTruncated);
   let indexTokens = estimateTokens(indexTruncated);
+  let agentTokens = estimateTokens(agentTruncated);
   const maxIterations = 100;
   let iterations = 0;
-  while (identityTokens + projectTokens + indexTokens > budget && iterations < maxIterations) {
+  while (identityTokens + projectTokens + indexTokens + agentTokens > budget && iterations < maxIterations) {
     iterations++;
     if (indexTokens > indexBudget) {
       const result = truncateToTokens(indexTruncated, indexBudget);
@@ -496,12 +507,20 @@ function buildInjection(parts, options = {}) {
       const result = truncateToTokens(projectTruncated, projectBudget);
       projectTruncated = result.text;
       projectTokens = result.tokens;
+    } else if (agentTokens > agentBudget) {
+      const result = truncateToTokens(agentTruncated, agentBudget);
+      agentTruncated = result.text;
+      agentTokens = result.tokens;
     } else if (identityTokens > identityBudget) {
       const result = truncateToTokens(identityTruncated, identityBudget);
       identityTruncated = result.text;
       identityTokens = result.tokens;
     } else {
-      if (identityContent && identityTokens > 0) {
+      if (agentContent && agentTokens > 0) {
+        const result = truncateToTokens(agentTruncated, Math.max(1, agentTokens - 10));
+        agentTruncated = result.text;
+        agentTokens = result.tokens;
+      } else if (identityContent && identityTokens > 0) {
         const result = truncateToTokens(
           identityTruncated,
           Math.max(1, identityTokens - 10)
@@ -524,11 +543,14 @@ function buildInjection(parts, options = {}) {
       }
     }
   }
-  const totalTokens = identityTokens + projectTokens + indexTokens;
+  const totalTokens = identityTokens + projectTokens + indexTokens + agentTokens;
   return {
     identity: identityTruncated,
     project: projectTruncated,
     index: indexTruncated,
+    // Omitted rather than empty when no agent part was passed, so `undefined` honestly
+    // means unnamed instead of being a sentinel the field never carries.
+    ...isNamed ? { agent: agentTruncated } : {},
     totalTokens
   };
 }
@@ -783,6 +805,19 @@ function scopePaths(key) {
     pagesDir: join2(projectDir, "pages")
   };
 }
+function agentScopePaths(name) {
+  if (!isSafeAgentName(name)) {
+    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
+  }
+  const agentDir = join2(mehmoryHome(), "agents", name);
+  return {
+    agentDir,
+    identityFile: join2(agentDir, "identity.md"),
+    indexFile: join2(agentDir, "index.md"),
+    pagesDir: join2(agentDir, "pages"),
+    logFile: join2(agentDir, "log.md")
+  };
+}
 function storeExists() {
   return pathExists(join2(mehmoryHome(), "global", "identity.md"));
 }
@@ -818,7 +853,8 @@ function buildScopeInjection(key, config = loadConfig()) {
     () => {
       const paths = scopePaths(key);
       const projectIndex = join2(paths.projectDir, "index.md");
-      const frame = buildInjection([
+      const agent = currentAgentName(config);
+      const parts = [
         { label: "identity", content: readIfPresent(join2(paths.globalDir, "identity.md")) },
         { label: "project", content: readIfPresent(join2(paths.projectDir, "project.md")) },
         {
@@ -827,10 +863,22 @@ function buildScopeInjection(key, config = loadConfig()) {
             pathExists(projectIndex) ? projectIndex : join2(paths.globalDir, "index.md")
           )
         }
-      ], { budgetTokens: config.injection.budget_tokens, secrets: config.secrets });
+      ];
+      if (agent !== void 0) {
+        parts.push({
+          label: "agent",
+          content: readIfPresent(agentScopePaths(agent).identityFile)
+        });
+      }
+      const frame = buildInjection(parts, {
+        budgetTokens: config.injection.budget_tokens,
+        secrets: config.secrets
+      });
       const sections = [];
       if (frame.identity) sections.push(`# identity
 ${frame.identity}`);
+      if (agent !== void 0 && frame.agent) sections.push(`# agent ${agent}
+${frame.agent}`);
       if (frame.project) sections.push(`# project ${key}
 ${frame.project}`);
       if (frame.index) sections.push(`# index
@@ -866,11 +914,13 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
         });
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString();
+      const agent = currentAgentName(config);
       const entries = distill(records, sessionId, config.secrets).map((entry) => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
         host,
+        ...agent !== void 0 ? { agent } : {},
         ts
       }));
       advanceSessionCursor(
@@ -894,7 +944,15 @@ function captureDelta(sessionId, transcriptPath, key, host, config = loadConfig(
 function rememberEntry(text, sessionId, host, config = loadConfig()) {
   const clean = redact(text, config.secrets).trim();
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  return { id: inboxEntryId(`${sessionId}:${clean}`), text: clean, src: sessionId, host, ts };
+  const agent = currentAgentName(config);
+  return {
+    id: inboxEntryId(`${sessionId}:${clean}`),
+    text: clean,
+    src: sessionId,
+    host,
+    ...agent !== void 0 ? { agent } : {},
+    ts
+  };
 }
 function appendLogEntry(key, op, summary) {
   const paths = scopePaths(key);
@@ -921,11 +979,14 @@ function applyDistillJob(data, config = loadConfig()) {
     if (typeof e["id"] === "string" && typeof e["text"] === "string" && typeof e["src"] === "string" && typeof e["ts"] === "string") {
       const rawHost = e["host"];
       const host = typeof rawHost === "string" && INBOX_HOSTS.includes(rawHost) ? rawHost : void 0;
+      const rawAgent = e["agent"];
+      const agent = typeof rawAgent === "string" && isSafeAgentName(rawAgent) ? rawAgent : void 0;
       entries.push({
         id: e["id"],
         text: redact(e["text"], config.secrets),
         src: e["src"],
         ...host !== void 0 ? { host } : {},
+        ...agent !== void 0 ? { agent } : {},
         ts: e["ts"]
       });
     }

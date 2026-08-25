@@ -103,6 +103,18 @@ Three more things follow from working-tree deletion:
    are the most personal content in the store, and purge lets you reach them without deleting
    every project's memory along with them.
 
+**The agent scope is a separation-of-concerns boundary, not a security boundary.** An agent
+name is self-declared and unauthenticated: mehmory takes whatever `MEHMORY_AGENT` or
+`identity.agent` says, validates only that it is a safe directory segment, and never verifies
+that the process claiming it is the agent it says it is. And because every agent in a repo
+shares one project inbox, anything that can write that inbox can stamp an entry with any
+agent's name, which integration will then file into that agent's scope. An agent scope also
+has no purge target of its own yet: deleting one means deleting the directory by hand, and
+un-integrated entries stamped with that name stay in the project inbox. The isolation that agent scopes
+give you is read-side and cooperative — it keeps distinct agents from being *merged* into
+one indistinct self. It does not keep one agent out of another's memory, and it is not
+a control to rely on against anything adversarial.
+
 ## Why mehmory never rewrites git history
 
 Purge deletes and commits; it does not run `git filter-repo`, `git rebase`, or anything else

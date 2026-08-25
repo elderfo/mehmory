@@ -3,6 +3,7 @@ import {
   appendInboxEntries,
   atomicWrite,
   clearInboxEntries,
+  currentAgentName,
   inboxEntryId,
   loadConfig,
   pathExists,
@@ -12,7 +13,7 @@ import {
   redact,
   remove,
   statePath
-} from "./chunk-EAC7QWRN.mjs";
+} from "./chunk-NEVGDLYA.mjs";
 
 // src/core/inbox-tx.ts
 import { randomBytes } from "crypto";
@@ -54,16 +55,24 @@ function declaredHost(input) {
   }
   return value;
 }
+function rejectDeclaredAgent(input, where) {
+  if (input["agent"] !== void 0) {
+    throw new TxError(`"agent" cannot be declared${where}; it comes from MEHMORY_AGENT`);
+  }
+}
 function doAppend(input, config) {
   const inbox = requireString(input, "inbox");
   const key = requireString(input, "key");
   const raw = input["entries"];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
   const host = declaredHost(input);
+  rejectDeclaredAgent(input, "");
+  const agent = currentAgentName(config);
   const secrets = config.secrets;
   const ts = (/* @__PURE__ */ new Date()).toISOString();
   const entries = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
+    rejectDeclaredAgent(entry, ` on entries[${String(i)}]`);
     const text = redact(requireString(entry, "text"), secrets);
     const src = requireString(entry, "src");
     const entryHost = host ?? readSessionState(src).host;
@@ -72,6 +81,7 @@ function doAppend(input, config) {
       text,
       src,
       ...entryHost !== void 0 ? { host: entryHost } : {},
+      ...agent !== void 0 ? { agent } : {},
       ts
     };
   });

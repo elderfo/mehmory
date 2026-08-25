@@ -60,6 +60,13 @@ const ERROR_KINDS = {
   /** The mehmory skills are not installed for Codex, so the judgment-work commands
    * (integrate, lint, onboard) are unavailable there. Capture still runs. */
   E_CODEX_SKILLS_MISSING: 'actionable',
+  // ─── Run 5 (agent scopes) ───
+  /** A declared agent name is not usable as a directory segment, so the agent runs
+   * unnamed and gets no agent scope. Its own code rather than `E_CONFIG_PARSE`: the
+   * name usually comes from the environment rather than config, and the hourly warning
+   * rate limit is per code — sharing a bucket would let an unrelated config warning
+   * suppress the one that tells an operator which agent is misconfigured. */
+  E_AGENT_NAME_INVALID: 'actionable',
 } as const satisfies Record<string, 'actionable' | 'informational'>;
 
 export type ErrorCode = keyof typeof ERROR_KINDS;

@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-BOUZAFX2.mjs";
+} from "./chunk-7BGZXVUT.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -34,7 +34,7 @@ import {
   stat,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-EAC7QWRN.mjs";
+} from "./chunk-NEVGDLYA.mjs";
 
 // src/core/store.ts
 import { join } from "path";
@@ -155,7 +155,7 @@ type: entity
 
 Captured entries awaiting integration.
 `;
-var TEMPLATE_SCHEMA_VERSION = "1";
+var TEMPLATE_SCHEMA_VERSION = "2";
 var SCHEMA_TEMPLATE = `---
 schema_version: "${TEMPLATE_SCHEMA_VERSION}"
 ---
@@ -240,7 +240,7 @@ Token estimation uses chars/4 with \xB120% tolerance.
 - **Caveman-telegraphic bullets** \u2014 short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** \u2014 avoid elaborate sentences
 - **Wikilinks** \u2014 use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** \u2014 user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`
+- **Scope rule** \u2014 route by what a fact is *about*: user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) \u2192 \`agents/<name>/\`. The \`agent=\` stamp names *whose* scope a self-fact belongs to; it is set on every entry that agent captured, so it never decides *whether* a fact is a self-fact
 
 ## Secret Filter Limitation
 
