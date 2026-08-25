@@ -109,9 +109,9 @@ that the process claiming it is the agent it says it is. And because every agent
 shares one project inbox, anything that can write that inbox can stamp an entry with any
 agent's name, which integration will then file into that agent's scope. An agent scope also
 has no purge target of its own yet: deleting one means deleting the directory by hand, and
-un-integrated entries stamped with that name stay in the project inbox. The isolation agent
-scopes give you is read-side and cooperative — it keeps distinct agents from being *merged*
-into one indistinct self. It does not keep one agent out of another's memory, and it is not
+un-integrated entries stamped with that name stay in the project inbox. The isolation that agent scopes
+give you is read-side and cooperative — it keeps distinct agents from being *merged* into
+one indistinct self. It does not keep one agent out of another's memory, and it is not
 a control to rely on against anything adversarial.
 
 ## Why mehmory never rewrites git history

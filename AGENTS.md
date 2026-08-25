@@ -27,7 +27,8 @@ mehmory/
 │   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
 │   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
-│   │   ├── agent.ts           # run-5: which agent is running — name resolution + single-segment validation, MEHMORY_AGENT before config.identity.agent (A21, A27)
+│   │   ├── agent.ts           # run-5: which agent is running — name resolution, MEHMORY_AGENT before config.identity.agent (A21, A27)
+│   │   ├── agent-name.ts      # run-5: the single-segment agent-name rule, import-free so schema/format.ts can share it without pulling in errors.ts
 │   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
 │   │   └── inbox-tx.ts        # run-4: transactional inbox helper logic shared by hooks/inbox-tx.mjs and `mehmory inbox-tx` (A15, A17)
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)

@@ -597,7 +597,7 @@ function tryProjectLock(key, fn) {
 // src/schema/format.ts
 import { createHash as createHash2 } from "crypto";
 
-// src/core/agent.ts
+// src/core/agent-name.ts
 var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
 var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
 var MAX_AGENT_NAME_LENGTH = 64;
@@ -606,37 +606,6 @@ function isSafeAgentName(name) {
   if (!SAFE_AGENT_NAME.test(name)) return false;
   if (name.startsWith(".")) return false;
   return !RESERVED_AGENT_NAMES.includes(name);
-}
-function resolveAgentName(envValue, configValue) {
-  if (envValue) return validated(envValue, "MEHMORY_AGENT");
-  if (isAbsent(configValue)) return void 0;
-  return validated(configValue, "config.identity.agent");
-}
-function isAbsent(value) {
-  return value === void 0 || value === null || value === "";
-}
-function currentAgentName(config) {
-  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
-}
-function validated(value, source) {
-  if (typeof value === "string" && isSafeAgentName(value)) return value;
-  const shown = describe(value);
-  logError({
-    code: "E_AGENT_NAME_INVALID",
-    kind: "actionable",
-    what: `${source} is ${shown}, which is not a safe agent name`,
-    consequence: "This agent is treated as unnamed and gets no agent scope",
-    // Names every rule the value will actually be judged against: a fix a user can
-    // follow and still be refused is worse than none.
-    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
-  });
-  return void 0;
-}
-function describe(value) {
-  if (typeof value === "string") return `"${value}"`;
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "an array";
-  return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
 // src/schema/format.ts
@@ -1075,6 +1044,39 @@ function rememberTopic(sessionId, tokens, now = Date.now()) {
 }
 function isPaused(sessionId) {
   return readSessionState(sessionId).paused;
+}
+
+// src/core/agent.ts
+function resolveAgentName(envValue, configValue) {
+  if (envValue) return validated(envValue, "MEHMORY_AGENT");
+  if (isAbsent(configValue)) return void 0;
+  return validated(configValue, "config.identity.agent");
+}
+function isAbsent(value) {
+  return value === void 0 || value === null || value === "";
+}
+function currentAgentName(config) {
+  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+}
+function validated(value, source) {
+  if (typeof value === "string" && isSafeAgentName(value)) return value;
+  const shown = describe(value);
+  logError({
+    code: "E_AGENT_NAME_INVALID",
+    kind: "actionable",
+    what: `${source} is ${shown}, which is not a safe agent name`,
+    consequence: "This agent is treated as unnamed and gets no agent scope",
+    // Names every rule the value will actually be judged against: a fix a user can
+    // follow and still be refused is worse than none.
+    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
+  });
+  return void 0;
+}
+function describe(value) {
+  if (typeof value === "string") return `"${value}"`;
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
 // src/core/redact.ts

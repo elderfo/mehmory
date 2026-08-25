@@ -3,7 +3,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { isSafeAgentName } from '../core/agent.js';
+import { isSafeAgentName } from '../core/agent-name.js';
 
 /** Format version, bumped when the template or structure changes deliberately (U1). */
 export const FORMAT_VERSION = 3;

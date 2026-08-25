@@ -421,7 +421,7 @@ describe('sub-budget allocation (KTD6)', () => {
     expect(frame.totalTokens).toBe(400);
   });
 
-  it('leaves an unnamed agent`s split byte-identical to before agent scopes existed', () => {
+  it("leaves an unnamed agent's split byte-identical to before agent scopes existed", () => {
     // The back-compat criterion. Passing no agent part must not perturb the allocation
     // in any way, at any budget — the nominal denominator stays 800.
     for (const budgetTokens of [400, INJECTION_BUDGET_TOKENS, 1200]) {
