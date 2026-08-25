@@ -243,6 +243,28 @@ confirmation is two invocations (see `docs/CLI.md` and `docs/PRIVACY.md`).
 from the check list, which is why they are described as a shape here rather than enumerated —
 `mehmory doctor` is the authoritative list, and `docs/CLI.md` documents the checks themselves.
 
+## Not an error: `Stop hook feedback:` in the Claude Code transcript
+
+Once per threshold crossing the Stop hook asks the model to write down what only it knows, and
+Claude Code prints that request into the session log:
+
+```
+● Ran 3 stop hooks
+  ⎿  Stop hook feedback: mehmory: before stopping, append anything durable …
+```
+
+That is the nudge working, not a hook failure. Claude Code has no way to hold a turn open
+silently — a Stop hook that produces no visible output also does not block — so the text is
+always shown. mehmory keeps it as short as the instruction allows and carries it as
+`hookSpecificOutput.additionalContext` rather than `{"decision": "block"}`: both block the turn
+identically, but the block shape renders as `Stop hook error: …` and raises an error toast, which
+this is not.
+
+Codex keeps the `{"decision": "block"}` shape, which is the only one its Stop event accepts.
+
+To stop the nudge entirely, set `hooks.stop.enabled` to `false` in `config.json` — but note that
+the deterministic transcript distill runs in the same threshold branch and goes with it.
+
 ## Not an error: the stop nudge never appears under `codex exec`
 
 In an interactive Codex TUI session the Stop hook's once-per-threshold nudge renders as

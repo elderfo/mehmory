@@ -9,7 +9,7 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runHook } from '../core/hook.js';
+import { runHook, type HookResult } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
 import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
 import type { InboxHost } from '../schema/format.js';
@@ -18,27 +18,65 @@ import type { InboxHost } from '../schema/format.js';
 const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
 
 /**
- * The block reason (U6): fixed template, names what to save and one executable way to
- * save it. Never the raw entry serialization — ids are sha256, and A15 reserves inbox
- * writes for the helper.
+ * The literal command that appends one entry without loading a skill first.
+ *
+ * Heredoc, not `echo '<json>' |`: the learning is model-written prose and a single
+ * quote in it would end the shell quote and break the command. A quoted heredoc
+ * delimiter passes the body through to stdin literally. Never the raw entry
+ * serialization — ids are sha256, and A15 reserves inbox writes for the helper.
  */
-function blockReason(key: string, sessionId: string, host: InboxHost): string {
+function appendCommand(key: string, sessionId: string): string {
   const payload = JSON.stringify({
     inbox: scopePaths(key).inboxFile,
     key,
     entries: [{ text: '<the learning>', src: sessionId }],
   });
+  return `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'\n${payload}\nJSON\n`;
+}
+
+/**
+ * The block reason (U6): fixed template naming what to save and one way to save it.
+ *
+ * Every host renders this text verbatim into the session transcript, so it stays as
+ * short as the instruction allows. Claude Code gets the skill reference alone —
+ * `/mehmory:remember` ships in the same plugin as the hook that is running, so a hook
+ * invocation is proof the skill is installed. Codex additionally gets the literal
+ * `inbox-tx` command: skill invocation there is not a first-class slash command, and
+ * the reason is the model's only guaranteed executable path to the inbox.
+ */
+function blockReason(key: string, sessionId: string, host: InboxHost): string {
+  const save =
+    host === 'codex'
+      ? `Use ${skillRef(host, 'remember')}, or run:\n${appendCommand(key, sessionId)}`
+      : `${skillRef(host, 'remember')} saves them.`;
   return [
-    'mehmory: save this stretch of the session before stopping.',
-    'Append anything durable — decisions made, corrections received, gotchas found since the last capture —',
-    `as one short line each. Use ${skillRef(host, 'remember')}, or run:`,
-    // Heredoc, not `echo '<json>' |`: the learning is model-written prose and a single
-    // quote in it would end the shell quote and break the command. A quoted heredoc
-    // delimiter passes the body through to stdin literally.
-    `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'\n${payload}\nJSON\n`,
-    'Save silently: no list of what you saved, no recap of the session, no summary of where things stand — one short sentence, then stop.',
-    'Nothing durable to save? Say so and stop. This fires once per threshold; normal stopping resumes after this pass.',
+    'mehmory: before stopping, append anything durable from this stretch —',
+    'decisions, corrections, gotchas — as one short line each.',
+    save,
+    'Save silently: one short sentence, no recap of what you saved or where things stand,',
+    'then stop. Nothing durable? Say so and stop. Fires once per threshold.',
   ].join(' ');
+}
+
+/**
+ * Wrap the reason in the output shape that blocks this host's Stop most quietly.
+ *
+ * Both shapes block. Claude Code funnels a hook's `additionalContext` into the same
+ * `blockingErrors` array as a `decision: block` — the model is re-invoked and the next
+ * Stop still carries `stop_hook_active`, so the loop guard is unaffected (verified
+ * against 2.1.241). What differs is the transcript line: a block renders as
+ * `Stop hook error: <reason>` plus an error toast, `additionalContext` as
+ * `Stop hook feedback: <reason>` with no toast. This nudge is routine, not a failure,
+ * so it takes the shape that does not claim otherwise (issue #47).
+ *
+ * Codex keeps `{decision, reason}`: the `hookSpecificOutput` envelope that is valid on
+ * every other event is rejected outright on Codex's Stop (D9), so it is not a portable
+ * default — only a Claude Code refinement.
+ */
+function blockOutput(reason: string, host: InboxHost): HookResult {
+  return host === 'codex'
+    ? { json: { decision: 'block', reason } }
+    : { context: reason };
 }
 
 runHook('Stop', (input, project, host, config) => {
@@ -53,7 +91,7 @@ runHook('Stop', (input, project, host, config) => {
   resetStopCount(input.session_id);
 
   return {
-    json: { decision: 'block', reason: blockReason(project, input.session_id, host) },
+    ...blockOutput(blockReason(project, input.session_id, host), host),
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });

@@ -1,9 +1,9 @@
 /** Stop fixture tests (criteria 11, 14, 16, 19). */
 
-import { spawnSync } from 'node:child_process';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTempDir, hermeticEnv } from './helpers.js';
+import { createTempDir } from './helpers.js';
 import {
+  additionalContext,
   keyFor,
   outputJson,
   paths,
@@ -67,12 +67,9 @@ describe('Stop hook', () => {
     primeCounter('s1');
 
     const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
-    const output = outputJson(run);
 
     expect(run.status).toBe(0);
-    expect(output['decision']).toBe('block');
-    const reason = String(output['reason']);
-    expect(reason).toContain('inbox-tx.mjs append');
+    const reason = additionalContext(run);
     expect(reason).toContain('/mehmory:remember');
     // The model must never be told to hand-write the entry serialization (A15, U6).
     expect(reason).not.toContain('<!--mehmory');
@@ -87,28 +84,39 @@ describe('Stop hook', () => {
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop' });
   });
 
-  it('embeds an inbox-tx invocation that actually runs', () => {
+  it('blocks Claude Code without claiming the hook errored', () => {
     primeCounter('s1');
-    const reason = String(
-      outputJson(runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd }))[
-        'reason'
-      ]
+
+    const run = runHook(
+      'stop',
+      { session_id: 's1', transcript_path: transcript },
+      { cwd, args: ['claude-code'] }
+    );
+    const output = outputJson(run);
+
+    // `additionalContext` blocks exactly as `decision: block` does — same
+    // `blockingErrors` array, same `stop_hook_active` on the next Stop — but renders as
+    // `Stop hook feedback:` instead of `Stop hook error:` and raises no error toast.
+    expect(output['decision']).toBeUndefined();
+    expect(output['hookSpecificOutput']).toMatchObject({ hookEventName: 'Stop' });
+    expect(additionalContext(run)).toContain('mehmory:');
+  });
+
+  it('keeps the reason short enough to read in the transcript', () => {
+    primeCounter('s1');
+    const reason = additionalContext(
+      runHook(
+        'stop',
+        { session_id: 's1', transcript_path: transcript },
+        { cwd, args: ['claude-code'] }
+      )
     );
 
-    // Pull the literal command out of the reason and run it, placeholder filled in.
-    // The learning carries an apostrophe: the embedded form must survive model prose
-    // that contains a single quote, which the old `echo '<json>' |` form did not.
-    const match = /node \S+inbox-tx\.mjs append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
-    expect(match).not.toBeNull();
-    const learning = "deploys need the VPN, don't repeat this";
-    const command = String(match?.[0]).replace('<the learning>', learning);
-
-    const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
-
-    expect(run.stderr).toBe('');
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
-    expect(readIfPresent(paths(key).inbox)).toContain(learning);
+    // Every host prints this verbatim into the session log. The executable `inbox-tx`
+    // fallback is Codex-only (the skill is not a slash command there); on Claude Code
+    // the skill ships with the hook, so the command is dead weight on screen.
+    expect(reason).not.toContain('inbox-tx.mjs append');
+    expect(reason.length).toBeLessThan(320);
   });
 
   it('does not re-block on the next stop after a capture', () => {

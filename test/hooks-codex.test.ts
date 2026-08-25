@@ -10,8 +10,9 @@
  * same project key, the same inbox — only the reader and the `host=` attribution differ.
  */
 
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTempDir } from './helpers.js';
+import { createTempDir, hermeticEnv } from './helpers.js';
 import {
   additionalContext,
   keyFor,
@@ -317,6 +318,30 @@ describe('Codex capture (#23)', () => {
     const reason = String(output['reason']);
     expect(reason).toContain('the mehmory-remember skill');
     expect(reason).not.toContain('/mehmory:remember');
+  });
+
+  it('embeds an inbox-tx invocation that actually runs', () => {
+    primeCounter(CODEX_SESSION);
+    const reason = String(
+      outputJson(runHook('stop', stop(cwd, rollout), { cwd, args: CODEX_ARGS }))['reason']
+    );
+
+    // Codex is the host that still carries the literal command: skill invocation there
+    // is not a first-class slash command, so the reason is the model's only guaranteed
+    // executable path to the inbox. Pull it out of the reason and run it, placeholder
+    // filled in. The learning carries an apostrophe: the embedded form must survive
+    // model prose that contains a single quote, which `echo '<json>' |` did not.
+    const match = /node \S+inbox-tx\.mjs append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
+    expect(match).not.toBeNull();
+    const learning = "deploys need the VPN, don't repeat this";
+    const command = String(match?.[0]).replace('<the learning>', learning);
+
+    const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
+
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
+    expect(readIfPresent(paths(key).inbox)).toContain(learning);
   });
 
   it('redacts secrets in a Codex capture exactly as in a Claude Code one', () => {
