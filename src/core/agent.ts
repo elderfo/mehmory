@@ -47,8 +47,11 @@ export function isSafeAgentName(name: string): boolean {
  * fall through to the lower-precedence source — a declared-but-invalid name is a
  * mistake to fix, not a reason to silently adopt a different identity.
  *
- * An absent value is the empty string or `undefined`; only a non-empty value is a
- * declaration, and it is validated exactly as written.
+ * An absent value is the empty string, `undefined`, or `null` — the three spellings of
+ * "no agent" (JSON has no `undefined`, so a config file writes `null`). Anything else is
+ * a declaration and is validated exactly as written. The distinction is absence, not
+ * falsiness: `false` and `0` are present values that failed, and reading them as unset
+ * would swallow the one warning that tells the user their config line does nothing.
  *
  * `configValue` is `unknown` because it is: `loadConfig` deep-merges unvalidated JSON and
  * casts, so `identity.agent` carries whatever the file held. A wrong type is refused on
@@ -61,8 +64,13 @@ export function resolveAgentName(
   configValue: unknown
 ): string | undefined {
   if (envValue) return validated(envValue, 'MEHMORY_AGENT');
-  if (configValue) return validated(configValue, 'config.identity.agent');
-  return undefined;
+  if (isAbsent(configValue)) return undefined;
+  return validated(configValue, 'config.identity.agent');
+}
+
+/** True for the three ways a config says "no agent"; everything else is a declaration. */
+function isAbsent(value: unknown): boolean {
+  return value === undefined || value === null || value === '';
 }
 
 /**
@@ -80,9 +88,7 @@ export function currentAgentName(config: MehmoryConfig): string | undefined {
 /** The name if safe; otherwise unnamed, with a warning naming the value and its source. */
 function validated(value: unknown, source: string): string | undefined {
   if (typeof value === 'string' && isSafeAgentName(value)) return value;
-  // A non-string is described by its type: `"[object Object]"` names nothing the user
-  // can find in their config, while `a number` points straight at the line to change.
-  const shown = typeof value === 'string' ? `"${value}"` : `a ${typeof value}`;
+  const shown = describe(value);
   logError({
     code: 'E_AGENT_NAME_INVALID',
     kind: 'actionable',
@@ -93,4 +99,16 @@ function validated(value: unknown, source: string): string | undefined {
     fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(', ')}`,
   });
   return undefined;
+}
+
+/**
+ * A rejected value as the user should see it. `"[object Object]"` names nothing they can
+ * find in their config, so a non-string is named by what it is — with the article that
+ * makes the sentence read, since this text ends up in `errors.log` verbatim.
+ */
+function describe(value: unknown): string {
+  if (typeof value === 'string') return `"${value}"`;
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
 }

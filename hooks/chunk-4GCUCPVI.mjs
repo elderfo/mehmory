@@ -609,15 +609,18 @@ function isSafeAgentName(name) {
 }
 function resolveAgentName(envValue, configValue) {
   if (envValue) return validated(envValue, "MEHMORY_AGENT");
-  if (configValue) return validated(configValue, "config.identity.agent");
-  return void 0;
+  if (isAbsent(configValue)) return void 0;
+  return validated(configValue, "config.identity.agent");
+}
+function isAbsent(value) {
+  return value === void 0 || value === null || value === "";
 }
 function currentAgentName(config) {
   return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
 }
 function validated(value, source) {
   if (typeof value === "string" && isSafeAgentName(value)) return value;
-  const shown = typeof value === "string" ? `"${value}"` : `a ${typeof value}`;
+  const shown = describe(value);
   logError({
     code: "E_AGENT_NAME_INVALID",
     kind: "actionable",
@@ -628,6 +631,12 @@ function validated(value, source) {
     fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
   });
   return void 0;
+}
+function describe(value) {
+  if (typeof value === "string") return `"${value}"`;
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
 // src/schema/format.ts

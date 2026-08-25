@@ -100,6 +100,30 @@ describe('resolveAgentName', () => {
     expect(log).toContain('MEHMORY_AGENT');
   });
 
+  it('warns on a present-but-unusable config value rather than reading it as unset', () => {
+    // `''`/`undefined`/`null` are the three spellings of "no agent" (JSON has no
+    // `undefined`, so `null` is how a config file writes it). Anything else is a
+    // declaration that failed, and silence there is the misconfiguration going unseen.
+    for (const value of [false, 0] as unknown[]) {
+      expect(resolveAgentName(undefined, value), JSON.stringify(value)).toBeUndefined();
+      expect(errorsLog(), JSON.stringify(value)).toContain('config.identity.agent');
+    }
+  });
+
+  it('reads null, empty string and undefined as unset, with no warning', () => {
+    for (const value of [null, '', undefined] as unknown[]) {
+      expect(resolveAgentName(undefined, value), JSON.stringify(value)).toBeUndefined();
+    }
+  });
+
+  it('describes a rejected non-string readably, with the right article', () => {
+    resolveAgentName(undefined, { name: 'scout' });
+    expect(errorsLog()).toContain('an object');
+    resolveAgentName(undefined, ['scout']);
+    expect(errorsLog()).toContain('an array');
+    expect(errorsLog()).not.toContain('a object');
+  });
+
   it('degrades to unnamed instead of throwing on a non-string config value', () => {
     // `loadConfig()` deep-merges unvalidated JSON and casts, so `identity.agent` can be
     // any JSON value. A wrong type must take the same warn-and-degrade path as a badly
