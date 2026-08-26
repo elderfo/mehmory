@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-25
+
 ### Added
 
 - **Agent scopes: per-agent memory beside the shared project scope.** A third scope,
@@ -275,7 +277,8 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/elderfo/mehmory/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/elderfo/mehmory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/elderfo/mehmory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/elderfo/mehmory/compare/v0.2.0...v0.2.1
