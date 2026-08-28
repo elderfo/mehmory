@@ -36,7 +36,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-NEVGDLYA.mjs";
+} from "./chunk-TIRALUHN.mjs";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
@@ -247,7 +247,7 @@ function runHook(event, body) {
           consequence: "The invocation was skipped; no session state was read or written"
         });
       } else {
-        rememberSessionOrigin(input.session_id, input.transcript_path, host);
+        rememberSessionOrigin(input.session_id, input.transcript_path, host, project);
         result = body(input, project, host, config);
       }
     }

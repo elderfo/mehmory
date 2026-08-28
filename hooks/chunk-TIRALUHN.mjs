@@ -966,11 +966,13 @@ function isSessionFinalized(sessionId) {
 function markSessionFinalized(sessionId) {
   atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
 }
-function rememberSessionOrigin(sessionId, transcriptPath, host) {
+function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
   const state = readSessionState(sessionId);
-  if (state.transcript_path === transcriptPath && state.host === host) return;
-  writeSessionState({ ...state, transcript_path: transcriptPath, host });
+  if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
+    return;
+  }
+  writeSessionState({ ...state, transcript_path: transcriptPath, host, project_key: projectKey });
 }
 var PENDING_FINALIZE_IDLE_MS = 30 * 60 * 1e3;
 function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
