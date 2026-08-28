@@ -12,7 +12,7 @@ import {
   resetSessionCursor,
   resetStopCount,
   sessionStatePath,
-  setCachedProjectKey,
+  rememberSessionOrigin,
   setPaused,
   sweepSessionState,
   topicCacheHit,
@@ -63,13 +63,24 @@ describe('session state', () => {
     expect(readSessionState('s2').stop_count).toBe(0);
   });
 
-  it('stores the pause flag and the cached project key', () => {
+  it('stores the pause flag', () => {
     setPaused('s3', true);
     expect(isPaused('s3')).toBe(true);
-    setCachedProjectKey('s3', 'github.com/acme/repo');
-    expect(readSessionState('s3').project_key).toBe('github.com/acme/repo');
     setPaused('s3', false);
     expect(isPaused('s3')).toBe(false);
+  });
+
+  it('records transcript, host and project key as the session origin', () => {
+    rememberSessionOrigin('s5', '/tmp/t.jsonl', 'claude-code', 'github.com/acme/repo');
+    const state = readSessionState('s5');
+    expect(state.transcript_path).toBe('/tmp/t.jsonl');
+    expect(state.host).toBe('claude-code');
+    expect(state.project_key).toBe('github.com/acme/repo');
+  });
+
+  it('ignores an origin with no transcript to finalize', () => {
+    rememberSessionOrigin('s6', undefined, 'claude-code', 'github.com/acme/repo');
+    expect(pathExists(sessionStatePath('s6'))).toBe(false);
   });
 
   it('deletes its own state file', () => {

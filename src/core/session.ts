@@ -185,19 +185,31 @@ export function markSessionFinalized(sessionId: string): void {
  * Record where this session's material lives, so a session that never reports an end can
  * still be finalized later (issue #24).
  *
- * Every hook payload carries `transcript_path`, and `runHook` already knows the harness,
- * so the cheapest place to learn both is the invocation itself. Written only when
- * something actually changed — the common case is a no-op read.
+ * Every hook payload carries `transcript_path`, and `runHook` already knows the harness
+ * and the project key, so the cheapest place to learn all three is the invocation itself.
+ * Written only when something actually changed — the common case is a no-op read.
+ *
+ * `projectKey` is the load-bearing one. A deferred finalize runs inside *another*
+ * session's hook, so by then the only record of where this session ran is what was
+ * persisted here; `finalizePendingSessions` falls back to the sweeping session's project
+ * when it is missing, which files one project's transcript under another's scope.
  */
 export function rememberSessionOrigin(
   sessionId: string,
   transcriptPath: string | undefined,
-  host: InboxHost
+  host: InboxHost,
+  projectKey: string
 ): void {
   if (transcriptPath === undefined || transcriptPath === '') return;
   const state = readSessionState(sessionId);
-  if (state.transcript_path === transcriptPath && state.host === host) return;
-  writeSessionState({ ...state, transcript_path: transcriptPath, host });
+  if (
+    state.transcript_path === transcriptPath &&
+    state.host === host &&
+    state.project_key === projectKey
+  ) {
+    return;
+  }
+  writeSessionState({ ...state, transcript_path: transcriptPath, host, project_key: projectKey });
 }
 
 /**
@@ -353,12 +365,7 @@ export function rememberTopic(
   updateSessionState(sessionId, s => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
 }
 
-// ─── Project key cache / pause ───
-
-/** Cache the resolved project key on the session (avoids re-resolving per prompt). */
-export function setCachedProjectKey(sessionId: string, key: string): void {
-  updateSessionState(sessionId, s => ({ ...s, project_key: key }));
-}
+// ─── Pause ───
 
 /** Set or clear the session pause flag. */
 export function setPaused(sessionId: string, paused: boolean): void {
