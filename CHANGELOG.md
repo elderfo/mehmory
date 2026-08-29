@@ -32,13 +32,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `host/owner/repo` shape check, so a one-segment alias such as `my-custom-key`
   remains valid.
 
+- **An alias that is not a string no longer takes down every hook for that project.**
+  `identity.aliases` is typed `Record<string, string>`, but `config.json` is user JSON and
+  nothing enforced the value type at runtime. A number reached `String.prototype.split`
+  and threw out of `resolveProjectKey`, which `runHook` catches fail-open -- so the hook
+  produced no capture, no injection and no error the user would see.
+
 - **A finalized session's state is no longer resurrected.** A hook firing after
   finalization rebuilt `.state/<id>.json` from scratch, cursor back at 0.
   `finalizeSession` short-circuits on the marker before it would delete state again, so
   the file lingered; if the marker aged out of `sweepSessionState` first -- it can, being
   the younger file -- the transcript was distilled a second time. The origin write now
   returns early for a finalized session, and the sweep keeps a marker as long as its state
-  file exists.
+  file is one the sweep could act on. An unparseable state file is invisible to both the
+  sweep and `listPendingSessions`, so pinning a marker behind it would strand both files
+  rather than protect anything.
 
 ### Removed
 

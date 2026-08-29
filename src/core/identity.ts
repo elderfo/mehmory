@@ -101,7 +101,11 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
       // `../../../tmp/x` would escape the store exactly like a hostile remote would.
       // Reject rather than sanitize: silently rewriting someone's alias to a hash would be
       // more confusing than ignoring it and using the real key.
-      if (isContainedProjectKey(aliasKey)) {
+      // `aliases` is typed `Record<string, string>`, but config.json is user JSON and
+      // `deepMerge` enforces no value types -- a number reaches `key.split` and throws out
+      // of `resolveProjectKey`, which `runHook` catches fail-open, so every hook for that
+      // project silently does nothing.
+      if (typeof aliasKey === 'string' && isContainedProjectKey(aliasKey)) {
         projectKeyCache.set(cwd, aliasKey);
         return aliasKey;
       }
@@ -127,7 +131,8 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
   if (config.identity.aliases[pathKey]) {
     const aliasKey = config.identity.aliases[pathKey];
     // Same reason as the remote-derived branch: an alias is unvalidated user config.
-    if (isContainedProjectKey(aliasKey)) {
+    // Same reason as the remote-derived branch: the value is unenforced user JSON.
+    if (typeof aliasKey === 'string' && isContainedProjectKey(aliasKey)) {
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;
     }

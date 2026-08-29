@@ -206,6 +206,21 @@ describe('session state', () => {
       expect(isSessionFinalized('paired')).toBe(true);
     });
 
+    it('removes a marker whose paired state file is unparseable', () => {
+      // A malformed state file is skipped by its own iteration and is invisible to
+      // `listPendingSessions`, so it can never un-finalize anything. Pinning the marker
+      // behind it would strand both files permanently.
+      markSessionFinalized('mangled');
+      atomicWrite(sessionStatePath('mangled'), '{ not json');
+
+      const marker = statePath('mangled.finalized.json');
+      const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
+      utimesSync(marker, old, old);
+
+      expect(sweepSessionState(14)).toBe(1);
+      expect(pathExists(marker)).toBe(false);
+    });
+
     it('removes a marker once its state file is gone', () => {
       markSessionFinalized('orphaned-marker');
 

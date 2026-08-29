@@ -289,6 +289,23 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
  *
  * @returns number of files deleted
  */
+/**
+ * True when `path` holds something this sweep would recognize as session state: parseable
+ * JSON carrying a string `session_id`. Anything else -- truncated, hand-mangled, a
+ * different file that happens to end in `.json` -- is invisible to both the sweep and
+ * `listPendingSessions`, so it protects nothing and pins nothing.
+ */
+function isSweepableState(path: string): boolean {
+  if (!pathExists(path)) return false;
+  try {
+    const parsed: unknown = JSON.parse(readFile(path));
+    if (typeof parsed !== 'object' || parsed === null) return false;
+    return typeof (parsed as Record<string, unknown>)['session_id'] === 'string';
+  } catch {
+    return false;
+  }
+}
+
 export function sweepSessionState(maxAgeDays?: number): number {
   const days = maxAgeDays ?? loadConfig().session_state.max_age_days;
   const dir = statePath();
@@ -312,7 +329,12 @@ export function sweepSessionState(maxAgeDays?: number): number {
       // state re-qualifies in `listPendingSessions` with whatever cursor it holds and the
       // transcript is distilled a second time. The marker is the younger file only when
       // state was rewritten after finalization, so outlive it rather than race it.
-      if (name.endsWith('.finalized.json') && pathExists(sessionStatePath(id))) continue;
+      //
+      // Only for a state file this sweep could actually act on, though. An unparseable one
+      // is skipped by its own iteration, and `listPendingSessions` skips it too, so it can
+      // never un-finalize anything -- pinning the marker behind it would strand both files
+      // for good instead of protecting anything.
+      if (name.endsWith('.finalized.json') && isSweepableState(sessionStatePath(id))) continue;
       remove(path);
       deleted++;
     } catch {

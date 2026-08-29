@@ -916,7 +916,7 @@ function resolveProjectKey(cwd = process.cwd()) {
     const config2 = loadConfig();
     if (config2.identity.aliases[remoteKey]) {
       const aliasKey = config2.identity.aliases[remoteKey];
-      if (isContainedProjectKey(aliasKey)) {
+      if (typeof aliasKey === "string" && isContainedProjectKey(aliasKey)) {
         projectKeyCache.set(cwd, aliasKey);
         return aliasKey;
       }
@@ -931,7 +931,7 @@ function resolveProjectKey(cwd = process.cwd()) {
   const config = loadConfig();
   if (config.identity.aliases[pathKey]) {
     const aliasKey = config.identity.aliases[pathKey];
-    if (isContainedProjectKey(aliasKey)) {
+    if (typeof aliasKey === "string" && isContainedProjectKey(aliasKey)) {
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;
     }
@@ -1108,6 +1108,16 @@ function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
   }
   return pending;
 }
+function isSweepableState(path) {
+  if (!pathExists(path)) return false;
+  try {
+    const parsed = JSON.parse(readFile(path));
+    if (typeof parsed !== "object" || parsed === null) return false;
+    return typeof parsed["session_id"] === "string";
+  } catch {
+    return false;
+  }
+}
 function sweepSessionState(maxAgeDays) {
   const days = maxAgeDays ?? loadConfig().session_state.max_age_days;
   const dir = statePath();
@@ -1124,7 +1134,7 @@ function sweepSessionState(maxAgeDays) {
       if (typeof parsed !== "object" || parsed === null) continue;
       const id = parsed["session_id"];
       if (typeof id !== "string") continue;
-      if (name.endsWith(".finalized.json") && pathExists(sessionStatePath(id))) continue;
+      if (name.endsWith(".finalized.json") && isSweepableState(sessionStatePath(id))) continue;
       remove(path);
       deleted++;
     } catch {
