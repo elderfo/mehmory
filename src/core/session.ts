@@ -18,6 +18,7 @@ import { logError } from './errors.js';
 import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
+import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
 /** Cached prompt token set used to skip repeat lookups within a TTL. */
@@ -99,7 +100,14 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
     cursor: v['cursor'],
     stop_count: v['stop_count'],
     ...(topicCache ? { topic: topicCache } : {}),
-    ...(typeof v['project_key'] === 'string' ? { project_key: v['project_key'] } : {}),
+    // `project_key` is read back from disk and handed straight to `scopePaths()`, which
+    // joins it under `<home>/projects/`. The state file is a read boundary like the inbox
+    // and the queue, so the key is re-validated here rather than trusted because the only
+    // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
+    // finalize then falls back to the sweeping session's key, which is wrong but in-store.
+    ...(typeof v['project_key'] === 'string' && isContainedProjectKey(v['project_key'])
+      ? { project_key: v['project_key'] }
+      : {}),
     ...(typeof v['transcript_path'] === 'string' ? { transcript_path: v['transcript_path'] } : {}),
     ...(host !== undefined ? { host } : {}),
     paused: v['paused'] === true,
@@ -201,6 +209,13 @@ export function rememberSessionOrigin(
   projectKey: string
 ): void {
   if (transcriptPath === undefined || transcriptPath === '') return;
+  // A hook that fires after the session was finalized (a trailing Stop, a retry, a sweep
+  // that retired a session still running elsewhere) would otherwise recreate `<id>.json`
+  // from `freshSessionState` -- cursor back at 0. `finalizeSession` short-circuits on the
+  // marker before it ever deletes state again, so that file would sit there until
+  // `sweepSessionState` removed it, and its cursor would re-distill the whole transcript
+  // if the marker aged out first.
+  if (isSessionFinalized(sessionId)) return;
   const state = readSessionState(sessionId);
   if (
     state.transcript_path === transcriptPath &&
@@ -290,7 +305,14 @@ export function sweepSessionState(maxAgeDays?: number): number {
       if (mtime === undefined || mtime > cutoff) continue;
       const parsed: unknown = JSON.parse(readFile(path));
       if (typeof parsed !== 'object' || parsed === null) continue;
-      if (typeof (parsed as Record<string, unknown>)['session_id'] !== 'string') continue;
+      const id = (parsed as Record<string, unknown>)['session_id'];
+      if (typeof id !== 'string') continue;
+      // A marker matches this filter too -- it ends in `.json` and carries a `session_id`.
+      // Removing one while its state file survives would un-finalize that session: the
+      // state re-qualifies in `listPendingSessions` with whatever cursor it holds and the
+      // transcript is distilled a second time. The marker is the younger file only when
+      // state was rewritten after finalization, so outlive it rather than race it.
+      if (name.endsWith('.finalized.json') && pathExists(sessionStatePath(id))) continue;
       remove(path);
       deleted++;
     } catch {

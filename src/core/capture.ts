@@ -28,6 +28,7 @@ import { enqueueJob } from './queue.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { currentAgentName, isSafeAgentName } from './agent.js';
+import { isContainedProjectKey } from './identity.js';
 import { buildInjection, type InjectionPart } from './injection.js';
 import { estimateTokens } from './tokens.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
@@ -404,7 +405,12 @@ export function applyDistillJob(
 ): number {
   const key = data['key'];
   const raw = data['entries'];
-  if (typeof key !== 'string' || !Array.isArray(raw)) return 0;
+  // `host` and `agent` are already revalidated below because the queue file on disk is a
+  // read boundary (KTD5). `key` is the field that actually becomes a path -- it reaches
+  // `scopePaths(key).inboxFile` -- and a deferred job now carries a *foreign* session's
+  // persisted key rather than the running session's freshly resolved one, so it gets the
+  // same treatment.
+  if (typeof key !== 'string' || !isContainedProjectKey(key) || !Array.isArray(raw)) return 0;
 
   const entries: InboxEntry[] = [];
   for (const item of raw) {

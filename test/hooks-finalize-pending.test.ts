@@ -182,16 +182,21 @@ describe('finalization at the next session start (#24)', () => {
     expect(statsLines().at(-1)).toMatchObject({ finalized_sessions: 0 });
   });
 
-  it('records the transcript and host a leftover session must be read with', () => {
+  it('records the transcript, host and project a leftover session must be read with', () => {
     runHook(
       'stop',
       { session_id: ABANDONED, transcript_path: rollout, cwd },
       { cwd, args: CODEX_ARGS }
     );
 
+    // `project_key` is asserted here, against a real hook subprocess, and not only in the
+    // unit tests: `runHook` is the sole production caller that supplies it, so passing the
+    // raw cwd or a stale key there would type-check and silently restore the misfiling this
+    // whole change exists to fix.
     expect(readSessionState(ABANDONED)).toMatchObject({
       transcript_path: rollout,
       host: 'codex',
+      project_key: key,
     });
   });
 });

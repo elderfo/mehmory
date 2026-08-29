@@ -412,6 +412,30 @@ describe('agent attribution across the deferred-capture queue (R7)', () => {
     expect(readInboxEntries(scopePaths(KEY).inboxFile)[0]?.agent).toBe('scout');
   });
 
+  it.each(['../../../../tmp/pwned', '/etc/passwd', 'ok/..', ''])(
+    'refuses a queue payload whose key would escape the store (%p)',
+    badKey => {
+      // `key` is the one field in the payload that becomes a path -- it reaches
+      // `scopePaths(key).inboxFile`. Since a deferred job now carries a *foreign*
+      // session's persisted key rather than the running session's freshly resolved one,
+      // it gets the same read-boundary treatment as `host` and `agent` (KTD5).
+      const payload = {
+        key: badKey,
+        entries: [
+          {
+            id: inboxEntryId('queued-bad-key'),
+            text: 'a deferred capture aimed outside the store',
+            src: 'session-deferred',
+            host: 'claude-code',
+            ts: '2026-08-27T00:00:00.000Z',
+          },
+        ],
+      };
+
+      expect(applyDistillJob(payload, config)).toBe(0);
+    }
+  );
+
   it('drops an unsafe agent from the queue payload but keeps the entry', () => {
     // The job file on disk is a read boundary exactly like the inbox (KTD5).
     const payload = {

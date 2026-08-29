@@ -887,6 +887,110 @@ function advanceCursor(current, filepath, recordHash, newOffset) {
   return { file_id: fileId, size: fileSize, offset, last_hash: recordHash };
 }
 
+// src/core/identity.ts
+import { execFileSync } from "child_process";
+import { createHash as createHash3 } from "crypto";
+var projectKeyCache = /* @__PURE__ */ new Map();
+var SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+function isContainedProjectKey(key) {
+  const segments = key.split("/");
+  if (segments.length === 0 || segments.length > 5) return false;
+  return segments.every((seg) => seg !== "." && seg !== ".." && SAFE_SEGMENT.test(seg));
+}
+function isSafeProjectKey(key) {
+  return key.includes("/") && isContainedProjectKey(key);
+}
+function safeRemoteKey(normalizedRemote) {
+  if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
+  const hash = createHash3("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
+  return `remote/${hash}`;
+}
+function resolveProjectKey(cwd = process.cwd()) {
+  const cached = projectKeyCache.get(cwd);
+  if (cached !== void 0) {
+    return cached;
+  }
+  const rawRemoteKey = tryGetGitRemoteKey(cwd);
+  if (rawRemoteKey) {
+    const remoteKey = safeRemoteKey(rawRemoteKey);
+    const config2 = loadConfig();
+    if (config2.identity.aliases[remoteKey]) {
+      const aliasKey = config2.identity.aliases[remoteKey];
+      if (isContainedProjectKey(aliasKey)) {
+        projectKeyCache.set(cwd, aliasKey);
+        return aliasKey;
+      }
+    }
+    projectKeyCache.set(cwd, remoteKey);
+    return remoteKey;
+  }
+  const base = tryGetGitToplevel(cwd) ?? cwd;
+  const resolvedPath = realpath(base);
+  const hash = createHash3("sha256").update(resolvedPath).digest("hex").slice(0, 12);
+  const pathKey = `local/${hash}`;
+  const config = loadConfig();
+  if (config.identity.aliases[pathKey]) {
+    const aliasKey = config.identity.aliases[pathKey];
+    if (isContainedProjectKey(aliasKey)) {
+      projectKeyCache.set(cwd, aliasKey);
+      return aliasKey;
+    }
+  }
+  projectKeyCache.set(cwd, pathKey);
+  return pathKey;
+}
+function tryGetGitToplevel(cwd) {
+  try {
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe"
+    }).trim();
+    return top || void 0;
+  } catch {
+    return void 0;
+  }
+}
+function tryGetGitRemoteKey(cwd) {
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "pipe" });
+    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe"
+    }).trim();
+    if (!remoteUrl) {
+      return void 0;
+    }
+    return normalizeRemoteUrl(remoteUrl);
+  } catch {
+    return void 0;
+  }
+}
+function normalizeRemoteUrl(url) {
+  url = url.trim();
+  if (url.endsWith(".git")) {
+    url = url.slice(0, -4);
+  }
+  url = url.replace(/\/+$/, "");
+  const sshMatch = url.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    const [, host, path] = sshMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  const sshProtoMatch = url.match(/^ssh:\/\/git@([^/]+)\/(.+)$/u);
+  if (sshProtoMatch) {
+    const [, host, path] = sshProtoMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+)$/u);
+  if (httpsMatch) {
+    const [, host, path] = httpsMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  return url;
+}
+
 // src/core/session.ts
 function sanitizeSessionId(sessionId) {
   return sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -919,7 +1023,12 @@ function parseSessionState(raw, sessionId) {
     cursor: v["cursor"],
     stop_count: v["stop_count"],
     ...topicCache ? { topic: topicCache } : {},
-    ...typeof v["project_key"] === "string" ? { project_key: v["project_key"] } : {},
+    // `project_key` is read back from disk and handed straight to `scopePaths()`, which
+    // joins it under `<home>/projects/`. The state file is a read boundary like the inbox
+    // and the queue, so the key is re-validated here rather than trusted because the only
+    // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
+    // finalize then falls back to the sweeping session's key, which is wrong but in-store.
+    ...typeof v["project_key"] === "string" && isContainedProjectKey(v["project_key"]) ? { project_key: v["project_key"] } : {},
     ...typeof v["transcript_path"] === "string" ? { transcript_path: v["transcript_path"] } : {},
     ...host !== void 0 ? { host } : {},
     paused: v["paused"] === true
@@ -968,6 +1077,7 @@ function markSessionFinalized(sessionId) {
 }
 function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
+  if (isSessionFinalized(sessionId)) return;
   const state = readSessionState(sessionId);
   if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
     return;
@@ -1012,7 +1122,9 @@ function sweepSessionState(maxAgeDays) {
       if (mtime === void 0 || mtime > cutoff) continue;
       const parsed = JSON.parse(readFile(path));
       if (typeof parsed !== "object" || parsed === null) continue;
-      if (typeof parsed["session_id"] !== "string") continue;
+      const id = parsed["session_id"];
+      if (typeof id !== "string") continue;
+      if (name.endsWith(".finalized.json") && pathExists(sessionStatePath(id))) continue;
       remove(path);
       deleted++;
     } catch {
@@ -1197,7 +1309,6 @@ export {
   mkdir,
   rename,
   remove,
-  realpath,
   listDir,
   atomicWrite,
   appendRecord,
@@ -1219,6 +1330,8 @@ export {
   redact,
   tokenize,
   matchPages,
+  isContainedProjectKey,
+  resolveProjectKey,
   readSessionState,
   deleteSessionState,
   isSessionFinalized,

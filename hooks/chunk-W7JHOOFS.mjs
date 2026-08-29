@@ -12,6 +12,7 @@ import {
   deleteSessionState,
   failOpen,
   inboxEntryId,
+  isContainedProjectKey,
   isPaused,
   isSafeAgentName,
   isSessionFinalized,
@@ -28,111 +29,15 @@ import {
   readFileFrom,
   readSessionState,
   readStdin,
-  realpath,
   redact,
   rememberSessionOrigin,
   remove,
   rename,
+  resolveProjectKey,
   stat,
   statePath,
   withProjectLock
-} from "./chunk-TIRALUHN.mjs";
-
-// src/core/identity.ts
-import { execFileSync } from "child_process";
-import { createHash } from "crypto";
-var projectKeyCache = /* @__PURE__ */ new Map();
-var SAFE_KEY = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){1,4}$/;
-function isSafeProjectKey(key) {
-  if (!SAFE_KEY.test(key)) return false;
-  return key.split("/").every((seg) => seg !== "." && seg !== ".." && seg.length > 0);
-}
-function safeRemoteKey(normalizedRemote) {
-  if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
-  const hash = createHash("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
-  return `remote/${hash}`;
-}
-function resolveProjectKey(cwd = process.cwd()) {
-  const cached = projectKeyCache.get(cwd);
-  if (cached !== void 0) {
-    return cached;
-  }
-  const rawRemoteKey = tryGetGitRemoteKey(cwd);
-  if (rawRemoteKey) {
-    const remoteKey = safeRemoteKey(rawRemoteKey);
-    const config2 = loadConfig();
-    if (config2.identity.aliases[remoteKey]) {
-      const aliasKey = config2.identity.aliases[remoteKey];
-      projectKeyCache.set(cwd, aliasKey);
-      return aliasKey;
-    }
-    projectKeyCache.set(cwd, remoteKey);
-    return remoteKey;
-  }
-  const base = tryGetGitToplevel(cwd) ?? cwd;
-  const resolvedPath = realpath(base);
-  const hash = createHash("sha256").update(resolvedPath).digest("hex").slice(0, 12);
-  const pathKey = `local/${hash}`;
-  const config = loadConfig();
-  if (config.identity.aliases[pathKey]) {
-    const aliasKey = config.identity.aliases[pathKey];
-    projectKeyCache.set(cwd, aliasKey);
-    return aliasKey;
-  }
-  projectKeyCache.set(cwd, pathKey);
-  return pathKey;
-}
-function tryGetGitToplevel(cwd) {
-  try {
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd,
-      encoding: "utf-8",
-      stdio: "pipe"
-    }).trim();
-    return top || void 0;
-  } catch {
-    return void 0;
-  }
-}
-function tryGetGitRemoteKey(cwd) {
-  try {
-    execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "pipe" });
-    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
-      cwd,
-      encoding: "utf-8",
-      stdio: "pipe"
-    }).trim();
-    if (!remoteUrl) {
-      return void 0;
-    }
-    return normalizeRemoteUrl(remoteUrl);
-  } catch {
-    return void 0;
-  }
-}
-function normalizeRemoteUrl(url) {
-  url = url.trim();
-  if (url.endsWith(".git")) {
-    url = url.slice(0, -4);
-  }
-  url = url.replace(/\/+$/, "");
-  const sshMatch = url.match(/^git@([^:]+):(.+)$/);
-  if (sshMatch) {
-    const [, host, path] = sshMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  const sshProtoMatch = url.match(/^ssh:\/\/git@([^/]+)\/(.+)$/u);
-  if (sshProtoMatch) {
-    const [, host, path] = sshProtoMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+)$/u);
-  if (httpsMatch) {
-    const [, host, path] = httpsMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  return url;
-}
+} from "./chunk-YEINRNIS.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -397,11 +302,11 @@ function estimateTokens(text) {
 import { join as join2, relative } from "path";
 
 // src/core/git.ts
-import { execFileSync as execFileSync2 } from "child_process";
+import { execFileSync } from "child_process";
 function commitPaths(paths, message, cwd) {
   const opts = cwd ? { stdio: "pipe", cwd } : { stdio: "pipe" };
   try {
-    execFileSync2("git", ["rev-parse", "--git-dir"], opts);
+    execFileSync("git", ["rev-parse", "--git-dir"], opts);
   } catch {
     const error = {
       code: "E_GIT_COMMIT",
@@ -413,7 +318,7 @@ function commitPaths(paths, message, cwd) {
     return { ok: false };
   }
   try {
-    execFileSync2("git", ["add", "--", ...paths], opts);
+    execFileSync("git", ["add", "--", ...paths], opts);
   } catch (err) {
     const error = {
       code: "E_GIT_COMMIT",
@@ -426,7 +331,7 @@ function commitPaths(paths, message, cwd) {
   }
   for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
     try {
-      execFileSync2("git", ["commit", "--no-gpg-sign", "-m", message], {
+      execFileSync("git", ["commit", "--no-gpg-sign", "-m", message], {
         ...opts,
         stdio: "pipe"
       });
@@ -596,7 +501,7 @@ function readTranscript(path, startOffset = 0) {
 }
 
 // src/transcript/codex.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash } from "crypto";
 function readCodexRollout(path, startOffset = 0) {
   const { records: envelopes, skipped, endOffset } = readTranscript(path, startOffset);
   const records = [];
@@ -627,7 +532,7 @@ function readCodexRollout(path, startOffset = 0) {
   return { records, skipped, endOffset };
 }
 function syntheticUuid(timestamp, role, text) {
-  return createHash2("sha256").update(timestamp).update(role).update(text).digest("hex").slice(0, 32);
+  return createHash("sha256").update(timestamp).update(role).update(text).digest("hex").slice(0, 32);
 }
 function asRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
@@ -639,7 +544,7 @@ function readSession(path, host, startOffset = 0) {
 }
 
 // src/distill/distill.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 
 // src/distill/patterns.ts
 var DISTILL_PATTERNS = [
@@ -767,7 +672,7 @@ function distill(records, fallbackSessionId = "", secrets) {
       if (pattern.matches(record)) {
         const content = pattern.extract(record);
         if (content) {
-          const hash = createHash3("sha256").update(sessionId).update(record.uuid).digest("hex");
+          const hash = createHash2("sha256").update(sessionId).update(record.uuid).digest("hex");
           entries.push({
             id: hash,
             pattern: pattern.name,
@@ -971,7 +876,7 @@ function distillJobPayload(key, entries) {
 function applyDistillJob(data, config = loadConfig()) {
   const key = data["key"];
   const raw = data["entries"];
-  if (typeof key !== "string" || !Array.isArray(raw)) return 0;
+  if (typeof key !== "string" || !isContainedProjectKey(key) || !Array.isArray(raw)) return 0;
   const entries = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
