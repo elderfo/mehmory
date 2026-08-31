@@ -17,6 +17,18 @@ import {
   createLockExclusive,
 } from './fs.js';
 
+/**
+ * Session locks get far tighter retry bounds than project locks.
+ *
+ * This one is taken on every prompt and every Stop, and `withProjectLock` retries by
+ * *busy-waiting* -- the project default of 50 x 100ms would burn five seconds of CPU
+ * inside a hook. The critical section here is one small read plus one atomic write, so
+ * contention resolves in microseconds or not at all; on timeout the lock fails open the
+ * same way, which is no worse than the unserialized write this replaces.
+ */
+const SESSION_LOCK_RETRY_COUNT = 10;
+const SESSION_LOCK_RETRY_INTERVAL_MS = 20;
+
 /** Lock file path for a project key. */
 function lockFilePath(key: string): string {
   return join(statePath('locks'), key.replace(/\//g, '_') + '.lock');
@@ -149,4 +161,26 @@ export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
       }
     }
   }
+}
+
+/**
+ * Acquire exclusive access to one session's state file, execute fn, then release.
+ *
+ * Session state is read-modify-write (`updateSessionState`), and hooks for one session
+ * genuinely overlap: a Stop and a UserPromptSubmit can be in flight together, and a
+ * SessionEnd can race a trailing Stop. Without this, two processes read the same state,
+ * change different fields, and the later write silently discards the earlier one -- a
+ * stale Stop counter can roll an advanced cursor backwards and cause a re-distill.
+ *
+ * Namespaced under `sessions/` so a session id can never collide with a project key in
+ * the shared lock directory. Session locks are leaves: nothing taken inside one acquires
+ * a project lock, so the two can never deadlock against each other.
+ */
+export function withSessionLock<T>(sessionId: string, fn: () => T): T {
+  return withProjectLock(
+    `sessions/${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
+    fn,
+    SESSION_LOCK_RETRY_COUNT,
+    SESSION_LOCK_RETRY_INTERVAL_MS
+  );
 }

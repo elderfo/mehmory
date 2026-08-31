@@ -8,6 +8,7 @@ import {
   incrementStopCount,
   isPaused,
   isSessionFinalized,
+  resumeFinalizedSession,
   markSessionFinalized,
   readSessionState,
   rememberTopic,
@@ -232,6 +233,56 @@ describe('session state', () => {
       expect(pathExists(marker)).toBe(false);
     });
   });
+
+  describe('resume: a finalized id that comes back', () => {
+    it('clears the marker so the resumed run can be finalized again', () => {
+      markSessionFinalized('resumed');
+      expect(isSessionFinalized('resumed')).toBe(true);
+
+      expect(resumeFinalizedSession('resumed')).toBe(true);
+      expect(isSessionFinalized('resumed')).toBe(false);
+    });
+
+    it('hands the cursor back so the resumed run does not re-read the transcript', () => {
+      const cursor = { file_id: '1:2', size: 4096, offset: 4096 };
+      markSessionFinalized('resumed-cursor', cursor);
+
+      resumeFinalizedSession('resumed-cursor');
+
+      expect(readSessionState('resumed-cursor').cursor).toEqual(cursor);
+    });
+
+    it('does not clobber live state if one somehow already exists', () => {
+      const live = { ...freshSessionState('resumed-live'), stop_count: 3 };
+      writeSessionState(live);
+      markSessionFinalized('resumed-live', { file_id: '1:2', size: 10, offset: 10 });
+
+      resumeFinalizedSession('resumed-live');
+
+      expect(readSessionState('resumed-live').stop_count).toBe(3);
+    });
+
+    it('bumps the generation so the second ending is not read as a retry of the first', () => {
+      markSessionFinalized('gen', undefined, 0);
+      resumeFinalizedSession('gen');
+      expect(readSessionState('gen').generation).toBe(1);
+
+      markSessionFinalized('gen', undefined, 1);
+      resumeFinalizedSession('gen');
+      expect(readSessionState('gen').generation).toBe(2);
+    });
+
+    it('reports false for a session that was never finalized', () => {
+      expect(resumeFinalizedSession('never-finalized')).toBe(false);
+    });
+
+    it('clears an unreadable marker rather than leaving the id unfinalizable', () => {
+      atomicWrite(statePath('mangled-marker.finalized.json'), '{ not json');
+      expect(resumeFinalizedSession('mangled-marker')).toBe(true);
+      expect(isSessionFinalized('mangled-marker')).toBe(false);
+    });
+  });
+
 
   describe('interleaved sessions (A13: the run-1 global-cursor blocker)', () => {
     it('never resets the other session cursor and never re-distills', () => {

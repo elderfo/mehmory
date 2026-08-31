@@ -13,7 +13,11 @@ import {
   redact,
   remove,
   statePath
+<<<<<<< HEAD
 } from "./chunk-V6QKE7VP.mjs";
+=======
+} from "./chunk-7GZSEYBF.mjs";
+>>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
 
 // src/core/inbox-tx.ts
 import { randomBytes } from "crypto";

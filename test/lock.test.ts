@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { existsSync, writeFileSync, readdirSync, mkdirSync, utimesSync, readFileSync } from 'node:fs';
 import { statePath } from '../src/core/home.js';
-import { withProjectLock } from '../src/core/lock.js';
+import { withProjectLock, withSessionLock } from '../src/core/lock.js';
 import { LOCK_RETRY_COUNT, LOCK_RETRY_INTERVAL_MS } from '../src/core/fs.js';
 
 describe('withProjectLock (done-when 7)', () => {
@@ -131,5 +131,34 @@ describe('withProjectLock (done-when 7)', () => {
       const contents = readFileSync(errorsLogPath, 'utf-8');
       expect(contents).toContain('E_LOCK_TIMEOUT');
     }
+  });
+});
+
+describe('withSessionLock', () => {
+  it('runs the critical section and returns its value', () => {
+    expect(withSessionLock('sess-a', () => 'done')).toBe('done');
+  });
+
+  it('does not collide with a project lock of the same name', () => {
+    // Both live in one lock directory, so a session id must not be able to take the lock
+    // a project key is using. Held nested: if they shared a lock file this would deadlock
+    // until the retry budget expired and only then fail open.
+    const order: string[] = [];
+    withProjectLock('sess-b', () => {
+      order.push('project');
+      withSessionLock('sess-b', () => {
+        order.push('session');
+      });
+    });
+    expect(order).toEqual(['project', 'session']);
+  });
+
+  it('releases on throw', () => {
+    expect(() =>
+      withSessionLock('sess-c', () => {
+        throw new Error('boom');
+      })
+    ).toThrow('boom');
+    expect(withSessionLock('sess-c', () => 'reacquired')).toBe('reacquired');
   });
 });

@@ -3,7 +3,11 @@ import {
   runHook,
   scopePaths,
   staleSessionStartWarning
+<<<<<<< HEAD
 } from "./chunk-PTXQ5VQ2.mjs";
+=======
+} from "./chunk-3IPU3PJ5.mjs";
+>>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
 import {
   appendInboxEntries,
   isPaused,
@@ -13,7 +17,11 @@ import {
   rememberTopic,
   tokenize,
   topicCacheHit
+<<<<<<< HEAD
 } from "./chunk-V6QKE7VP.mjs";
+=======
+} from "./chunk-7GZSEYBF.mjs";
+>>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
 
 // src/hooks/user-prompt-submit.ts
 import { join } from "path";

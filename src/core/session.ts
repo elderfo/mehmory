@@ -18,6 +18,7 @@ import { logError } from './errors.js';
 import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
+import { withSessionLock } from './lock.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
@@ -53,6 +54,13 @@ export interface SessionState {
    * harness happens to start next would both mis-parse and mis-attribute it (issue #20).
    */
   host?: InboxHost;
+  /**
+   * How many times this id has been finalized already. A harness that resumes a
+   * conversation reuses its session id, and each resumed run ends in a finalization of
+   * its own -- so the id alone cannot identify one, and both the marker and the `log.md`
+   * idempotency tag are keyed by id *and* generation. Absent means 0.
+   */
+  generation?: number;
   /** Session-level capture pause (subtractive only: never re-enables config-off hooks). */
   paused: boolean;
 }
@@ -105,6 +113,9 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
     // and the queue, so the key is re-validated here rather than trusted because the only
     // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
     // finalize then falls back to the sweeping session's key, which is wrong but in-store.
+    ...(typeof v['generation'] === 'number' && Number.isInteger(v['generation'])
+      ? { generation: v['generation'] }
+      : {}),
     ...(typeof v['project_key'] === 'string' && isContainedProjectKey(v['project_key'])
       ? { project_key: v['project_key'] }
       : {}),
@@ -149,9 +160,15 @@ export function updateSessionState(
   sessionId: string,
   mutate: (_state: SessionState) => SessionState
 ): SessionState {
-  const next = mutate(readSessionState(sessionId));
-  writeSessionState(next);
-  return next;
+  // Read and write under one lock. Hooks for a single session overlap in practice -- a
+  // Stop alongside a UserPromptSubmit, a SessionEnd racing a trailing Stop -- and an
+  // unserialized read-modify-write lets the later writer discard the earlier one's field,
+  // which can roll an advanced cursor backwards into a re-distill.
+  return withSessionLock(sessionId, () => {
+    const next = mutate(readSessionState(sessionId));
+    writeSessionState(next);
+    return next;
+  });
 }
 
 /** Delete a session's state file (SessionEnd). No-op if it is already gone. */
@@ -184,9 +201,89 @@ export function isSessionFinalized(sessionId: string): boolean {
   return pathExists(finalizedMarkerPath(sessionId));
 }
 
-/** Record that this session's finalization completed, so a retry becomes a no-op. */
-export function markSessionFinalized(sessionId: string): void {
-  atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
+/**
+ * Record that this session's finalization completed, so a retry becomes a no-op.
+ *
+ * The cursor rides along because the marker outlives the state file that held it. A
+ * harness that resumes a conversation reuses its session id, and `resumeFinalizedSession`
+ * hands this cursor back so the resumed run reads on from where finalization stopped
+ * instead of re-distilling the whole transcript.
+ */
+export function markSessionFinalized(
+  sessionId: string,
+  cursor?: CursorState,
+  generation = 0
+): void {
+  atomicWrite(
+    finalizedMarkerPath(sessionId),
+    JSON.stringify({ session_id: sessionId, generation, ...(cursor ? { cursor } : {}) })
+  );
+}
+
+/** Which run of this session id we are on; 0 until the id is resumed for the first time. */
+export function sessionGeneration(sessionId: string): number {
+  return readSessionState(sessionId).generation ?? 0;
+}
+
+/**
+ * Reopen a session id whose marker says it was already finalized.
+ *
+ * A marker means "the transcript up to here is captured", not "this id is done forever" —
+ * but `finalizeSession` reads it as the latter, so once a resumed conversation reuses its
+ * id, every later SessionEnd for it is a no-op and everything after the resume is lost.
+ * Observed in the wild: a marker dated five days before the same session's live state.
+ *
+ * Clearing it at SessionStart is what makes the marker mean the narrower thing. Seeding
+ * state with the marker's cursor keeps the resumed run from re-reading the whole
+ * transcript; without it the cursor would restart at 0. That is not a correctness
+ * problem — entry ids are content-stable, so the inbox dedups and `alreadyLogged` guards
+ * the log line — but on a long transcript it is a great deal of wasted work.
+ *
+ * @returns true when a marker was cleared, i.e. this really is a resume
+ */
+export function resumeFinalizedSession(sessionId: string): boolean {
+  const marker = finalizedMarkerPath(sessionId);
+  if (!pathExists(marker)) return false;
+
+  let cursor: CursorState | undefined;
+  let generation = 0;
+  try {
+    const parsed: unknown = JSON.parse(readFile(marker));
+    if (typeof parsed === 'object' && parsed !== null) {
+      const raw = (parsed as Record<string, unknown>)['cursor'];
+      if (isCursorState(raw)) cursor = raw;
+      const gen = (parsed as Record<string, unknown>)['generation'];
+      if (typeof gen === 'number' && Number.isInteger(gen)) generation = gen;
+    }
+  } catch {
+    // An unreadable marker still has to be cleared, or the session stays unfinalizable.
+  }
+
+  // The generation must advance in *both* shapes, because the `log.md` idempotency tag is
+  // keyed by it and a stale tag makes the next finalize a silent no-op.
+  //
+  // State normally does not exist here -- `finalizeSession` deletes it before writing the
+  // marker -- but state and a stale marker side by side is exactly the situation a real
+  // store gets into once an id has been resumed, and skipping the bump there would leave
+  // the very case this exists to fix still broken. Seed the cursor only when there is no
+  // live state to take it from; never overwrite one that is already running.
+  const next = Math.max(generation, readSessionState(sessionId).generation ?? 0) + 1;
+  if (pathExists(sessionStatePath(sessionId))) {
+    updateSessionState(sessionId, state => ({ ...state, generation: next }));
+  } else {
+    writeSessionState({
+      ...freshSessionState(sessionId),
+      ...(cursor ? { cursor } : {}),
+      generation: next,
+    });
+  }
+
+  try {
+    remove(marker);
+  } catch {
+    // Fail-open: leaving it costs a re-finalize, not data.
+  }
+  return true;
 }
 
 /**
@@ -216,15 +313,22 @@ export function rememberSessionOrigin(
   // `sweepSessionState` removed it, and its cursor would re-distill the whole transcript
   // if the marker aged out first.
   if (isSessionFinalized(sessionId)) return;
-  const state = readSessionState(sessionId);
-  if (
-    state.transcript_path === transcriptPath &&
-    state.host === host &&
-    state.project_key === projectKey
-  ) {
-    return;
-  }
-  writeSessionState({ ...state, transcript_path: transcriptPath, host, project_key: projectKey });
+  withSessionLock(sessionId, () => {
+    const state = readSessionState(sessionId);
+    if (
+      state.transcript_path === transcriptPath &&
+      state.host === host &&
+      state.project_key === projectKey
+    ) {
+      return;
+    }
+    writeSessionState({
+      ...state,
+      transcript_path: transcriptPath,
+      host,
+      project_key: projectKey,
+    });
+  });
 }
 
 /**
@@ -264,7 +368,6 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
     try {
       const path = join(dir, name);
       const mtime = stat(path)?.mtimeMs;
-      if (mtime === undefined || mtime > cutoff) continue;
 
       const raw = readFile(path);
       const id: unknown = (JSON.parse(raw) as Record<string, unknown>)['session_id'];
@@ -273,6 +376,9 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
       const state = parseSessionState(raw, id);
       if (!state || state.transcript_path === undefined) continue;
       if (isSessionFinalized(id)) continue;
+
+      if (mtime === undefined || mtime > cutoff) continue;
+
       pending.push(state);
     } catch {
       // Not a session-state file, or it vanished mid-scan: leave it to the sweep.

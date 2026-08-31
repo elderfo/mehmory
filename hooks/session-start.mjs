@@ -11,7 +11,11 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
+<<<<<<< HEAD
 } from "./chunk-PTXQ5VQ2.mjs";
+=======
+} from "./chunk-3IPU3PJ5.mjs";
+>>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -31,10 +35,15 @@ import {
   readFrontmatter,
   readInboxEntries,
   rename,
+  resumeFinalizedSession,
   stat,
   sweepSessionState,
   tryProjectLock
+<<<<<<< HEAD
 } from "./chunk-V6QKE7VP.mjs";
+=======
+} from "./chunk-7GZSEYBF.mjs";
+>>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
 
 // src/core/store.ts
 import { join } from "path";
@@ -387,6 +396,7 @@ function maintenance(sessionId, project, host, config) {
 }
 runHook("SessionStart", (input, project, host, config) => {
   if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  resumeFinalizedSession(input.session_id);
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
   const injection = buildScopeInjection(project, config);

@@ -21,6 +21,7 @@ import {
   isSessionFinalized,
   listPendingSessions,
   markSessionFinalized,
+  sessionGeneration,
   readSessionState,
 } from './session.js';
 import { commitPaths } from './git.js';
@@ -496,9 +497,15 @@ export interface FinalizeSessionOptions {
  * `finalizeSession` call — the log line's own committed content is the idempotency
  * signal for "was this session's end already logged and committed", independent of
  * whether `markSessionFinalized` itself went on to succeed (see `finalizeSession`).
+ *
+ * Keyed by generation as well as id, because a resumed conversation reuses its session id
+ * and ends in a finalization of its own. Keyed by id alone, that second ending reads as a
+ * retry of the first and is skipped, which is how a resumed run came to be dropped
+ * entirely even once its stale marker was cleared. Generation 0 keeps the original
+ * spelling so existing `log.md` content still matches.
  */
-function sessionEndLogTag(sessionId: string): string {
-  return `(session ${sessionId})`;
+function sessionEndLogTag(sessionId: string, generation = 0): string {
+  return generation === 0 ? `(session ${sessionId})` : `(session ${sessionId}#${String(generation)})`;
 }
 
 /**
@@ -541,9 +548,13 @@ export function finalizeSession(
 ): FinalizeSessionResult {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
 
+  // Read before any path that deletes state: the generation lives there, and both the
+  // marker and the `log.md` idempotency tag are keyed by it.
+  const generation = sessionGeneration(sessionId);
+
   if (isPaused(sessionId)) {
     deleteSessionState(sessionId);
-    markSessionFinalized(sessionId);
+    markSessionFinalized(sessionId, undefined, generation);
     return { capturedEntries: 0 };
   }
 
@@ -568,7 +579,8 @@ export function finalizeSession(
   const home = mehmoryHome();
   const paths = scopePaths(project);
   const alreadyLogged =
-    pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId));
+    pathExists(paths.logFile) &&
+    readFile(paths.logFile).includes(sessionEndLogTag(sessionId, generation));
 
   let capturedEntries = 0;
   if (!alreadyLogged) {
@@ -580,7 +592,7 @@ export function finalizeSession(
     appendLogEntry(
       project,
       'session-end',
-      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId)}`
+      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId, generation)}`
     );
 
     const touched = [paths.logFile, paths.inboxFile]
@@ -592,8 +604,12 @@ export function finalizeSession(
     capturedEntries = entries.length;
   }
 
+  // Read the cursor before the state file holding it goes away: the marker carries it so
+  // a resumed session (same id) picks up where this left off instead of re-reading the
+  // whole transcript. See `resumeFinalizedSession`.
+  const finalCursor = readSessionState(sessionId).cursor;
   deleteSessionState(sessionId);
-  markSessionFinalized(sessionId);
+  markSessionFinalized(sessionId, finalCursor, generation);
   return { capturedEntries };
 }
 

@@ -112,6 +112,51 @@ describe('finalization at the next session start (#24)', () => {
     });
   });
 
+  // The bug this guards: a marker meant "this id is done forever", so a harness that
+  // reuses a session id on resume could never finalize again and the whole resumed run
+  // was lost. Driven through the built bundles on purpose -- the wiring that clears the
+  // marker lives in the SessionStart hook, and a unit test of the core op would not see
+  // it. Observed in a real store as a marker five days older than the same id's state.
+  it('finalizes a resumed session whose id was already marked finalized', () => {
+    abruptCodexSession();
+
+    // Someone else's start retires it, exactly as before.
+    runHook(
+      'session-start',
+      { session_id: 'next-session', transcript_path: rollout, cwd, source: 'startup' },
+      { cwd, args: CODEX_ARGS }
+    );
+    expect(endLogLines(key)).toBe(1);
+    expect(existsSync(sessionStatePath(ABANDONED))).toBe(false);
+
+    // Now that id comes back: the harness resumed the conversation.
+    runHook(
+      'session-start',
+      { session_id: ABANDONED, transcript_path: rollout, cwd, source: 'resume' },
+      { cwd, args: CODEX_ARGS }
+    );
+
+    // It records new material and stops, the way any live session does.
+    runHook(
+      'stop',
+      { session_id: ABANDONED, transcript_path: rollout, cwd, hook_event_name: 'Stop' },
+      { cwd, args: CODEX_ARGS }
+    );
+    expect(existsSync(sessionStatePath(ABANDONED))).toBe(true);
+    abandon(ABANDONED);
+
+    // A later start must be able to retire it a second time. Before the fix the stale
+    // marker made this a permanent no-op.
+    runHook(
+      'session-start',
+      { session_id: 'third-session', transcript_path: rollout, cwd, source: 'startup' },
+      { cwd, args: CODEX_ARGS }
+    );
+
+    expect(endLogLines(key)).toBe(2);
+    expect(existsSync(sessionStatePath(ABANDONED))).toBe(false);
+  });
+
   it('does not double-write or double-commit when a later session start runs again', () => {
     abruptCodexSession();
     runHook(
