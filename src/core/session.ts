@@ -379,6 +379,29 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
 
       if (mtime === undefined || mtime > cutoff) continue;
 
+      // State mtime moves only when a hook writes, so it says nothing about a session
+      // sitting inside one long turn -- a slow build, a long tool call -- which looks
+      // abandoned after the idle window and gets finalized while very much alive. Its
+      // state is deleted, its id marked done, and everything it records afterwards is
+      // dropped with no error anywhere.
+      //
+      // The transcript is the thing that actually grows while a session works: Claude Code
+      // appends as it goes (`captureDelta` reads it at every Stop), and a Codex rollout is
+      // written incrementally too. Requiring both to have gone quiet is what separates
+      // "nobody is driving this" from "busy for a while".
+      //
+      // Protect-only, deliberately. A transcript that is still warm defers the finalize to
+      // a later start; it never loses it. That is what keeps the ACP case correct -- a
+      // rollout flushed *after* SessionEnd (#43) simply waits out the window from its own
+      // mtime. A transcript that has not landed at all is left to the state mtime, because
+      // that session must stay eligible rather than wait forever for a file that is
+      // absent. `stat` throws on a missing path rather than returning undefined, so the
+      // existence check is load-bearing, not decoration.
+      if (pathExists(state.transcript_path)) {
+        const transcriptMtime = stat(state.transcript_path)?.mtimeMs;
+        if (transcriptMtime !== undefined && transcriptMtime > cutoff) continue;
+      }
+
       pending.push(state);
     } catch {
       // Not a session-state file, or it vanished mid-scan: leave it to the sweep.

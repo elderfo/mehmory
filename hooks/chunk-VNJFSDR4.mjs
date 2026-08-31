@@ -1167,6 +1167,10 @@ function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
       if (!state || state.transcript_path === void 0) continue;
       if (isSessionFinalized(id)) continue;
       if (mtime === void 0 || mtime > cutoff) continue;
+      if (pathExists(state.transcript_path)) {
+        const transcriptMtime = stat(state.transcript_path)?.mtimeMs;
+        if (transcriptMtime !== void 0 && transcriptMtime > cutoff) continue;
+      }
       pending.push(state);
     } catch {
     }

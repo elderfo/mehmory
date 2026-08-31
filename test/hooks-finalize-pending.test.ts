@@ -40,11 +40,18 @@ const ROLLOUT = [{ text: 'We decided to use fly.io for deploys.' }];
  * Age a session's state past `PENDING_FINALIZE_IDLE_MS` so it reads as abandoned rather
  * than as a session running concurrently in another terminal.
  */
-function abandon(sessionId: string): void {
+function abandon(sessionId: string, transcriptPath?: string): void {
   const path = sessionStatePath(sessionId);
   expect(existsSync(path), `${sessionId} left no state to abandon`).toBe(true);
   const long_ago = new Date(Date.now() - 6 * 60 * 60 * 1000);
   utimesSync(path, long_ago, long_ago);
+  // The transcript has to go quiet as well, because that is what abandonment is: nothing
+  // is appending to it any more. Ageing only the state file described a session that had
+  // stopped firing hooks while its transcript kept growing -- which is a session in the
+  // middle of a long turn, the one case the sweep must NOT touch.
+  if (transcriptPath !== undefined && existsSync(transcriptPath)) {
+    utimesSync(transcriptPath, long_ago, long_ago);
+  }
 }
 
 /** `mehmory: session <id> ended` commits in the store's history. */
@@ -82,7 +89,7 @@ describe('finalization at the next session start (#24)', () => {
       { cwd, args: CODEX_ARGS }
     );
     expect(readIfPresent(paths(key).inbox)).toBe('');
-    abandon(ABANDONED);
+    abandon(ABANDONED, rollout);
   }
 
   it('recovers an abruptly ended Codex session, exactly once', () => {
@@ -143,7 +150,7 @@ describe('finalization at the next session start (#24)', () => {
       { cwd, args: CODEX_ARGS }
     );
     expect(existsSync(sessionStatePath(ABANDONED))).toBe(true);
-    abandon(ABANDONED);
+    abandon(ABANDONED, rollout);
 
     // A later start must be able to retire it a second time. Before the fix the stale
     // marker made this a permanent no-op.
@@ -154,6 +161,45 @@ describe('finalization at the next session start (#24)', () => {
     );
 
     expect(endLogLines(key)).toBe(2);
+    expect(existsSync(sessionStatePath(ABANDONED))).toBe(false);
+  });
+
+  // The bug: idle detection read the state file's mtime, which only moves when a hook
+  // writes. A session inside one long turn -- a slow build, a long tool call -- fires no
+  // hooks, looked abandoned after the window, and was finalized while alive: state
+  // deleted, id marked done, everything it recorded afterwards silently dropped. Driven
+  // through the built bundles because the sweep runs inside the SessionStart hook.
+  it('does not finalize a session that is mid-turn with a growing transcript', () => {
+    runHook(
+      'stop',
+      { session_id: ABANDONED, transcript_path: rollout, cwd, hook_event_name: 'Stop' },
+      { cwd, args: CODEX_ARGS }
+    );
+
+    // No hook has touched state for six hours. The transcript is still being written.
+    const long_ago = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    utimesSync(sessionStatePath(ABANDONED), long_ago, long_ago);
+
+    runHook(
+      'session-start',
+      { session_id: 'other-session', transcript_path: rollout, cwd, source: 'startup' },
+      { cwd, args: CODEX_ARGS }
+    );
+
+    // Untouched: still pending, nothing logged, nothing retired.
+    expect(existsSync(sessionStatePath(ABANDONED))).toBe(true);
+    expect(endLogLines(key)).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ finalized_sessions: 0 });
+
+    // Once it does go quiet, the next start retires it as before.
+    abandon(ABANDONED, rollout);
+    runHook(
+      'session-start',
+      { session_id: 'later-session', transcript_path: rollout, cwd, source: 'startup' },
+      { cwd, args: CODEX_ARGS }
+    );
+    expect(endLogLines(key)).toBe(1);
     expect(existsSync(sessionStatePath(ABANDONED))).toBe(false);
   });
 

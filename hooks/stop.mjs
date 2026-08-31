@@ -3,20 +3,12 @@ import {
   runHook,
   scopePaths,
   skillRef
-<<<<<<< HEAD
-} from "./chunk-PTXQ5VQ2.mjs";
-=======
-} from "./chunk-3IPU3PJ5.mjs";
->>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
+} from "./chunk-NOJLHJTQ.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-<<<<<<< HEAD
-} from "./chunk-V6QKE7VP.mjs";
-=======
-} from "./chunk-7GZSEYBF.mjs";
->>>>>>> 2189859 (fix(session): let a resumed session be finalized, and serialize state writes)
+} from "./chunk-VNJFSDR4.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";

@@ -25,6 +25,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tag are keyed by id and generation. Generation 0 keeps the original tag spelling, so
   existing `log.md` content still matches.
 
+- **A session in the middle of a long turn is no longer finalized while it is alive.**
+  Idle detection read the state file's mtime, which only moves when a hook writes. A
+  session waiting on a slow build or a long tool call fires no hooks, looked abandoned
+  after 30 minutes, and was retired by the next session's start: state deleted, id marked
+  done, everything it recorded afterwards dropped with no error anywhere.
+
+  A session is now eligible only once its **transcript** has gone quiet as well. That is
+  the file which actually grows while a session works -- Claude Code appends as it goes,
+  and a Codex rollout is written incrementally too.
+
+  Protect-only by design: a warm transcript defers the finalize to a later start, it never
+  loses one. A rollout flushed after `SessionEnd` (#43) waits out the window from its own
+  mtime, and a transcript that has not landed at all still falls back to the state mtime,
+  so it stays eligible rather than waiting forever for a file that is absent.
+
 - **Session-state writes are serialized.** `updateSessionState` was an unlocked
   read-modify-write, and hooks for one session really do overlap -- a Stop alongside a
   UserPromptSubmit, a `SessionEnd` racing a trailing Stop. The later writer discarded the

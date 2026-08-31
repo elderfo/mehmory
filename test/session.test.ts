@@ -8,6 +8,7 @@ import {
   incrementStopCount,
   isPaused,
   isSessionFinalized,
+  listPendingSessions,
   resumeFinalizedSession,
   markSessionFinalized,
   readSessionState,
@@ -283,6 +284,43 @@ describe('session state', () => {
     });
   });
 
+
+  describe('a busy session is not an abandoned one', () => {
+    const aged = Date.now() / 1000 - 6 * 60 * 60;
+
+    function pendingSession(id: string, transcript: string): void {
+      writeSessionState({ ...freshSessionState(id), transcript_path: transcript });
+      utimesSync(sessionStatePath(id), aged, aged);
+    }
+
+    it('leaves a session alone while its transcript is still growing', () => {
+      // No hook has written state for six hours, which is what one long tool call looks
+      // like. The transcript says the session is very much alive.
+      const transcript = statePath('busy.jsonl');
+      atomicWrite(transcript, '{}\n');
+      pendingSession('busy', transcript);
+
+      expect(listPendingSessions().map(p => p.session_id)).not.toContain('busy');
+    });
+
+    it('finalizes a session once its transcript has gone quiet too', () => {
+      const transcript = statePath('quiet.jsonl');
+      atomicWrite(transcript, '{}\n');
+      pendingSession('quiet', transcript);
+      utimesSync(transcript, aged, aged);
+
+      expect(listPendingSessions().map(p => p.session_id)).toContain('quiet');
+    });
+
+    it('still finalizes a session whose transcript never landed (#43)', () => {
+      // `stat` throws on a missing path rather than returning undefined, and the catch
+      // around this loop would swallow it and drop the session entirely -- which is
+      // exactly the not-yet-flushed ACP rollout that has to stay eligible.
+      pendingSession('unflushed', statePath('never-written.jsonl'));
+
+      expect(listPendingSessions().map(p => p.session_id)).toContain('unflushed');
+    });
+  });
 
   describe('interleaved sessions (A13: the run-1 global-cursor blocker)', () => {
     it('never resets the other session cursor and never re-distills', () => {
