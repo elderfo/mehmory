@@ -1074,12 +1074,15 @@ function readSessionState(sessionId) {
 function writeSessionState(state) {
   atomicWrite(sessionStatePath(state.session_id), JSON.stringify(state));
 }
-function updateSessionState(sessionId, mutate) {
+function tryUpdateSessionState(sessionId, mutate) {
   return withSessionLock(sessionId, () => {
     const next = mutate(readSessionState(sessionId));
     writeSessionState(next);
     return next;
-  }) ?? readSessionState(sessionId);
+  });
+}
+function updateSessionState(sessionId, mutate) {
+  return tryUpdateSessionState(sessionId, mutate) ?? readSessionState(sessionId);
 }
 function deleteSessionState(sessionId) {
   const path = sessionStatePath(sessionId);
@@ -1143,8 +1146,8 @@ function resumeFinalizedSessionUnlocked(sessionId) {
 }
 function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
-  if (isSessionFinalized(sessionId)) return;
   withSessionLock(sessionId, () => {
+    if (isSessionFinalized(sessionId)) return;
     const state = readSessionState(sessionId);
     if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
       return;
@@ -1220,10 +1223,19 @@ function sweepSessionState(maxAgeDays) {
   return deleted;
 }
 function advanceSessionCursor(sessionId, filepath, recordHash, newOffset) {
-  return updateSessionState(sessionId, (s) => ({
+  return tryUpdateSessionState(sessionId, (s) => ({
     ...s,
     cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset)
-  })).cursor;
+  }))?.cursor;
+}
+function advanceSessionCursorUnlocked(sessionId, filepath, recordHash, newOffset) {
+  const state = readSessionState(sessionId);
+  const next = {
+    ...state,
+    cursor: advanceCursor(state.cursor, filepath, recordHash, newOffset)
+  };
+  writeSessionState(next);
+  return next.cursor;
 }
 function incrementStopCount(sessionId) {
   return updateSessionState(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
@@ -1430,6 +1442,7 @@ export {
   listPendingSessions,
   sweepSessionState,
   advanceSessionCursor,
+  advanceSessionCursorUnlocked,
   incrementStopCount,
   resetStopCount,
   topicCacheHit,

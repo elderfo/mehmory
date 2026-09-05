@@ -62,6 +62,10 @@ describe('finalizeSession', () => {
 
     expect(result.capturedEntries).toBe(1);
     expect(existsSync(sessionStatePath('s1'))).toBe(false);
+    const marker = JSON.parse(readFileSync(statePath('s1.finalized.json'), 'utf-8')) as {
+      cursor?: { offset?: number };
+    };
+    expect(marker.cursor?.offset).toBeGreaterThan(0);
     const queued = readdirSync(statePath('queue')).filter(f => f.endsWith('.json'));
     expect(queued).toHaveLength(1);
     expect(gitLog()).toContain('session s1 ended');

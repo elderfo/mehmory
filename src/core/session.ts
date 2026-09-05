@@ -155,22 +155,24 @@ export function writeSessionState(state: SessionState): void {
   atomicWrite(sessionStatePath(state.session_id), JSON.stringify(state));
 }
 
-/** Read-modify-write a session's state; returns the state that was written. */
+/** Read-modify-write under the session lock, or undefined when contention skips it. */
+export function tryUpdateSessionState(
+  sessionId: string,
+  mutate: (_state: SessionState) => SessionState
+): SessionState | undefined {
+  return withSessionLock(sessionId, () => {
+    const next = mutate(readSessionState(sessionId));
+    writeSessionState(next);
+    return next;
+  });
+}
+
+/** Read-modify-write a session's state; returns the current state on contention. */
 export function updateSessionState(
   sessionId: string,
   mutate: (_state: SessionState) => SessionState
 ): SessionState {
-  // Read and write under one lock. Hooks for a single session overlap in practice -- a
-  // Stop alongside a UserPromptSubmit, a SessionEnd racing a trailing Stop -- and an
-  // unserialized read-modify-write lets the later writer discard the earlier one's field,
-  // which can roll an advanced cursor backwards into a re-distill.
-  return (
-    withSessionLock(sessionId, () => {
-      const next = mutate(readSessionState(sessionId));
-      writeSessionState(next);
-      return next;
-    }) ?? readSessionState(sessionId)
-  );
+  return tryUpdateSessionState(sessionId, mutate) ?? readSessionState(sessionId);
 }
 
 /** Delete a session's state file (SessionEnd). No-op if it is already gone. */
@@ -323,8 +325,8 @@ export function rememberSessionOrigin(
   // marker before it ever deletes state again, so that file would sit there until
   // `sweepSessionState` removed it, and its cursor would re-distill the whole transcript
   // if the marker aged out first.
-  if (isSessionFinalized(sessionId)) return;
   withSessionLock(sessionId, () => {
+    if (isSessionFinalized(sessionId)) return;
     const state = readSessionState(sessionId);
     if (
       state.transcript_path === transcriptPath &&
@@ -487,17 +489,33 @@ export function sweepSessionState(maxAgeDays?: number): number {
 
 // ─── Cursor ───
 
-/** Advance this session's cursor past a consumed record and persist it. */
+/** Advance this session's cursor, returning undefined when lock contention skips it. */
 export function advanceSessionCursor(
   sessionId: string,
   filepath: string,
   recordHash: string,
   newOffset: number
-): CursorState {
-  return updateSessionState(sessionId, s => ({
+): CursorState | undefined {
+  return tryUpdateSessionState(sessionId, s => ({
     ...s,
     cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset),
-  })).cursor;
+  }))?.cursor;
+}
+
+/** Advance this session's cursor while the caller already holds its session lock. */
+export function advanceSessionCursorUnlocked(
+  sessionId: string,
+  filepath: string,
+  recordHash: string,
+  newOffset: number
+): CursorState {
+  const state = readSessionState(sessionId);
+  const next = {
+    ...state,
+    cursor: advanceCursor(state.cursor, filepath, recordHash, newOffset),
+  };
+  writeSessionState(next);
+  return next.cursor;
 }
 
 /** Reset this session's read position to the start of the transcript. */

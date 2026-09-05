@@ -16,6 +16,7 @@ import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
 import {
   advanceSessionCursor,
+  advanceSessionCursorUnlocked,
   deleteSessionState,
   isPaused,
   isSessionFinalized,
@@ -288,7 +289,8 @@ export function distillDelta(
   sessionId: string,
   transcriptPath: string | undefined,
   host: InboxHost,
-  config: MehmoryConfig = loadConfig()
+  config: MehmoryConfig = loadConfig(),
+  lockHeld = false
 ): InboxEntry[] {
   if (!transcriptPath) return [];
 
@@ -318,7 +320,8 @@ export function distillDelta(
         ts,
       }));
 
-      advanceSessionCursor(
+      const advance = lockHeld ? advanceSessionCursorUnlocked : advanceSessionCursor;
+      advance(
         sessionId,
         transcriptPath,
         records[records.length - 1]?.uuid ?? '',
@@ -600,7 +603,7 @@ function finalizeSessionUnlocked(
 
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDelta(sessionId, transcriptPath, host, config);
+    const entries = distillDelta(sessionId, transcriptPath, host, config, true);
     if (entries.length > 0) {
       enqueueJob(distillJobPayload(project, entries), 'distill-final');
     }

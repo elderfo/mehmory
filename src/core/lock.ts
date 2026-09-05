@@ -190,8 +190,10 @@ export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
  * stale Stop counter can roll an advanced cursor backwards and cause a re-distill.
  *
  * Namespaced under `sessions/` so a session id can never collide with a project key in
- * the shared lock directory. Session locks are leaves: nothing taken inside one acquires
- * a project lock, so the two can never deadlock against each other.
+ * the shared lock directory. Lock ordering is one-way: a session lock may be held while
+ * a project lock is acquired (`finalizeSession` → `appendLogEntry` → `withProjectLock`),
+ * never the reverse. Do not take a session lock inside a project lock, or the two orders
+ * can deadlock until both retry budgets expire.
  */
 export function withSessionLock<T>(sessionId: string, fn: () => T): T | undefined {
   return withProjectLock(
