@@ -279,11 +279,19 @@ function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
     ? { ...current, generation: next }
     : { ...freshSessionState(sessionId), ...(cursor ? { cursor } : {}), generation: next };
 
+  let markerRemoved = false;
   try {
     remove(marker);
+    markerRemoved = true;
     writeSessionState(nextState);
   } catch {
-    // Do not report a resume when the marker remains or the new state was not persisted.
+    if (markerRemoved) {
+      try {
+        markSessionFinalized(sessionId, cursor, generation);
+      } catch {
+        // The next session start can recover if both writes fail transiently.
+      }
+    }
     return false;
   }
   return true;

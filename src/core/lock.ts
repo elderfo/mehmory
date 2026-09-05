@@ -23,8 +23,8 @@ import {
  * This one is taken on every prompt and every Stop, and `withProjectLock` retries by
  * *busy-waiting* -- the project default of 50 x 100ms would burn five seconds of CPU
  * inside a hook. The critical section here is one small read plus one atomic write, so
- * contention resolves in microseconds or not at all; on timeout the lock fails open the
- * same way, which is no worse than the unserialized write this replaces.
+ * contention resolves in microseconds or not at all; on timeout the session operation
+ * skips rather than running the unserialized write this replaces.
  */
 const SESSION_LOCK_RETRY_COUNT = 10;
 const SESSION_LOCK_RETRY_INTERVAL_MS = 20;
