@@ -39,7 +39,7 @@ import {
   statePath,
   withProjectLock,
   withSessionLock
-} from "./chunk-3AVYCALQ.mjs";
+} from "./chunk-MD4QBFSR.mjs";
 
 // src/core/stats.ts
 function statsPath() {

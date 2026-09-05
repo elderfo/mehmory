@@ -1125,10 +1125,18 @@ function resumeFinalizedSessionUnlocked(sessionId) {
   const current = readSessionState(sessionId);
   const next = Math.max(generation, current.generation ?? 0) + 1;
   const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...freshSessionState(sessionId), ...cursor ? { cursor } : {}, generation: next };
+  let markerRemoved = false;
   try {
     remove(marker);
+    markerRemoved = true;
     writeSessionState(nextState);
   } catch {
+    if (markerRemoved) {
+      try {
+        markSessionFinalized(sessionId, cursor, generation);
+      } catch {
+      }
+    }
     return false;
   }
   return true;
