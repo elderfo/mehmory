@@ -891,6 +891,14 @@ function advanceCursor(current, filepath, recordHash, newOffset) {
 import { execFileSync } from "child_process";
 import { createHash as createHash3 } from "crypto";
 var projectKeyCache = /* @__PURE__ */ new Map();
+function configuredAlias(config, key) {
+  const identity = config.identity;
+  if (typeof identity !== "object" || identity === null) return void 0;
+  const aliases = identity["aliases"];
+  if (typeof aliases !== "object" || aliases === null || Array.isArray(aliases)) return void 0;
+  const alias = aliases[key];
+  return typeof alias === "string" ? alias : void 0;
+}
 var SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 function isContainedProjectKey(key) {
   const segments = key.split("/");
@@ -914,11 +922,11 @@ function resolveProjectKey(cwd = process.cwd()) {
   if (rawRemoteKey) {
     const remoteKey = safeRemoteKey(rawRemoteKey);
     const config2 = loadConfig();
-    if (config2.identity.aliases[remoteKey]) {
-      const aliasKey = config2.identity.aliases[remoteKey];
-      if (typeof aliasKey === "string" && isContainedProjectKey(aliasKey)) {
-        projectKeyCache.set(cwd, aliasKey);
-        return aliasKey;
+    const aliasKey2 = configuredAlias(config2, remoteKey);
+    if (aliasKey2 !== void 0) {
+      if (typeof aliasKey2 === "string" && isContainedProjectKey(aliasKey2)) {
+        projectKeyCache.set(cwd, aliasKey2);
+        return aliasKey2;
       }
     }
     projectKeyCache.set(cwd, remoteKey);
@@ -929,8 +937,8 @@ function resolveProjectKey(cwd = process.cwd()) {
   const hash = createHash3("sha256").update(resolvedPath).digest("hex").slice(0, 12);
   const pathKey = `local/${hash}`;
   const config = loadConfig();
-  if (config.identity.aliases[pathKey]) {
-    const aliasKey = config.identity.aliases[pathKey];
+  const aliasKey = configuredAlias(config, pathKey);
+  if (aliasKey !== void 0) {
     if (typeof aliasKey === "string" && isContainedProjectKey(aliasKey)) {
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;

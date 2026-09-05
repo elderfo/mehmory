@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { loadConfig } from './config.js';
+import { loadConfig, type MehmoryConfig } from './config.js';
 import { realpath } from './fs.js';
 
 /**
@@ -8,6 +8,15 @@ import { realpath } from './fs.js';
  * Safe for a hook's lifetime: the resolved key is deterministic per cwd.
  */
 const projectKeyCache = new Map<string, string>();
+
+function configuredAlias(config: MehmoryConfig, key: string): string | undefined {
+  const identity: unknown = config.identity;
+  if (typeof identity !== 'object' || identity === null) return undefined;
+  const aliases = (identity as Record<string, unknown>)['aliases'];
+  if (typeof aliases !== 'object' || aliases === null || Array.isArray(aliases)) return undefined;
+  const alias = (aliases as Record<string, unknown>)[key];
+  return typeof alias === 'string' ? alias : undefined;
+}
 
 /**
  * A project key becomes a directory name under <home>/projects/, so it must not be
@@ -94,8 +103,8 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
     // Alias lookup uses the sanitized key, which is what lands on disk and what a
     // user would see in `mehmory status` and copy into config.json.
     const config = loadConfig();
-    if (config.identity.aliases[remoteKey]) {
-      const aliasKey = config.identity.aliases[remoteKey];
+    const aliasKey = configuredAlias(config, remoteKey);
+    if (aliasKey !== undefined) {
       // An alias is hand-written config, so unlike the computed key above it never passed
       // through `safeRemoteKey`. It becomes a directory name all the same, so an alias of
       // `../../../tmp/x` would escape the store exactly like a hostile remote would.
@@ -128,8 +137,8 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
 
   // Check alias override
   const config = loadConfig();
-  if (config.identity.aliases[pathKey]) {
-    const aliasKey = config.identity.aliases[pathKey];
+  const aliasKey = configuredAlias(config, pathKey);
+  if (aliasKey !== undefined) {
     // Same reason as the remote-derived branch: an alias is unvalidated user config.
     // Same reason as the remote-derived branch: the value is unenforced user JSON.
     if (typeof aliasKey === 'string' && isContainedProjectKey(aliasKey)) {

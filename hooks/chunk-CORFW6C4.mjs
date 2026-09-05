@@ -37,7 +37,7 @@ import {
   stat,
   statePath,
   withProjectLock
-} from "./chunk-2THBAVZI.mjs";
+} from "./chunk-R2IC6A6N.mjs";
 
 // src/core/stats.ts
 function statsPath() {

@@ -228,6 +228,35 @@ describe('resolveProjectKey', () => {
     }
   });
 
+  it('ignores a null aliases container instead of throwing', () => {
+    const repoDir = join(tempDir, 'repo-with-null-aliases');
+    mkdirSync(repoDir, { recursive: true });
+
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git remote add origin https://github.com/owner/repo.git', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
+
+    const home = join(tempDir, '.mehmory-null-aliases');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ identity: { aliases: null } }), 'utf-8');
+
+    const originalHome = process.env.MEHMORY_HOME;
+    process.env.MEHMORY_HOME = home;
+
+    try {
+      expect(() => resolveProjectKey(repoDir)).not.toThrow();
+      expect(resolveProjectKey(repoDir)).toBe('github.com/owner/repo');
+    } finally {
+      if (originalHome) {
+        process.env.MEHMORY_HOME = originalHome;
+      } else {
+        delete process.env.MEHMORY_HOME;
+      }
+    }
+  });
+
   it('allows config.json alias to override computed key', () => {
     // This test verifies that if config.json has an alias entry,
     // resolveProjectKey will return the alias instead of the computed key.
