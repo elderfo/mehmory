@@ -12,6 +12,11 @@ import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { statePath } from './home.js';
 
+/** Quote a value for a POSIX shell command shown in an actionable fix. */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 // ponytail: errors.ts does its own bounded appends because it is the one module
 // that must work before/below the fs layer. fs.ts provides generic writes;
 // errors.ts needs only a specific append pattern and cannot depend on fs.ts.

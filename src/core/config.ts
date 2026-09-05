@@ -4,6 +4,9 @@ import { logError, type MehmoryError } from './errors.js';
 import { readFile, pathExists } from './fs.js';
 import type { InboxHost } from '../schema/format.js';
 
+/** Maximum SessionStart memory budget, keeping configuration from disabling the cap. */
+export const MAX_INJECTION_BUDGET_TOKENS = 8_000;
+
 /** Per-hook switch. An object rather than a bare boolean so run 3 can add per-hook
  * bounds (timeouts, budgets) without another config shape change. */
 export interface HookToggle {
@@ -220,6 +223,20 @@ export function loadConfig(): MehmoryConfig {
     userConfig as Record<string, unknown>
   );
 
+  if (!isValidConfigShape(merged)) {
+    logError(createConfigParseError('config.json contains values with invalid types.'));
+    return deepClone(DEFAULTS) as MehmoryConfig;
+  }
+
+  const secrets = merged['secrets'];
+  if (typeof secrets !== 'object' || secrets === null || Array.isArray(secrets)) {
+    merged['secrets'] = deepClone(DEFAULTS.secrets);
+  } else {
+    const secretConfig = secrets as Record<string, unknown>;
+    if (!Array.isArray(secretConfig['patterns'])) secretConfig['patterns'] = [];
+    if (!Array.isArray(secretConfig['whitelist'])) secretConfig['whitelist'] = [];
+  }
+
   return merged as unknown as MehmoryConfig;
 }
 
@@ -228,6 +245,57 @@ export function loadConfig(): MehmoryConfig {
  * copies them from parsed JSON writes into shared state instead of the config.
  */
 const POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Validate the merged boundary before typed consumers access nested fields. */
+function isValidConfigShape(config: Record<string, unknown>): boolean {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+  const finite = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
+  const toggle = (value: unknown): boolean => record(value) && typeof value['enabled'] === 'boolean';
+  const strings = (value: unknown): boolean =>
+    Array.isArray(value) && value.every(item => typeof item === 'string');
+  const aliases = (value: unknown): boolean =>
+    record(value) && Object.values(value).every(item => typeof item === 'string');
+  const group = (name: string): Record<string, unknown> | undefined => {
+    const value = config[name];
+    return record(value) ? value : undefined;
+  };
+  const injection = group('injection');
+  const decay = group('decay');
+  const secrets = group('secrets');
+  const stop = group('stop');
+  const hooks = group('hooks');
+  const hosts = group('hosts');
+  const inbox = group('inbox');
+  const sessionState = group('session_state');
+  const match = group('match');
+  const identity = group('identity');
+  const lock = group('lock');
+  const queue = group('queue');
+  const distill = group('distill');
+  const log = group('log');
+  const warning = group('warning');
+  return (
+    injection !== undefined && Number.isInteger(injection['budget_tokens']) &&
+    (injection['budget_tokens'] as number) >= 1 &&
+    (injection['budget_tokens'] as number) <= MAX_INJECTION_BUDGET_TOKENS &&
+    decay !== undefined && typeof decay['enabled'] === 'boolean' && finite(decay['archive_days']) && finite(decay['purge_days']) &&
+    secrets !== undefined && strings(secrets['patterns']) && strings(secrets['whitelist']) &&
+    stop !== undefined && finite(stop['capture_threshold']) &&
+    hooks !== undefined && ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end'].every(key => toggle(hooks[key])) &&
+    hosts !== undefined && toggle(hosts['claude-code']) && toggle(hosts['codex']) &&
+    inbox !== undefined && finite(inbox['nudge_entries']) && finite(inbox['nudge_bytes']) &&
+    sessionState !== undefined && finite(sessionState['max_age_days']) &&
+    match !== undefined && finite(match['jaccard']) && finite(match['cache_ttl_ms']) &&
+    identity !== undefined && aliases(identity['aliases']) && typeof identity['agent'] === 'string' &&
+    lock !== undefined && finite(lock['retry_count']) && finite(lock['retry_delay_ms']) && finite(lock['stale_ms']) &&
+    queue !== undefined && finite(queue['max_claims']) && finite(queue['stale_ms']) && finite(queue['claims_per_start']) &&
+    distill !== undefined && finite(distill['max_loss_percent']) &&
+    log !== undefined && finite(log['rotation_size_mb']) &&
+    warning !== undefined && finite(warning['rate_limit_ms'])
+  );
+}
 
 /**
  * Deep merge source into target, recursively.

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, type CliRun } from './cli-fixture.js';
+import { sessionStatePath } from '../src/core/session.js';
 
 /** `mehmory inbox-tx` with a JSON body piped to stdin — the CLI has no other way in. */
 function tx(
@@ -55,8 +56,9 @@ let key: string;
 function seed(): void {
   const home = process.env.MEHMORY_HOME as string;
   mkdirSync(join(home, '.state'), { recursive: true });
-  inbox = join(home, 'inbox.md');
   key = 'github.com/acme/widget';
+  inbox = join(home, 'projects', key, 'inbox.md');
+  mkdirSync(join(home, 'projects', key), { recursive: true });
   writeFileSync(inbox, '# Inbox\n');
 }
 
@@ -113,9 +115,8 @@ describe('mehmory inbox-tx append', () => {
 
   it('falls back to the host recorded in the src session state when none is declared', () => {
     seed();
-    const home = process.env.MEHMORY_HOME as string;
     writeFileSync(
-      join(home, '.state', 'sess-cx.json'),
+      sessionStatePath('sess-cx'),
       JSON.stringify({
         session_id: 'sess-cx',
         cursor: { file_id: '0:0', size: 0, offset: 0 },

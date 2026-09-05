@@ -8,6 +8,13 @@ function mehmoryHome() {
   }
   return join(homedir(), ".mehmory");
 }
+function codexHome() {
+  const envHome = process.env.CODEX_HOME;
+  if (envHome) {
+    return envHome;
+  }
+  return join(homedir(), ".codex");
+}
 function statePath(...segments) {
   return join(mehmoryHome(), ".state", ...segments);
 }
@@ -25,6 +32,9 @@ import {
 import { dirname } from "path";
 import { mkdirSync } from "fs";
 import { createHash } from "crypto";
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 var ERROR_KINDS = {
   E_CONFIG_PARSE: "actionable",
   E_LOCK_TIMEOUT: "informational",
@@ -224,7 +234,6 @@ function pendingWarnings() {
 import {
   writeFileSync as writeFileSync2,
   readFileSync as readFileSync2,
-  appendFileSync as appendFileSync2,
   openSync,
   closeSync,
   writeSync,
@@ -232,13 +241,15 @@ import {
   fstatSync,
   existsSync as existsSync2,
   statSync as statSync2,
+  lstatSync,
   renameSync as renameSync2,
   mkdirSync as mkdirSync2,
   readdirSync,
   rmSync,
   unlinkSync as unlinkSync2,
   realpathSync,
-  chmodSync
+  chmodSync,
+  constants
 } from "fs";
 import { dirname as dirname2 } from "path";
 var LOCK_RETRY_COUNT = 50;
@@ -262,11 +273,28 @@ function pathExists(path) {
 function stat(path) {
   return statSync2(path);
 }
+function lstat(path) {
+  return lstatSync(path);
+}
 function readFile(path) {
   return readFileSync2(path, "utf-8");
 }
 function readFileFrom(path, offset) {
   const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const start = offset > 0 ? Math.min(offset, size) : 0;
+    const length = size - start;
+    if (length <= 0) return "";
+    const buf = Buffer.allocUnsafe(length);
+    const read = readSync(fd, buf, 0, length, start);
+    return buf.subarray(0, read).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+function readFileFromNoFollow(path, offset) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const size = fstatSync(fd).size;
     const start = offset > 0 ? Math.min(offset, size) : 0;
@@ -288,6 +316,9 @@ function rename(from, to) {
 function remove(path) {
   unlinkSync2(path);
 }
+function removeDir(path) {
+  rmSync(path, { recursive: true, force: true });
+}
 function realpath(path) {
   try {
     return realpathSync(path);
@@ -298,9 +329,10 @@ function realpath(path) {
 function listDir(path) {
   return readdirSync(path);
 }
-function createLockExclusive(path) {
+function createLockExclusive(path, owner = "") {
   try {
     const fd = openSync(path, "wx");
+    if (owner !== "") writeSync(fd, owner);
     closeSync(fd);
     return true;
   } catch {
@@ -341,7 +373,12 @@ function appendRecord(path, record, key, lockPath) {
     try {
       lockPath(key, () => {
         mkdir(dirname2(path));
-        appendFileSync2(path, escaped + "\n", "utf-8");
+        const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+        try {
+          writeSync(fd, escaped + "\n", null, "utf-8");
+        } finally {
+          closeSync(fd);
+        }
       });
       return { ok: true };
     } catch (err) {
@@ -352,7 +389,7 @@ function appendRecord(path, record, key, lockPath) {
   } else {
     mkdir(dirname2(path));
     try {
-      const fd = openSync(path, "a");
+      const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
       try {
         writeSync(fd, escaped + "\n", null, "utf-8");
       } finally {
@@ -369,6 +406,7 @@ function appendRecord(path, record, key, lockPath) {
 
 // src/core/config.ts
 import { join as join2 } from "path";
+var MAX_INJECTION_BUDGET_TOKENS = 8e3;
 var DEFAULTS = {
   injection: {
     budget_tokens: 800
@@ -473,9 +511,48 @@ function loadConfig() {
     deepClone(DEFAULTS),
     userConfig
   );
+  if (!isValidConfigShape(merged)) {
+    logError(createConfigParseError("config.json contains values with invalid types."));
+    return deepClone(DEFAULTS);
+  }
+  const secrets = merged["secrets"];
+  if (typeof secrets !== "object" || secrets === null || Array.isArray(secrets)) {
+    merged["secrets"] = deepClone(DEFAULTS.secrets);
+  } else {
+    const secretConfig = secrets;
+    if (!Array.isArray(secretConfig["patterns"])) secretConfig["patterns"] = [];
+    if (!Array.isArray(secretConfig["whitelist"])) secretConfig["whitelist"] = [];
+  }
   return merged;
 }
 var POLLUTING_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+function isValidConfigShape(config) {
+  const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+  const finite = (value) => typeof value === "number" && Number.isFinite(value);
+  const toggle = (value) => record(value) && typeof value["enabled"] === "boolean";
+  const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+  const aliases = (value) => record(value) && Object.values(value).every((item) => typeof item === "string");
+  const group = (name) => {
+    const value = config[name];
+    return record(value) ? value : void 0;
+  };
+  const injection = group("injection");
+  const decay = group("decay");
+  const secrets = group("secrets");
+  const stop = group("stop");
+  const hooks = group("hooks");
+  const hosts = group("hosts");
+  const inbox = group("inbox");
+  const sessionState = group("session_state");
+  const match = group("match");
+  const identity = group("identity");
+  const lock = group("lock");
+  const queue = group("queue");
+  const distill = group("distill");
+  const log = group("log");
+  const warning = group("warning");
+  return injection !== void 0 && Number.isInteger(injection["budget_tokens"]) && injection["budget_tokens"] >= 1 && injection["budget_tokens"] <= MAX_INJECTION_BUDGET_TOKENS && decay !== void 0 && typeof decay["enabled"] === "boolean" && finite(decay["archive_days"]) && finite(decay["purge_days"]) && secrets !== void 0 && strings(secrets["patterns"]) && strings(secrets["whitelist"]) && stop !== void 0 && finite(stop["capture_threshold"]) && hooks !== void 0 && ["session_start", "user_prompt_submit", "stop", "pre_compact", "session_end"].every((key) => toggle(hooks[key])) && hosts !== void 0 && toggle(hosts["claude-code"]) && toggle(hosts["codex"]) && inbox !== void 0 && finite(inbox["nudge_entries"]) && finite(inbox["nudge_bytes"]) && sessionState !== void 0 && finite(sessionState["max_age_days"]) && match !== void 0 && finite(match["jaccard"]) && finite(match["cache_ttl_ms"]) && identity !== void 0 && aliases(identity["aliases"]) && typeof identity["agent"] === "string" && lock !== void 0 && finite(lock["retry_count"]) && finite(lock["retry_delay_ms"]) && finite(lock["stale_ms"]) && queue !== void 0 && finite(queue["max_claims"]) && finite(queue["stale_ms"]) && finite(queue["claims_per_start"]) && distill !== void 0 && finite(distill["max_loss_percent"]) && log !== void 0 && finite(log["rotation_size_mb"]) && warning !== void 0 && finite(warning["rate_limit_ms"]);
+}
 function deepMerge(target, source) {
   for (const key in source) {
     if (Object.prototype.hasOwnProperty.call(source, key)) {
@@ -515,19 +592,136 @@ function deepClone(obj) {
 }
 
 // src/core/lock.ts
+import { createHash as createHash3, randomBytes } from "crypto";
 import { join as join3 } from "path";
+
+// src/core/identity.ts
+import { execFileSync } from "child_process";
+import { createHash as createHash2 } from "crypto";
+var projectKeyCache = /* @__PURE__ */ new Map();
+function configuredAlias(config, key) {
+  const identity = config.identity;
+  if (typeof identity !== "object" || identity === null) return void 0;
+  const aliases = identity["aliases"];
+  if (typeof aliases !== "object" || aliases === null || Array.isArray(aliases)) return void 0;
+  const alias = aliases[key];
+  return typeof alias === "string" ? alias : void 0;
+}
+var SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+function isContainedProjectKey(key) {
+  const segments = key.split("/");
+  if (segments.length === 0 || segments.length > 5) return false;
+  return segments.every((seg) => seg !== "." && seg !== ".." && SAFE_SEGMENT.test(seg));
+}
+function isSafeProjectKey(key) {
+  return key.includes("/") && isContainedProjectKey(key);
+}
+function safeRemoteKey(normalizedRemote) {
+  if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
+  const hash = createHash2("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
+  return `remote/${hash}`;
+}
+function resolveProjectKey(cwd = process.cwd()) {
+  const cached = projectKeyCache.get(cwd);
+  if (cached !== void 0) {
+    return cached;
+  }
+  const rawRemoteKey = tryGetGitRemoteKey(cwd);
+  if (rawRemoteKey) {
+    const remoteKey = safeRemoteKey(rawRemoteKey);
+    const config2 = loadConfig();
+    const aliasKey2 = configuredAlias(config2, remoteKey);
+    if (aliasKey2 !== void 0) {
+      if (typeof aliasKey2 === "string" && isContainedProjectKey(aliasKey2)) {
+        projectKeyCache.set(cwd, aliasKey2);
+        return aliasKey2;
+      }
+    }
+    projectKeyCache.set(cwd, remoteKey);
+    return remoteKey;
+  }
+  const base = tryGetGitToplevel(cwd) ?? cwd;
+  const resolvedPath = realpath(base);
+  const hash = createHash2("sha256").update(resolvedPath).digest("hex").slice(0, 12);
+  const pathKey = `local/${hash}`;
+  const config = loadConfig();
+  const aliasKey = configuredAlias(config, pathKey);
+  if (aliasKey !== void 0) {
+    if (isContainedProjectKey(aliasKey)) {
+      projectKeyCache.set(cwd, aliasKey);
+      return aliasKey;
+    }
+  }
+  projectKeyCache.set(cwd, pathKey);
+  return pathKey;
+}
+function tryGetGitToplevel(cwd) {
+  try {
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe"
+    }).trim();
+    return top || void 0;
+  } catch {
+    return void 0;
+  }
+}
+function tryGetGitRemoteKey(cwd) {
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "pipe" });
+    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe"
+    }).trim();
+    if (!remoteUrl) {
+      return void 0;
+    }
+    return normalizeRemoteUrl(remoteUrl);
+  } catch {
+    return void 0;
+  }
+}
+function normalizeRemoteUrl(url) {
+  url = url.trim();
+  if (url.endsWith(".git")) {
+    url = url.slice(0, -4);
+  }
+  url = url.replace(/\/+$/, "");
+  const sshMatch = url.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    const [, host, path] = sshMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  const sshProtoMatch = url.match(/^ssh:\/\/git@([^/]+)\/(.+)$/u);
+  if (sshProtoMatch) {
+    const [, host, path] = sshProtoMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+)$/u);
+  if (httpsMatch) {
+    const [, host, path] = httpsMatch;
+    return `${host ?? ""}/${path ?? ""}`;
+  }
+  return url;
+}
+
+// src/core/lock.ts
 var SESSION_LOCK_RETRY_COUNT = 10;
 var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
-  return join3(statePath("locks"), key.replace(/\//g, "_") + ".lock");
+  const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
+  return join3(statePath("locks"), name + ".lock");
 }
 function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
   const lockPath = lockFilePath(key);
   mkdir(join3(mehmoryHome(), ".state", "locks"));
   let acquired = false;
+  const owner = `${String(process.pid)}:${randomBytes(16).toString("hex")}`;
   try {
     for (let attempt = 0; attempt <= retryCount; attempt++) {
-      if (createLockExclusive(lockPath)) {
+      if (createLockExclusive(lockPath, owner)) {
         acquired = true;
         break;
       }
@@ -546,6 +740,15 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
           const mtime = typeof lockStat.mtimeMs === "number" ? lockStat.mtimeMs : 0;
           const age = now - mtime;
           if (age > LOCK_STALE_MS) {
+            const marker = readFile(lockPath);
+            const ownerPid = Number(marker.split(":", 1)[0]);
+            if (Number.isInteger(ownerPid) && ownerPid > 0) {
+              try {
+                process.kill(ownerPid, 0);
+                continue;
+              } catch {
+              }
+            }
             try {
               remove(lockPath);
               continue;
@@ -575,22 +778,28 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
   } finally {
     if (acquired && pathExists(lockPath)) {
       try {
-        remove(lockPath);
+        if (readFile(lockPath) === owner) remove(lockPath);
       } catch {
       }
+    }
+    try {
+      const locksDir = join3(mehmoryHome(), ".state", "locks");
+      if (pathExists(locksDir) && listDir(locksDir).length === 0) removeDir(locksDir);
+    } catch {
     }
   }
 }
 function tryProjectLock(key, fn) {
   const lockPath = lockFilePath(key);
   mkdir(join3(mehmoryHome(), ".state", "locks"));
-  if (!createLockExclusive(lockPath)) return void 0;
+  const owner = `${String(process.pid)}:${randomBytes(16).toString("hex")}`;
+  if (!createLockExclusive(lockPath, owner)) return void 0;
   try {
     return fn();
   } finally {
     if (pathExists(lockPath)) {
       try {
-        remove(lockPath);
+        if (readFile(lockPath) === owner) remove(lockPath);
       } catch {
       }
     }
@@ -606,8 +815,11 @@ function withSessionLock(sessionId, fn) {
   );
 }
 
+// src/core/inbox.ts
+import { dirname as dirname3, relative, resolve, sep } from "path";
+
 // src/schema/format.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 
 // src/core/agent-name.ts
 var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
@@ -659,10 +871,16 @@ var INBOX_HOSTS = ["claude-code", "codex"];
 var DEFAULT_INBOX_HOST = "claude-code";
 var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 function inboxEntryId(seed) {
-  return createHash2("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
+  return createHash4("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }
 function serializeInboxEntry(entry) {
   const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
+  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
+    throw new Error("inbox entry source contains unsafe metadata characters");
+  }
+  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
+    throw new Error("inbox entry metadata is malformed");
+  }
   const host = entry.host ?? DEFAULT_INBOX_HOST;
   const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
   return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
@@ -698,29 +916,55 @@ function readInboxEntries(inboxFile) {
     "E_APPEND_FAILED"
   );
 }
+function isSafeInboxPath(inboxFile) {
+  try {
+    const home = realpath(resolve(mehmoryHome()));
+    const parent = realpath(dirname3(resolve(inboxFile)));
+    const suffix = relative(home, parent);
+    let symlink = false;
+    try {
+      symlink = lstat(resolve(inboxFile))?.isSymbolicLink() === true;
+    } catch {
+      symlink = false;
+    }
+    return suffix === "" || suffix !== ".." && !suffix.startsWith(`..${sep}`) ? !symlink : false;
+  } catch {
+    return false;
+  }
+}
 function appendInboxEntries(inboxFile, entries, key) {
-  const existing = new Set(readInboxEntries(inboxFile).map((e) => e.id));
+  return withProjectLock("__store__", () => appendInboxEntriesUnlocked(inboxFile, entries, key), 50, 100, false) ?? {
+    appended: 0,
+    skipped: 0,
+    failed: entries.length
+  };
+}
+function appendInboxEntriesUnlocked(inboxFile, entries, key) {
+  if (!isSafeInboxPath(inboxFile)) return { appended: 0, skipped: 0, failed: entries.length };
   let appended = 0;
   let skipped = 0;
+  let failed = 0;
   for (const entry of entries) {
-    if (existing.has(entry.id)) {
-      skipped++;
-      continue;
-    }
-    const result = appendRecord(inboxFile, serializeInboxEntry(entry), key, withProjectLock);
-    if (result.ok) {
-      existing.add(entry.id);
-      appended++;
-    } else {
-      skipped++;
-    }
+    const serialized = serializeInboxEntry(entry);
+    const result = withProjectLock(key, () => {
+      const existing = new Set(readInboxEntries(inboxFile).map((e) => e.id));
+      if (existing.has(entry.id)) return { kind: "skipped" };
+      const append = appendRecord(inboxFile, serialized, key, (_key, fn) => {
+        fn();
+      });
+      return append.ok ? { kind: "appended" } : { kind: "failed" };
+    });
+    if (result.kind === "appended") appended++;
+    else if (result.kind === "failed") failed++;
+    else skipped++;
   }
-  return { appended, skipped };
+  return failed > 0 ? { appended, skipped, failed } : { appended, skipped };
 }
 function clearInboxEntries(inboxFile, key, ids) {
   const doomed = new Set(ids);
   if (doomed.size === 0) return { removed: 0 };
-  return withProjectLock(
+  if (!isSafeInboxPath(inboxFile)) return void 0;
+  return tryProjectLock(
     key,
     () => failOpen(
       () => {
@@ -739,7 +983,7 @@ function clearInboxEntries(inboxFile, key, ids) {
         if (removed > 0) atomicWrite(inboxFile, kept.join("\n"));
         return { removed };
       },
-      { removed: 0 },
+      void 0,
       "E_APPEND_FAILED"
     )
   );
@@ -867,6 +1111,7 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
 }
 
 // src/core/session.ts
+import { createHash as createHash5 } from "crypto";
 import { join as join5 } from "path";
 
 // src/core/cursor.ts
@@ -899,121 +1144,9 @@ function advanceCursor(current, filepath, recordHash, newOffset) {
   return { file_id: fileId, size: fileSize, offset, last_hash: recordHash };
 }
 
-// src/core/identity.ts
-import { execFileSync } from "child_process";
-import { createHash as createHash3 } from "crypto";
-var projectKeyCache = /* @__PURE__ */ new Map();
-function configuredAlias(config, key) {
-  const identity = config.identity;
-  if (typeof identity !== "object" || identity === null) return void 0;
-  const aliases = identity["aliases"];
-  if (typeof aliases !== "object" || aliases === null || Array.isArray(aliases)) return void 0;
-  const alias = aliases[key];
-  return typeof alias === "string" ? alias : void 0;
-}
-var SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
-function isContainedProjectKey(key) {
-  const segments = key.split("/");
-  if (segments.length === 0 || segments.length > 5) return false;
-  return segments.every((seg) => seg !== "." && seg !== ".." && SAFE_SEGMENT.test(seg));
-}
-function isSafeProjectKey(key) {
-  return key.includes("/") && isContainedProjectKey(key);
-}
-function safeRemoteKey(normalizedRemote) {
-  if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
-  const hash = createHash3("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
-  return `remote/${hash}`;
-}
-function resolveProjectKey(cwd = process.cwd()) {
-  const cached = projectKeyCache.get(cwd);
-  if (cached !== void 0) {
-    return cached;
-  }
-  const rawRemoteKey = tryGetGitRemoteKey(cwd);
-  if (rawRemoteKey) {
-    const remoteKey = safeRemoteKey(rawRemoteKey);
-    const config2 = loadConfig();
-    const aliasKey2 = configuredAlias(config2, remoteKey);
-    if (aliasKey2 !== void 0) {
-      if (typeof aliasKey2 === "string" && isContainedProjectKey(aliasKey2)) {
-        projectKeyCache.set(cwd, aliasKey2);
-        return aliasKey2;
-      }
-    }
-    projectKeyCache.set(cwd, remoteKey);
-    return remoteKey;
-  }
-  const base = tryGetGitToplevel(cwd) ?? cwd;
-  const resolvedPath = realpath(base);
-  const hash = createHash3("sha256").update(resolvedPath).digest("hex").slice(0, 12);
-  const pathKey = `local/${hash}`;
-  const config = loadConfig();
-  const aliasKey = configuredAlias(config, pathKey);
-  if (aliasKey !== void 0) {
-    if (isContainedProjectKey(aliasKey)) {
-      projectKeyCache.set(cwd, aliasKey);
-      return aliasKey;
-    }
-  }
-  projectKeyCache.set(cwd, pathKey);
-  return pathKey;
-}
-function tryGetGitToplevel(cwd) {
-  try {
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd,
-      encoding: "utf-8",
-      stdio: "pipe"
-    }).trim();
-    return top || void 0;
-  } catch {
-    return void 0;
-  }
-}
-function tryGetGitRemoteKey(cwd) {
-  try {
-    execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "pipe" });
-    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
-      cwd,
-      encoding: "utf-8",
-      stdio: "pipe"
-    }).trim();
-    if (!remoteUrl) {
-      return void 0;
-    }
-    return normalizeRemoteUrl(remoteUrl);
-  } catch {
-    return void 0;
-  }
-}
-function normalizeRemoteUrl(url) {
-  url = url.trim();
-  if (url.endsWith(".git")) {
-    url = url.slice(0, -4);
-  }
-  url = url.replace(/\/+$/, "");
-  const sshMatch = url.match(/^git@([^:]+):(.+)$/);
-  if (sshMatch) {
-    const [, host, path] = sshMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  const sshProtoMatch = url.match(/^ssh:\/\/git@([^/]+)\/(.+)$/u);
-  if (sshProtoMatch) {
-    const [, host, path] = sshProtoMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+)$/u);
-  if (httpsMatch) {
-    const [, host, path] = httpsMatch;
-    return `${host ?? ""}/${path ?? ""}`;
-  }
-  return url;
-}
-
 // src/core/session.ts
 function sanitizeSessionId(sessionId) {
-  return sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return createHash5("sha256").update(sessionId).digest("hex");
 }
 function sessionStatePath(sessionId) {
   return statePath(`${sanitizeSessionId(sessionId)}.json`);
@@ -1025,7 +1158,7 @@ function parseSessionState(raw, sessionId) {
   const parsed = JSON.parse(raw);
   if (typeof parsed !== "object" || parsed === null) return null;
   const v = parsed;
-  if (typeof v["session_id"] !== "string") return null;
+  if (typeof v["session_id"] !== "string" || v["session_id"] !== sessionId) return null;
   if (!isCursorState(v["cursor"])) return null;
   if (typeof v["stop_count"] !== "number") return null;
   const topic = v["topic"];
@@ -1317,21 +1450,25 @@ var SECRET_PATTERNS = [
 ];
 var userPatternCache = /* @__PURE__ */ new Map();
 function compileUserPatterns(patterns) {
-  const cacheKey = JSON.stringify(patterns);
+  const boundedPatterns = patterns.slice(0, 64).filter((raw) => raw.length <= 512);
+  const cacheKey = JSON.stringify(boundedPatterns);
   const cached = userPatternCache.get(cacheKey);
   if (cached) return cached;
   const compiled = [];
-  for (const raw of patterns) {
+  for (const raw of boundedPatterns) {
     const parsed = /^\/(.*)\/([a-z]*)$/s.exec(raw);
     try {
       if (!parsed?.[1]) throw new Error("not in /source/flags form");
+      if (parsed[1].length > 256 || (parsed[1].match(/[+*]|\\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 || /\\[1-9]|\([^()]*[+*{][^)]*\)[+*{]/.test(parsed[1]) || /\([^()]*\|[^()]*\)[+*]/.test(parsed[1]) || /\(\?<?[=!]/.test(parsed[1])) {
+        throw new Error("pattern is too complex or too long");
+      }
       const flags = parsed[2] ?? "";
       compiled.push(new RegExp(parsed[1], flags.includes("g") ? flags : flags + "g"));
     } catch (err) {
       logError({
         code: "E_CONFIG_PARSE",
         kind: "actionable",
-        what: `secrets.patterns entry ${JSON.stringify(raw)} is not a usable regex (${err instanceof Error ? err.message : String(err)})`,
+        what: `secrets.patterns entry ${String(patterns.indexOf(raw))} is not a usable regex (${err instanceof Error ? err.message : String(err)})`,
         consequence: "That pattern is skipped; the built-in secret patterns still apply",
         fix: `$EDITOR ${join6(mehmoryHome(), "config.json")}`
       });
@@ -1376,8 +1513,12 @@ function redact(text, options = {}) {
     return text ?? "";
   }
   try {
-    const extra = options.patterns ? compileUserPatterns(options.patterns) : [];
-    const whitelist = (options.whitelist ?? []).filter((entry) => entry !== "");
+    const candidate = options;
+    const patterns = Array.isArray(candidate.patterns) ? candidate.patterns.filter((entry) => typeof entry === "string") : [];
+    const whitelist = Array.isArray(candidate.whitelist) ? candidate.whitelist.filter(
+      (entry) => typeof entry === "string" && entry !== ""
+    ) : [];
+    const extra = compileUserPatterns(patterns);
     return applyPatterns(text, extra, whitelist);
   } catch {
     return text;
@@ -1386,7 +1527,9 @@ function redact(text, options = {}) {
 
 export {
   mehmoryHome,
+  codexHome,
   statePath,
+  shellQuote,
   logError,
   failOpen,
   pendingWarnings,
@@ -1397,17 +1540,23 @@ export {
   readStdin,
   pathExists,
   stat,
+  lstat,
   readFile,
   readFileFrom,
+  readFileFromNoFollow,
   mkdir,
   rename,
   remove,
+  realpath,
   listDir,
   atomicWrite,
   appendRecord,
+  MAX_INJECTION_BUDGET_TOKENS,
   loadConfig,
   isSafeAgentName,
   currentAgentName,
+  isContainedProjectKey,
+  resolveProjectKey,
   withProjectLock,
   tryProjectLock,
   withSessionLock,
@@ -1424,8 +1573,6 @@ export {
   redact,
   tokenize,
   matchPages,
-  isContainedProjectKey,
-  resolveProjectKey,
   readSessionState,
   deleteSessionState,
   isSessionFinalized,

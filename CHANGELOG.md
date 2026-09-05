@@ -11,6 +11,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Purge and inbox transactions stay inside the memory store.** Page selectors, inbox paths, and snapshot tokens are validated before destructive or rewriting operations, and purge commits only its requested paths.
+- **Interrupted capture jobs are recoverable.** Stale queue claims are returned to the pending queue instead of being discarded, while malformed secret settings continue to use built-in redaction.
+- **Codex setup and inbox rewrites fail safely.** Configuration writes are preflighted and rolled back on failure, new Codex config files use private permissions, and inbox clears never rewrite without their project lock.
+- **Remember facts are serialized safely.** Fact text no longer gets interpolated into shell JSON.
+
 - **A resumed session is finalized again instead of being written off forever.** The
   finalization marker meant "this id is done", not "the transcript up to here is
   captured", so once a harness reused a session id on resume every later `SessionEnd` for

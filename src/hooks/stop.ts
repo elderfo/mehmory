@@ -31,7 +31,8 @@ function appendCommand(key: string, sessionId: string): string {
     key,
     entries: [{ text: '<the learning>', src: sessionId }],
   });
-  return `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'\n${payload}\nJSON\n`;
+  const helper = `${HOOK_DIR}/inbox-tx.mjs`.replace(/'/g, `'\\''`);
+  return `node '${helper}' append <<'JSON'\n${payload}\nJSON\n`;
 }
 
 /**

@@ -17,10 +17,25 @@ import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS } from './fs.js';
  * @param message - Commit message
  * @param cwd - Optional working directory (for tests)
  */
+export function ensureGitBaseline(cwd: string): { ok: true } | { ok: false } {
+  try {
+    execFileSync('git', ['rev-parse', '--git-dir'], { stdio: 'pipe', cwd });
+  } catch {
+    return { ok: true };
+  }
+  try {
+    execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { stdio: 'pipe', cwd });
+    return { ok: true };
+  } catch {
+    return commitPaths([], 'init: store', cwd);
+  }
+}
+
 export function commitPaths(
   paths: string[],
   message: string,
-  cwd?: string
+  cwd?: string,
+  strictPaths = false
 ): { ok: true } | { ok: false; deferred?: true } {
   // `stdio: 'pipe'` is part of the U2 contract, not a tidiness choice: without it the
   // child git inherits the caller's stderr, and a hook running inside Claude Code
@@ -41,11 +56,18 @@ export function commitPaths(
     return { ok: false };
   }
 
-  // Stage only the given paths
+  // Stage only the given paths once the store has a baseline. A fresh store has no
+  // HEAD yet, so its initial files are all part of the first commit.
+  let stagePaths = paths;
+  try {
+    execFileSync('git', ['rev-parse', '--verify', 'HEAD'], opts);
+  } catch {
+    if (paths.length === 0) stagePaths = ['.'];
+  }
   try {
     // `--` terminates option parsing: without it a path beginning with `-`
     // (legal on disk, and page titles feed these paths) is read as a flag.
-    execFileSync('git', ['add', '--', ...paths], opts);
+    execFileSync('git', ['add', '-A', '--', ...stagePaths], opts);
   } catch (err) {
     const error: MehmoryError = {
       code: 'E_GIT_COMMIT',
@@ -55,6 +77,30 @@ export function commitPaths(
     };
     logError(error);
     return { ok: false };
+  }
+
+  if (strictPaths) {
+    try {
+      const staged = execFileSync('git', ['diff', '--cached', '--name-only'], opts)
+        .toString()
+        .split('\n')
+        .filter(Boolean);
+      const allowed = paths.map(path => path.replace(/^:\(top,literal\)/, '').replace(/\\/g, '/'));
+      const unrelated = staged.some(
+        file => !allowed.some(path => file === path || file.startsWith(path + '/'))
+      );
+      if (unrelated) {
+        logError({
+          code: 'E_GIT_COMMIT',
+          kind: 'informational',
+          what: 'unrelated changes are already staged in the memory store',
+          consequence: 'Purge left the store dirty rather than committing user changes',
+        });
+        return { ok: false };
+      }
+    } catch {
+      return { ok: false };
+    }
   }
 
   // Try to commit; retry once if index.lock is held

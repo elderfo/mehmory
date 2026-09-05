@@ -5,18 +5,23 @@ import {
   clearInboxEntries,
   currentAgentName,
   inboxEntryId,
+  isContainedProjectKey,
   loadConfig,
+  lstat,
+  mehmoryHome,
   pathExists,
   readFile,
   readInboxEntries,
   readSessionState,
+  realpath,
   redact,
   remove,
   statePath
-} from "./chunk-Y2I6CIDU.mjs";
+} from "./chunk-HNC6COVE.mjs";
 
 // src/core/inbox-tx.ts
 import { randomBytes } from "crypto";
+import { basename, dirname, relative, resolve, sep } from "path";
 var TxError = class extends Error {
 };
 function asRecord(value, what) {
@@ -47,6 +52,47 @@ function snapshotFile(snapshotId) {
   }
   return statePath(`inbox-snapshot.${snapshotId}.json`);
 }
+function validateInbox(input) {
+  const inbox = requireString(input, "inbox");
+  const key = requireString(input, "key");
+  const home = resolve(mehmoryHome());
+  const candidate = resolve(inbox);
+  const within = (root, path) => {
+    const suffix = relative(root, path);
+    return suffix === "" || suffix !== ".." && !suffix.startsWith(`..${sep}`);
+  };
+  if (!within(home, candidate) || basename(candidate) !== "inbox.md") {
+    throw new TxError('"inbox" must be an inbox.md inside MEHMORY_HOME');
+  }
+  try {
+    if (lstat(candidate)?.isSymbolicLink()) {
+      throw new TxError('"inbox" must not be a symlink');
+    }
+  } catch (err) {
+    if (err instanceof TxError) throw err;
+  }
+  const homeReal = realpath(home);
+  const targetReal = realpath(candidate);
+  const parentReal = realpath(dirname(candidate));
+  if (!within(homeReal, targetReal) || !within(homeReal, parentReal) || pathExists(candidate) && targetReal !== candidate) {
+    throw new TxError('"inbox" must not resolve outside MEHMORY_HOME');
+  }
+  if (key === "global" && candidate !== resolve(home, "global", "inbox.md") && candidate !== resolve(home, "inbox.md")) {
+    throw new TxError('"key" does not match "inbox"');
+  }
+  if (key !== "global") {
+    const projects = resolve(home, "projects");
+    if (!within(projects, candidate)) throw new TxError('"key" does not match "inbox"');
+    const actual = relative(projects, dirname(candidate)).split(sep).join("/");
+    if (actual !== key || !isContainedProjectKey(key)) {
+      throw new TxError('"key" does not match "inbox"');
+    }
+  }
+  if (!within(homeReal, targetReal)) {
+    throw new TxError('"inbox" must resolve inside MEHMORY_HOME');
+  }
+  return { inbox: candidate, key };
+}
 function declaredHost(input) {
   const value = input["host"];
   if (value === void 0) return void 0;
@@ -61,8 +107,7 @@ function rejectDeclaredAgent(input, where) {
   }
 }
 function doAppend(input, config) {
-  const inbox = requireString(input, "inbox");
-  const key = requireString(input, "key");
+  const { inbox, key } = validateInbox(input);
   const raw = input["entries"];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
   const host = declaredHost(input);
@@ -75,6 +120,9 @@ function doAppend(input, config) {
     rejectDeclaredAgent(entry, ` on entries[${String(i)}]`);
     const text = redact(requireString(entry, "text"), secrets);
     const src = requireString(entry, "src");
+    if (!/^[A-Za-z0-9._:-]+$/.test(src)) {
+      throw new TxError('"src" contains unsafe comment characters');
+    }
     const entryHost = host ?? readSessionState(src).host;
     return {
       id: inboxEntryId(src + text),
@@ -88,27 +136,26 @@ function doAppend(input, config) {
   return appendInboxEntries(inbox, entries, key);
 }
 function doSnapshot(input) {
-  const inbox = requireString(input, "inbox");
-  requireString(input, "key");
+  const { inbox, key } = validateInbox(input);
   const entries = readInboxEntries(inbox);
   const snapshotId = randomBytes(8).toString("hex");
   atomicWrite(
     snapshotFile(snapshotId),
-    JSON.stringify({ inbox, ids: entries.map((e) => e.id) })
+    JSON.stringify({ inbox, key, ids: entries.map((e) => e.id) })
   );
   return { snapshotId, entries };
 }
 function doClear(input) {
-  const inbox = requireString(input, "inbox");
-  const key = requireString(input, "key");
+  const { inbox, key } = validateInbox(input);
   const path = snapshotFile(requireString(input, "snapshotId"));
   if (!pathExists(path)) throw new TxError("unknown snapshotId (already cleared?)");
   const stored = parseJsonRecord(readFile(path), "snapshot file");
   const ids = stored["ids"];
-  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
-    throw new TxError("corrupt snapshot file");
+  if (stored["inbox"] !== inbox || stored["key"] !== key || !Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+    throw new TxError("snapshot does not match the requested inbox");
   }
   const result = clearInboxEntries(inbox, key, ids);
+  if (result === void 0) throw new TxError("inbox is busy; retry the same snapshot");
   remove(path);
   return result;
 }
@@ -127,12 +174,12 @@ function runInboxTx(subcommand, input, config) {
 
 // src/hooks/inbox-tx.ts
 function readStdin() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => chunks.push(String(chunk)));
     process.stdin.on("end", () => {
-      resolve(chunks.join(""));
+      resolve2(chunks.join(""));
     });
     process.stdin.on("error", reject);
   });

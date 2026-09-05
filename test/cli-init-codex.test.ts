@@ -283,7 +283,7 @@ describe('mehmory init --host codex', () => {
     expect(envelope['ok']).toBe(false);
     const errors = envelope['errors'] as { code: string; fix?: string }[];
     expect(errors[0]?.code).toBe('E_CODEX_INSTALL');
-    expect(errors[0]?.fix).toBe(`$EDITOR ${fixture.hooksFile}`);
+    expect(errors[0]?.fix).toBe(`$EDITOR '${fixture.hooksFile}'`);
     expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe('{ not json');
   });
 
@@ -475,7 +475,7 @@ describe('mehmory doctor — the Codex surface', () => {
     expect(found.get('codex.hooks')).toMatchObject({
       level: 'error',
       code: 'E_CODEX_HOOKS_UNWIRED',
-      fix: `$EDITOR ${fixture.hooksFile}`,
+      fix: `$EDITOR '${fixture.hooksFile}'`,
     });
   });
 

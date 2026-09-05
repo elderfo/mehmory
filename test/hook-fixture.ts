@@ -141,8 +141,9 @@ export function writeTranscript(
   records: readonly Record<string, unknown>[],
   sessionId = 'session-a'
 ): string {
-  const dir = createTempDir('mehmory-transcript');
-  const path = join(dir, 'transcript.jsonl');
+  const dir = join(mehmoryHome(), '.state', 'transcripts');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `transcript-${sessionId}.jsonl`);
   const lines = records.map((record, i) =>
     JSON.stringify({
       type: 'message',
@@ -169,7 +170,8 @@ export function writeCodexRollout(
   messages: readonly { text: string; role?: 'user' | 'assistant' }[],
   sessionId = '019fbf44-4f17-7a53-8914-1002bc65fbae'
 ): string {
-  const dir = createTempDir('mehmory-codex-rollout');
+  const dir = join(mehmoryHome(), '.state', 'transcripts');
+  mkdirSync(dir, { recursive: true });
   const path = join(dir, `rollout-${sessionId}.jsonl`);
 
   const lines: string[] = [

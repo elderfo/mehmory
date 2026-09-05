@@ -331,7 +331,7 @@ describe('Codex capture (#23)', () => {
     // executable path to the inbox. Pull it out of the reason and run it, placeholder
     // filled in. The learning carries an apostrophe: the embedded form must survive
     // model prose that contains a single quote, which `echo '<json>' |` did not.
-    const match = /node \S+inbox-tx\.mjs append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
+    const match = /node ['"]?[^'"\n]*inbox-tx\.mjs['"]? append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
     expect(match).not.toBeNull();
     const learning = "deploys need the VPN, don't repeat this";
     const command = String(match?.[0]).replace('<the learning>', learning);

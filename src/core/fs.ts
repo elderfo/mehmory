@@ -6,7 +6,6 @@
 import {
   writeFileSync,
   readFileSync,
-  appendFileSync,
   openSync,
   closeSync,
   writeSync,
@@ -14,6 +13,7 @@ import {
   fstatSync,
   existsSync,
   statSync,
+  lstatSync,
   renameSync,
   mkdirSync,
   readdirSync,
@@ -21,6 +21,7 @@ import {
   unlinkSync,
   realpathSync,
   chmodSync,
+  constants,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
@@ -77,6 +78,11 @@ export function stat(path: string): ReturnType<typeof statSync> {
   return statSync(path);
 }
 
+/** Get file metadata without following symlinks. */
+export function lstat(path: string): ReturnType<typeof lstatSync> {
+  return lstatSync(path);
+}
+
 /** Read file as UTF-8 string. */
 export function readFile(path: string): string {
   return readFileSync(path, 'utf-8');
@@ -96,6 +102,22 @@ export function readFile(path: string): string {
  */
 export function readFileFrom(path: string, offset: number): string {
   const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const start = offset > 0 ? Math.min(offset, size) : 0;
+    const length = size - start;
+    if (length <= 0) return '';
+    const buf = Buffer.allocUnsafe(length);
+    const read = readSync(fd, buf, 0, length, start);
+    return buf.subarray(0, read).toString('utf-8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Read a regular file without following a symlink at open time. */
+export function readFileFromNoFollow(path: string, offset: number): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const size = fstatSync(fd).size;
     const start = offset > 0 ? Math.min(offset, size) : 0;
@@ -153,9 +175,10 @@ export function listDir(path: string): string[] {
 }
 
 /** Create a lock file exclusively (fails if it already exists). Returns true on success. */
-export function createLockExclusive(path: string): boolean {
+export function createLockExclusive(path: string, owner = ''): boolean {
   try {
     const fd = openSync(path, 'wx');
+    if (owner !== '') writeSync(fd, owner);
     closeSync(fd);
     return true;
   } catch {
@@ -249,7 +272,12 @@ export function appendRecord(
     try {
       lockPath(key, () => {
         mkdir(dirname(path));
-        appendFileSync(path, escaped + '\n', 'utf-8');
+        const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+        try {
+          writeSync(fd, escaped + '\n', null, 'utf-8');
+        } finally {
+          closeSync(fd);
+        }
       });
       return { ok: true };
     } catch (err) {
@@ -262,7 +290,7 @@ export function appendRecord(
     mkdir(dirname(path));
 
     try {
-      const fd = openSync(path, 'a');
+      const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
       try {
         writeSync(fd, escaped + '\n', null, 'utf-8');
       } finally {

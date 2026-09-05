@@ -9,7 +9,7 @@
 
 import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
-import { pendingWarnings } from '../core/errors.js';
+import { logError, pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
 import { isPaused, resumeFinalizedSession, sweepSessionState } from '../core/session.js';
 import { readInboxEntries } from '../core/inbox.js';
@@ -19,7 +19,7 @@ import { tryProjectLock } from '../core/lock.js';
 import { claimJob, completeJob } from '../core/queue.js';
 import { estimateTokens } from '../core/tokens.js';
 import {
-  applyDistillJob,
+  applyDistillJobResult,
   buildScopeInjection,
   finalizePendingSessions,
   inboxBytes,
@@ -56,8 +56,17 @@ function maintenance(
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob('distill-final');
     if (!job) break;
-    applyDistillJob(job.data, config);
-    completeJob(job.id);
+    try {
+      const result = applyDistillJobResult(job.data, config);
+      if (result.failed === 0) completeJob(job.id, job.claimFile);
+    } catch (err) {
+      logError({
+        code: 'E_QUEUE_CLAIM',
+        kind: 'informational',
+        what: err instanceof Error ? err.message : String(err),
+        consequence: 'The queued job remains for stale recovery',
+      });
+    }
   }
 
   sweepSessionState();

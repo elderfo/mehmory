@@ -2,12 +2,14 @@ import {
   INBOX_HOSTS,
   INDEX_LOCK_RETRY_COUNT,
   INDEX_LOCK_RETRY_INTERVAL_MS,
+  MAX_INJECTION_BUDGET_TOKENS,
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
   appendRecord,
   atomicWrite,
+  codexHome,
   currentAgentName,
   deleteSessionState,
   failOpen,
@@ -20,6 +22,7 @@ import {
   listPendingSessions,
   loadConfig,
   logError,
+  lstat,
   markSessionFinalized,
   mehmoryHome,
   mkdir,
@@ -27,8 +30,10 @@ import {
   pendingWarnings,
   readFile,
   readFileFrom,
+  readFileFromNoFollow,
   readSessionState,
   readStdin,
+  realpath,
   redact,
   rememberSessionOrigin,
   remove,
@@ -39,7 +44,7 @@ import {
   statePath,
   withProjectLock,
   withSessionLock
-} from "./chunk-Y2I6CIDU.mjs";
+} from "./chunk-HNC6COVE.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -211,15 +216,36 @@ function claimJob(jobType) {
   if (!pathExists(queueDir)) {
     return null;
   }
+  if (pathExists(claimedDir)) {
+    for (const claim of listDir(claimedDir)) {
+      if (!claim.endsWith(".json")) continue;
+      const claimPath = join(claimedDir, claim);
+      try {
+        const s = stat(claimPath);
+        const age = s ? Date.now() - Number(s.mtimeMs) : 0;
+        if (age <= QUEUE_STALE_MS) continue;
+        const jobId = claim.slice(0, claim.indexOf("."));
+        const pendingPath = join(queueDir, `${jobId}.json`);
+        if (pathExists(pendingPath)) {
+          remove(claimPath);
+        } else {
+          const raw = readFile(claimPath);
+          const parsed = JSON.parse(raw);
+          const payload = typeof parsed === "object" && parsed !== null ? { ...parsed, _attempts: Number(parsed["_attempts"] ?? 0) + 1 } : { _attempts: 1 };
+          atomicWrite(pendingPath, JSON.stringify(payload, null, 2));
+          remove(claimPath);
+        }
+      } catch {
+      }
+    }
+  }
   let jobs;
   try {
     jobs = listDir(queueDir).filter((f) => f.endsWith(".json"));
   } catch {
     return null;
   }
-  if (jobs.length === 0) {
-    return null;
-  }
+  if (jobs.length === 0) return null;
   const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
   for (const jobFile of jobs) {
     const jobPath = join(queueDir, jobFile);
@@ -252,8 +278,8 @@ function claimJob(jobType) {
       } catch {
       }
     });
-    const currentClaimCount = jobClaims.length;
-    if (currentClaimCount >= QUEUE_CLAIM_ATTEMPTS) {
+    const attempts = typeof jobData["_attempts"] === "number" ? jobData["_attempts"] : 0;
+    if (attempts >= QUEUE_CLAIM_ATTEMPTS) {
       mkdir(failedDir);
       try {
         rename(jobPath, join(failedDir, jobId + ".json"));
@@ -262,21 +288,23 @@ function claimJob(jobType) {
       continue;
     }
     mkdir(claimedDir);
-    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.json`);
+    const claimToken = randomBytes(16).toString("hex");
+    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.${claimToken}.json`);
     try {
       rename(jobPath, claimedPath);
-      return { id: jobId, data: jobData };
+      return { id: jobId, data: jobData, claimFile: `${jobId}.${String(process.pid)}.${claimToken}.json` };
     } catch {
       continue;
     }
   }
   return null;
 }
-function completeJob(jobId) {
+function completeJob(jobId, claimFile) {
   const claimedDir = join(statePath("queue"), "claimed");
   if (!pathExists(claimedDir)) return;
-  for (const file of listDir(claimedDir)) {
-    if (!file.startsWith(jobId + ".")) continue;
+  const files = claimFile === void 0 ? [] : [claimFile];
+  for (const file of files) {
+    if (!file.startsWith(jobId + ".") || !/^\d+\.[0-9a-f]{32}\.json$/.test(file.slice(jobId.length + 1))) continue;
     try {
       remove(join(claimedDir, file));
     } catch {
@@ -301,11 +329,12 @@ function estimateTokens(text) {
 }
 
 // src/core/capture.ts
-import { join as join2, relative } from "path";
+import { homedir } from "os";
+import { dirname, join as join2, relative, resolve, sep } from "path";
 
 // src/core/git.ts
 import { execFileSync } from "child_process";
-function commitPaths(paths, message, cwd) {
+function commitPaths(paths, message, cwd, strictPaths = false) {
   const opts = cwd ? { stdio: "pipe", cwd } : { stdio: "pipe" };
   try {
     execFileSync("git", ["rev-parse", "--git-dir"], opts);
@@ -319,8 +348,14 @@ function commitPaths(paths, message, cwd) {
     logError(error);
     return { ok: false };
   }
+  let stagePaths = paths;
   try {
-    execFileSync("git", ["add", "--", ...paths], opts);
+    execFileSync("git", ["rev-parse", "--verify", "HEAD"], opts);
+  } catch {
+    if (paths.length === 0) stagePaths = ["."];
+  }
+  try {
+    execFileSync("git", ["add", "-A", "--", ...stagePaths], opts);
   } catch (err) {
     const error = {
       code: "E_GIT_COMMIT",
@@ -330,6 +365,26 @@ function commitPaths(paths, message, cwd) {
     };
     logError(error);
     return { ok: false };
+  }
+  if (strictPaths) {
+    try {
+      const staged = execFileSync("git", ["diff", "--cached", "--name-only"], opts).toString().split("\n").filter(Boolean);
+      const allowed = paths.map((path) => path.replace(/^:\(top,literal\)/, "").replace(/\\/g, "/"));
+      const unrelated = staged.some(
+        (file) => !allowed.some((path) => file === path || file.startsWith(path + "/"))
+      );
+      if (unrelated) {
+        logError({
+          code: "E_GIT_COMMIT",
+          kind: "informational",
+          what: "unrelated changes are already staged in the memory store",
+          consequence: "Purge left the store dirty rather than committing user changes"
+        });
+        return { ok: false };
+      }
+    } catch {
+      return { ok: false };
+    }
   }
   for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
     try {
@@ -367,7 +422,7 @@ function commitPaths(paths, message, cwd) {
 function buildInjection(parts, options = {}) {
   const isNamed = parts.some((part) => part.label === "agent");
   const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
-  const budget = options.budgetTokens !== void 0 && options.budgetTokens > 0 ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
+  const budget = options.budgetTokens !== void 0 && Number.isInteger(options.budgetTokens) && options.budgetTokens >= 1 && options.budgetTokens <= MAX_INJECTION_BUDGET_TOKENS ? options.budgetTokens : INJECTION_BUDGET_TOKENS;
   const scale = budget / nominalTotal;
   const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
@@ -477,7 +532,7 @@ function truncateToTokens(text, targetTokens) {
 // src/transcript/reader.ts
 function readTranscript(path, startOffset = 0) {
   const begin = startOffset > 0 ? startOffset : 0;
-  const contents = readFileFrom(path, begin);
+  const contents = readFileFromNoFollow(path, begin);
   const lastNewline = contents.lastIndexOf("\n");
   const consumable = lastNewline >= 0 ? contents.slice(0, lastNewline + 1) : "";
   const endOffset = begin + Buffer.byteLength(consumable, "utf-8");
@@ -742,7 +797,17 @@ function inboxBytes(inboxFile) {
   return Number(stat(inboxFile)?.size ?? 0);
 }
 function readIfPresent(path) {
-  return pathExists(path) ? readFile(path).trim() : "";
+  try {
+    const candidate = resolve(path);
+    const parent = realpath(dirname(candidate));
+    const home = realpath(resolve(mehmoryHome()));
+    const suffix = relative(home, parent);
+    if (suffix !== "" && (suffix === ".." || suffix.startsWith(`..${sep}`))) return "";
+    if (lstat(candidate)?.isSymbolicLink()) return "";
+    return pathExists(candidate) ? readFile(candidate).trim() : "";
+  } catch {
+    return "";
+  }
 }
 var ROUTING_BLOCK = [
   "<mehmory-routing>",
@@ -811,8 +876,24 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
     () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
   ) ?? [];
 }
+function isApprovedTranscript(path, host) {
+  const candidate = resolve(path);
+  const roots = [
+    host === "codex" ? join2(codexHome(), "sessions") : join2(homedir(), ".claude", "projects"),
+    join2(mehmoryHome(), ".state", "transcripts")
+  ];
+  try {
+    if (lstat(candidate)?.isSymbolicLink() || stat(candidate)?.isFile() !== true) return false;
+    return roots.some((root) => {
+      const suffix = relative(realpath(root), realpath(candidate));
+      return suffix !== ".." && !suffix.startsWith(`..${sep}`);
+    });
+  } catch {
+    return false;
+  }
+}
 function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
-  if (!transcriptPath) return [];
+  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) return [];
   return failOpen(
     () => {
       const cursor = readSessionState(sessionId).cursor;
@@ -881,15 +962,21 @@ var WARNING_DRAIN_STALE_MS = 24 * 60 * 60 * 1e3;
 function distillJobPayload(key, entries) {
   return { key, entries };
 }
-function applyDistillJob(data, config = loadConfig()) {
+function applyDistillJobResult(data, config = loadConfig()) {
   const key = data["key"];
   const raw = data["entries"];
-  if (typeof key !== "string" || !isContainedProjectKey(key) || !Array.isArray(raw)) return 0;
+  if (typeof key !== "string" || !isContainedProjectKey(key) || !Array.isArray(raw)) {
+    return { appended: 0, failed: 1 };
+  }
   const entries = [];
+  let malformed = 0;
   for (const item of raw) {
-    if (typeof item !== "object" || item === null) continue;
+    if (typeof item !== "object" || item === null) {
+      malformed++;
+      continue;
+    }
     const e = item;
-    if (typeof e["id"] === "string" && typeof e["text"] === "string" && typeof e["src"] === "string" && typeof e["ts"] === "string") {
+    if (typeof e["id"] === "string" && /^[0-9a-f]{16}$/.test(e["id"]) && typeof e["text"] === "string" && typeof e["src"] === "string" && /^[A-Za-z0-9._:-]+$/.test(e["src"]) && typeof e["ts"] === "string" && !Number.isNaN(Date.parse(e["ts"]))) {
       const rawHost = e["host"];
       const host = typeof rawHost === "string" && INBOX_HOSTS.includes(rawHost) ? rawHost : void 0;
       const rawAgent = e["agent"];
@@ -902,10 +989,13 @@ function applyDistillJob(data, config = loadConfig()) {
         ...agent !== void 0 ? { agent } : {},
         ts: e["ts"]
       });
+    } else {
+      malformed++;
     }
   }
-  if (entries.length === 0) return 0;
-  return appendInboxEntries(scopePaths(key).inboxFile, entries, key).appended;
+  if (malformed > 0 || entries.length === 0) return { appended: 0, failed: 1 };
+  const result = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
+  return { appended: result.appended, failed: result.failed ?? 0 };
 }
 function staleSessionStartWarning(project) {
   const last = lastStatFor(project, "SessionStart");
@@ -941,7 +1031,8 @@ function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, confi
   if (!alreadyLogged) {
     const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
     if (entries.length > 0) {
-      enqueueJob(distillJobPayload(project, entries), "distill-final");
+      const jobId = enqueueJob(distillJobPayload(project, entries), "distill-final");
+      if (jobId === null) return { capturedEntries: 0, deferred: true };
     }
     appendLogEntry(
       project,
@@ -996,7 +1087,7 @@ export {
   buildScopeInjection,
   captureDelta,
   rememberEntry,
-  applyDistillJob,
+  applyDistillJobResult,
   staleSessionStartWarning,
   finalizeSession,
   finalizePendingSessions

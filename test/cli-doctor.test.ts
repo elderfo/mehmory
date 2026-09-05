@@ -70,7 +70,7 @@ describe('mehmory doctor', () => {
     rmSync(join(home(), '.gitignore'));
     const found = findings(fixture);
     expect(found.get('git.gitignore')).toMatchObject({ level: 'warn' });
-    expect(found.get('git.gitignore')?.fix).toContain(`> ${join(home(), '.gitignore')}`);
+    expect(found.get('git.gitignore')?.fix).toContain(`> '${join(home(), '.gitignore')}'`);
     expect(runCli(['doctor'], fixture).status).toBe(5);
   });
 
@@ -79,7 +79,7 @@ describe('mehmory doctor', () => {
     writeFileSync(join(home(), 'global', 'index.md'), '# Index\n\nedited\n');
     const found = findings(fixture);
     expect(found.get('git.clean')).toMatchObject({ level: 'warn' });
-    expect(found.get('git.clean')?.fix).toContain(`git -C ${home()}`);
+    expect(found.get('git.clean')?.fix).toContain(`git -C '${home()}'`);
   });
 
   it('warns per disabled hook, naming the config key', () => {
@@ -158,7 +158,7 @@ describe('mehmory doctor', () => {
     writeFileSync(path, '[2026-07-30T00:00:00.000Z] E_GIT_COMMIT: boom\n');
     const found = findings(fixture);
     expect(found.get('errors')).toMatchObject({ level: 'warn' });
-    expect(found.get('errors')?.fix).toBe(`tail -n 20 ${path}`);
+    expect(found.get('errors')?.fix).toBe(`tail -n 20 '${path}'`);
   });
 
   it('errors when the installed plugin registers fewer than the five hooks', () => {
@@ -173,7 +173,7 @@ describe('mehmory doctor', () => {
     const fixture = healthyStore();
     writeFileSync(join(home(), 'config.json'), '{ not json');
     const run = runCli(['doctor'], fixture);
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(`next: $EDITOR ${join(home(), 'config.json')}`);
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(`next: $EDITOR '${join(home(), 'config.json')}'`);
   });
 });
 

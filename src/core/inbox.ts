@@ -10,9 +10,11 @@
  * projects/<key>/inbox.md); this module has no opinion on scope.
  */
 
-import { appendRecord, atomicWrite, pathExists, readFile } from './fs.js';
-import { withProjectLock } from './lock.js';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { appendRecord, atomicWrite, lstat, pathExists, readFile, realpath } from './fs.js';
+import { tryProjectLock, withProjectLock } from './lock.js';
 import { failOpen } from './errors.js';
+import { mehmoryHome } from './home.js';
 import {
   parseInboxEntries,
   serializeInboxEntry,
@@ -41,30 +43,65 @@ export function readInboxEntries(inboxFile: string): InboxEntry[] {
  * @param entries - Entries to append (already redacted by the caller)
  * @param key - Project key, used only for the large-record lock path in appendRecord
  */
+function isSafeInboxPath(inboxFile: string): boolean {
+  try {
+    const home = realpath(resolve(mehmoryHome()));
+    const parent = realpath(dirname(resolve(inboxFile)));
+    const suffix = relative(home, parent);
+    let symlink = false;
+    try {
+      symlink = lstat(resolve(inboxFile))?.isSymbolicLink() === true;
+    } catch {
+      symlink = false;
+    }
+    return suffix === '' || (suffix !== '..' && !suffix.startsWith(`..${sep}`))
+      ? !symlink
+      : false;
+  } catch {
+    return false;
+  }
+}
+
 export function appendInboxEntries(
   inboxFile: string,
   entries: readonly InboxEntry[],
   key: string
-): { appended: number; skipped: number } {
-  const existing = new Set(readInboxEntries(inboxFile).map(e => e.id));
+): { appended: number; skipped: number; failed?: number } {
+  return (
+    withProjectLock('__store__', () => appendInboxEntriesUnlocked(inboxFile, entries, key), 50, 100, false) ?? {
+      appended: 0,
+      skipped: 0,
+      failed: entries.length,
+    }
+  );
+}
+
+function appendInboxEntriesUnlocked(
+  inboxFile: string,
+  entries: readonly InboxEntry[],
+  key: string
+): { appended: number; skipped: number; failed?: number } {
+  if (!isSafeInboxPath(inboxFile)) return { appended: 0, skipped: 0, failed: entries.length };
   let appended = 0;
   let skipped = 0;
+  let failed = 0;
 
   for (const entry of entries) {
-    if (existing.has(entry.id)) {
-      skipped++;
-      continue;
-    }
-    const result = appendRecord(inboxFile, serializeInboxEntry(entry), key, withProjectLock);
-    if (result.ok) {
-      existing.add(entry.id);
-      appended++;
-    } else {
-      skipped++;
-    }
+    const serialized = serializeInboxEntry(entry);
+    const result = withProjectLock(key, () => {
+      const existing = new Set(readInboxEntries(inboxFile).map(e => e.id));
+      if (existing.has(entry.id)) return { kind: 'skipped' as const };
+      const append = appendRecord(inboxFile, serialized, key, (_key, fn) => {
+        fn();
+      });
+      return append.ok ? { kind: 'appended' as const } : { kind: 'failed' as const };
+    });
+    if (result.kind === 'appended') appended++;
+    else if (result.kind === 'failed') failed++;
+    else skipped++;
   }
 
-  return { appended, skipped };
+  return failed > 0 ? { appended, skipped, failed } : { appended, skipped };
 }
 
 /**
@@ -78,30 +115,33 @@ export function clearInboxEntries(
   inboxFile: string,
   key: string,
   ids: readonly string[]
-): { removed: number } {
+): { removed: number } | undefined {
   const doomed = new Set(ids);
   if (doomed.size === 0) return { removed: 0 };
+  if (!isSafeInboxPath(inboxFile)) return undefined;
 
-  return withProjectLock(key, () =>
-    failOpen(
-      () => {
-        if (!pathExists(inboxFile)) return { removed: 0 };
-        const lines = readFile(inboxFile).split('\n');
-        const kept: string[] = [];
-        let removed = 0;
-        for (const line of lines) {
-          const [entry] = parseInboxEntries(line);
-          if (entry && doomed.has(entry.id)) {
-            removed++;
-            continue;
+  return (
+    tryProjectLock(key, () =>
+      failOpen(
+        () => {
+          if (!pathExists(inboxFile)) return { removed: 0 };
+          const lines = readFile(inboxFile).split('\n');
+          const kept: string[] = [];
+          let removed = 0;
+          for (const line of lines) {
+            const [entry] = parseInboxEntries(line);
+            if (entry && doomed.has(entry.id)) {
+              removed++;
+              continue;
+            }
+            kept.push(line);
           }
-          kept.push(line);
-        }
-        if (removed > 0) atomicWrite(inboxFile, kept.join('\n'));
-        return { removed };
-      },
-      { removed: 0 },
-      'E_APPEND_FAILED'
+          if (removed > 0) atomicWrite(inboxFile, kept.join('\n'));
+          return { removed };
+        },
+        undefined,
+        'E_APPEND_FAILED'
+      )
     )
   );
 }

@@ -10,7 +10,7 @@
 import { join } from 'node:path';
 import { mehmoryHome, statePath } from './home.js';
 import { pathExists, readFile, stat } from './fs.js';
-import { failOpen, type ErrorCode } from './errors.js';
+import { failOpen, shellQuote, type ErrorCode } from './errors.js';
 import { probeCodexInstall, type CodexProbe } from './codex-install.js';
 import { readInboxEntries } from './inbox.js';
 import { resolveProjectKey } from './identity.js';
@@ -214,7 +214,7 @@ function checkCodexWiring(probe: CodexProbe): Finding {
       level: 'error',
       code: 'E_CODEX_HOOKS_UNWIRED',
       message: `${probe.hooksFile} does not parse, so no hook of any tool is registered`,
-      fix: `$EDITOR ${probe.hooksFile}`,
+      fix: `$EDITOR ${shellQuote(probe.hooksFile)}`,
     };
   }
   if (probe.missingEvents.length > 0) {
@@ -260,7 +260,7 @@ function checkGit(home: string): readonly Finding[] {
       // Without it `.state/` is always untracked, so "tree clean" can never be true
       // and the crash signal it carries is worthless (plan gap 12).
       message: 'the store has no .gitignore, so .state/ is always untracked',
-      fix: `printf '.state/\\n' > ${gitignore}`,
+      fix: `printf '.state/\\n' > ${shellQuote(gitignore)}`,
     });
   } else {
     findings.push({ check: 'git.gitignore', level: 'ok', message: '.gitignore present' });
@@ -268,14 +268,14 @@ function checkGit(home: string): readonly Finding[] {
 
   const dirty = dirtyPaths();
   const commit = lastCommit();
-  const save = `git -C ${home} add -A && git -C ${home} commit -m "manual save"`;
+  const save = `git -C ${shellQuote(home)} add -A && git -C ${shellQuote(home)} commit -m 'manual save'`;
 
   if (dirty === undefined) {
     findings.push({
       check: 'git.repo',
       level: 'error',
       message: `${home} is not a git repository, so nothing written there is recoverable`,
-      fix: `git -C ${home} init`,
+      fix: `git -C ${shellQuote(home)} init`,
     });
     return findings;
   }
@@ -325,7 +325,7 @@ function checkHookConfig(config: MehmoryConfig): readonly Finding[] {
     check: `hooks.enabled.${name}`,
     level: 'warn' as const,
     message: `${HOOK_EVENTS[name as keyof typeof HOOK_EVENTS]} is disabled by config key \`hooks.${name}.enabled\``,
-    fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+    fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
   }));
 }
 
@@ -361,7 +361,7 @@ function checkHookLiveness(): readonly Finding[] {
       check: 'hooks.silent',
       level: 'warn',
       message: `the newest stats line is ${String(Math.floor(age / 86400000))} days old`,
-      fix: `tail -n 20 ${statePath('errors.log')}`,
+      fix: `tail -n 20 ${shellQuote(statePath('errors.log'))}`,
     });
   }
 
@@ -422,7 +422,7 @@ function checkErrorLog(): Finding {
     check: 'errors',
     level: 'warn',
     message: `${String(lines.length)} logged errors, most recent: ${tail}`,
-    fix: `tail -n 20 ${path}`,
+    fix: `tail -n 20 ${shellQuote(path)}`,
   };
 }
 
@@ -453,7 +453,7 @@ function checkSchemaVersion(home: string): Finding {
     check: 'schema_version',
     level: 'warn',
     message: `SCHEMA.md is at schema_version ${found ?? '(unset)'}, this build ships ${TEMPLATE_SCHEMA_VERSION}`,
-    fix: `$EDITOR ${path}`,
+    fix: `$EDITOR ${shellQuote(path)}`,
   };
 }
 
@@ -473,7 +473,7 @@ function checkConfigParses(home: string): Finding {
       check: 'config',
       level: 'error',
       message: `config.json is unparseable (${err instanceof Error ? err.message : String(err)}), so every setting is ignored`,
-      fix: `$EDITOR ${path}`,
+      fix: `$EDITOR ${shellQuote(path)}`,
     };
   }
 }
@@ -491,7 +491,7 @@ function checkKpiBudgets(): readonly Finding[] {
       check: 'kpi.injection',
       level: 'warn',
       message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(KPI_BUDGETS.combinedInjectionTokens)} combined budget`,
-      fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+      fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
     });
   }
 
@@ -505,7 +505,7 @@ function checkKpiBudgets(): readonly Finding[] {
         check: `kpi.${event}`,
         level: 'warn',
         message: `${event} p95 is ${String(hook.msP95)} ms, over its ${String(budget)} ms budget`,
-        fix: `tail -n 20 ${statePath('errors.log')}`,
+        fix: `tail -n 20 ${shellQuote(statePath('errors.log'))}`,
       });
     }
   }

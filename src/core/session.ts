@@ -11,6 +11,7 @@
  * `E_SESSION_STATE`, never throws (A2, A11).
  */
 
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { statePath } from './home.js';
 import { atomicWrite, listDir, pathExists, readFile, remove, stat } from './fs.js';
@@ -65,9 +66,9 @@ export interface SessionState {
   paused: boolean;
 }
 
-/** Session ids come from the harness; flattened to characters safe in a filename. */
+/** Session ids are hashed so distinct harness ids cannot share state files. */
 function sanitizeSessionId(sessionId: string): string {
-  return sessionId.replace(/[^A-Za-z0-9._-]/g, '_');
+  return createHash('sha256').update(sessionId).digest('hex');
 }
 
 /** Path of a session's state file. Session ids are sanitized into a flat filename. */
@@ -84,7 +85,7 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null) return null;
   const v = parsed as Record<string, unknown>;
-  if (typeof v['session_id'] !== 'string') return null;
+  if (typeof v['session_id'] !== 'string' || v['session_id'] !== sessionId) return null;
   if (!isCursorState(v['cursor'])) return null;
   if (typeof v['stop_count'] !== 'number') return null;
 
@@ -196,7 +197,7 @@ export function deleteSessionState(sessionId: string): void {
  * `sweepSessionState` already looks for: it ages out on the same schedule as ordinary
  * session state without any dedicated sweep code.
  */
-function finalizedMarkerPath(sessionId: string): string {
+export function finalizedMarkerPath(sessionId: string): string {
   return statePath(`${sanitizeSessionId(sessionId)}.finalized.json`);
 }
 

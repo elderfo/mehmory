@@ -8,11 +8,13 @@
  */
 
 import { join } from 'node:path';
+import { listDir, pathExists, stat } from '../../core/fs.js';
 import { storeExists } from '../../core/capture.js';
 import { mehmoryHome } from '../../core/home.js';
 import { listProjects } from '../../core/scopes.js';
 import { searchScope, type SearchHit } from '../../core/search.js';
 import { scopeFiles } from '../../core/status.js';
+import { isSafeAgentName } from '../../core/agent-name.js';
 import { ARCHIVE_DIR } from '../../schema/format.js';
 import { flagInteger, parseFlags } from '../args.js';
 import { EXIT, storeMissing, usageError, type Command } from '../command.js';
@@ -20,6 +22,14 @@ import { SCOPE_FLAGS, scopeLabel, selectScope } from '../scope.js';
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
+
+function agentTargets(): readonly { readonly label: string; readonly dir: string }[] {
+  const root = join(mehmoryHome(), 'agents');
+  if (!pathExists(root)) return [];
+  return listDir(root)
+    .filter(name => isSafeAgentName(name) && stat(join(root, name))?.isDirectory() === true)
+    .map(name => ({ label: `agent/${name}`, dir: join(root, name) }));
+}
 
 export const command: Command = {
   name: 'search',
@@ -60,6 +70,7 @@ export const command: Command = {
         ? [
             { label: 'global', dir: join(mehmoryHome(), 'global') },
             ...listProjects().map(p => ({ label: p.key, dir: p.dir })),
+            ...agentTargets(),
           ]
         : scope.kind === 'global'
           ? [{ label: 'global', dir: scope.dir }]

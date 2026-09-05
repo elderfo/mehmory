@@ -3,7 +3,7 @@
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { writeCodexRollout, writeTranscript } from './hook-fixture.js';
@@ -13,6 +13,7 @@ import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
 import * as sessionModule from '../src/core/session.js';
 import {
+  finalizedMarkerPath,
   freshSessionState,
   markSessionFinalized,
   resumeFinalizedSession,
@@ -62,7 +63,7 @@ describe('finalizeSession', () => {
 
     expect(result.capturedEntries).toBe(1);
     expect(existsSync(sessionStatePath('s1'))).toBe(false);
-    const marker = JSON.parse(readFileSync(statePath('s1.finalized.json'), 'utf-8')) as {
+    const marker = JSON.parse(readFileSync(finalizedMarkerPath('s1'), 'utf-8')) as {
       cursor?: { offset?: number };
     };
     expect(marker.cursor?.offset).toBeGreaterThan(0);
@@ -266,7 +267,8 @@ describe('finalizeSession — deferred capture for not-yet-flushed transcripts',
     // The Claude Agent SDK (ACP) writes its rollout AFTER SessionEnd fires, so a named-but-
     // absent transcript here is a not-yet-flushed session, not an empty one. Finalizing would
     // capture nothing and lose the content once the file lands.
-    const absent = join(createTempDir('mehmory-notyet'), 'rollout.jsonl');
+    const absent = join(mehmoryHome(), '.state', 'transcripts', 'deferred-rollout.jsonl');
+    mkdirSync(join(mehmoryHome(), '.state', 'transcripts'), { recursive: true });
     writeSessionState({ ...freshSessionState('s1'), transcript_path: absent });
 
     const result = finalizeSession('s1', absent, key, 'claude-code', loadConfig(), {
@@ -300,7 +302,8 @@ describe('finalizeSession — deferred capture for not-yet-flushed transcripts',
     // disk yet, then the Agent SDK flushes it, then a later start's sweep captures it. This
     // exercises the cross-module coupling the defer branch depends on — the transcript path
     // persisted in state and read back by the sweep.
-    const absent = join(createTempDir('mehmory-late'), 'rollout.jsonl');
+    const absent = join(mehmoryHome(), '.state', 'transcripts', 'late-rollout.jsonl');
+    mkdirSync(join(mehmoryHome(), '.state', 'transcripts'), { recursive: true });
     const pendingState = {
       ...freshSessionState('s4'),
       transcript_path: absent,

@@ -228,7 +228,7 @@ describe('snapshot / clear (A15)', () => {
       snapshot.map(e => e.id)
     );
 
-    expect(cleared.removed).toBe(1);
+    expect(cleared?.removed).toBe(1);
     const remaining = readInboxEntries(path);
     expect(remaining.map(e => e.text)).toEqual(['captured during integrate']);
   });
@@ -248,7 +248,7 @@ describe('snapshot / clear (A15)', () => {
     const path = inboxFile('noop.md');
     appendInboxEntries(path, [entry('one', 's1')], KEY);
 
-    expect(clearInboxEntries(path, KEY, []).removed).toBe(0);
+    expect(clearInboxEntries(path, KEY, [])?.removed).toBe(0);
     expect(readInboxEntries(path)).toHaveLength(1);
   });
 
@@ -460,12 +460,19 @@ describe('agent attribution across the deferred-capture queue (R7)', () => {
 });
 
 describe('agent attribution on capture (R7)', () => {
-  const transcript = join(
+  const originalHome = process.env.HOME;
+  const transcriptFixture = join(
     dirname(fileURLToPath(import.meta.url)),
     'fixtures',
     'transcripts',
     'claude-code-shape.jsonl'
   );
+  const approvedTranscript = (): string => {
+    process.env.HOME = mehmoryHome();
+    const path = join(process.env.HOME, '.claude', 'projects', 'fixture', 'claude-code-shape.jsonl');
+    atomicWrite(path, readFile(transcriptFixture));
+    return path;
+  };
 
   /** A config whose machine-wide default agent name is `value` (empty means unnamed). */
   function configWithAgent(value: string): MehmoryConfig {
@@ -475,6 +482,8 @@ describe('agent attribution on capture (R7)', () => {
 
   afterEach(() => {
     delete process.env.MEHMORY_AGENT;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
   });
 
   it('lets two named agents share one project scope, each entry keeping its own name', () => {
@@ -501,7 +510,7 @@ describe('agent attribution on capture (R7)', () => {
   it('stamps the resolved name onto every entry distillDelta produces', () => {
     process.env.MEHMORY_AGENT = 'scout';
 
-    const entries = distillDelta('session-distill', transcript, 'claude-code', configWithAgent(''));
+    const entries = distillDelta('session-distill', approvedTranscript(), 'claude-code', configWithAgent(''));
 
     expect(entries.length).toBeGreaterThan(1);
     expect(entries.every(e => e.agent === 'scout')).toBe(true);
@@ -510,7 +519,7 @@ describe('agent attribution on capture (R7)', () => {
   it('leaves distillDelta entries unattributed when the agent is unnamed', () => {
     const entries = distillDelta(
       'session-distill-unnamed',
-      transcript,
+      approvedTranscript(),
       'claude-code',
       configWithAgent('')
     );

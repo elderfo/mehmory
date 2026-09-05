@@ -26,6 +26,7 @@ import {
   planProject,
   planSession,
   plannedEntries,
+  shellQuote,
   type PurgePlan,
 } from '../../core/purge.js';
 import { flagString, parseFlags } from '../args.js';
@@ -177,7 +178,7 @@ export const command: Command = {
                   ? `confirmation required: this deletes ${String(targets.length + entries)} target(s)`
                   : `\`${typed}\` is not the confirmation token for ${plan.label}`,
               consequence: 'Nothing was deleted',
-              fix: `printf '%s\\n' '${plan.token}' | mehmory ${['purge', ...ctx.argv].filter(a => a !== '--json').join(' ')}`,
+              fix: `printf '%s\\n' ${shellQuote(plan.token)} | mehmory ${['purge', ...ctx.argv].filter(a => a !== '--json').map(shellQuote).join(' ')}`,
             },
           ],
         };

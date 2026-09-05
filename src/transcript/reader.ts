@@ -7,7 +7,7 @@
  * whether to log a warning based on the skip ratio.
  */
 
-import { readFileFrom } from '../core/fs.js';
+import { readFileFromNoFollow } from '../core/fs.js';
 
 /** A single record from the transcript JSONL file. */
 export type TranscriptRecord = Record<string, unknown> & {
@@ -53,7 +53,7 @@ export function readTranscript(path: string, startOffset = 0): ReadTranscriptRes
   // than reading-then-slicing, so resuming near the end of a 50 MB transcript costs
   // the size of the tail rather than the size of the file.
   const begin = startOffset > 0 ? startOffset : 0;
-  const contents = readFileFrom(path, begin);
+  const contents = readFileFromNoFollow(path, begin);
 
   // Only whole lines are consumable. If the tail has no trailing newline it is a
   // partial write; leave it for the next pass rather than parsing half a record.
