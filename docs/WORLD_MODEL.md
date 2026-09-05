@@ -136,10 +136,13 @@ gets the same deduplication without a dispatch layer).
 ### A13. Capture state is session-scoped
 
 One `.state/<session-id>.json` per session holds the transcript cursor, the Stop counter,
-the topic cache, the project key the session ran in, and the pause flag. The project key is
-recorded as the session's origin rather than cached for speed: a deferred finalize runs
-inside another session's hook, so this file is the only surviving record of which project
-the transcript belongs to. This **amends run 1's global
+the topic cache, the project key the session ran in, and the pause flag. The public
+`./core/session` export records that origin through
+`rememberSessionOrigin(sessionId, transcriptPath, host, projectKey)`; the former
+`setCachedProjectKey` export is removed. The project key is recorded as the session's
+origin rather than cached for speed: a deferred finalize runs inside another session's
+hook, so this file is the only surviving record of which project the transcript belongs
+to. This **amends run 1's global
 `cursor.json` contract** (run-2 amendment 2); the global-cursor API is removed rather
 than kept alongside — one way to do it, and nothing shipped consumes it yet, so the break
 is free now and expensive after run 3.
