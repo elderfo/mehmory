@@ -8,6 +8,8 @@ import {
   incrementStopCount,
   isPaused,
   isSessionFinalized,
+  listPendingSessions,
+  resumeFinalizedSession,
   markSessionFinalized,
   readSessionState,
   rememberTopic,
@@ -230,6 +232,101 @@ describe('session state', () => {
 
       expect(sweepSessionState(14)).toBe(1);
       expect(pathExists(marker)).toBe(false);
+    });
+  });
+
+  describe('resume: a finalized id that comes back', () => {
+    it('clears the marker so the resumed run can be finalized again', () => {
+      markSessionFinalized('resumed');
+      expect(isSessionFinalized('resumed')).toBe(true);
+
+      expect(resumeFinalizedSession('resumed')).toBe(true);
+      expect(isSessionFinalized('resumed')).toBe(false);
+    });
+
+    it('hands the cursor back so the resumed run does not re-read the transcript', () => {
+      const cursor = { file_id: '1:2', size: 4096, offset: 4096 };
+      markSessionFinalized('resumed-cursor', cursor);
+
+      resumeFinalizedSession('resumed-cursor');
+
+      expect(readSessionState('resumed-cursor').cursor).toEqual(cursor);
+    });
+
+    it('does not clobber live state if one somehow already exists', () => {
+      const live = { ...freshSessionState('resumed-live'), stop_count: 3 };
+      writeSessionState(live);
+      markSessionFinalized('resumed-live', { file_id: '1:2', size: 10, offset: 10 });
+
+      resumeFinalizedSession('resumed-live');
+
+      expect(readSessionState('resumed-live').stop_count).toBe(3);
+    });
+
+    it('bumps the generation so the second ending is not read as a retry of the first', () => {
+      markSessionFinalized('gen', undefined, 0);
+      resumeFinalizedSession('gen');
+      expect(readSessionState('gen').generation).toBe(1);
+
+      markSessionFinalized('gen', undefined, 1);
+      resumeFinalizedSession('gen');
+      expect(readSessionState('gen').generation).toBe(2);
+    });
+
+    it('reports false for a session that was never finalized', () => {
+      expect(resumeFinalizedSession('never-finalized')).toBe(false);
+    });
+
+    it('clears an unreadable marker rather than leaving the id unfinalizable', () => {
+      atomicWrite(statePath('mangled-marker.finalized.json'), '{ not json');
+      expect(resumeFinalizedSession('mangled-marker')).toBe(true);
+      expect(isSessionFinalized('mangled-marker')).toBe(false);
+    });
+  });
+
+
+  describe('a busy session is not an abandoned one', () => {
+    const aged = Date.now() / 1000 - 6 * 60 * 60;
+
+    function pendingSession(id: string, transcript: string): void {
+      writeSessionState({ ...freshSessionState(id), transcript_path: transcript });
+      utimesSync(sessionStatePath(id), aged, aged);
+    }
+
+    function activeSession(id: string, transcript: string): void {
+      atomicWrite(transcript, '{}\n');
+      writeSessionState({ ...freshSessionState(id), transcript_path: transcript });
+    }
+
+    it('leaves a session alone while its transcript is still growing', () => {
+      // No hook has written state for six hours, which is what one long tool call looks
+      // like. The transcript says the session is very much alive.
+      const transcript = statePath('busy.jsonl');
+      atomicWrite(transcript, '{}\n');
+      pendingSession('busy', transcript);
+      activeSession('active', statePath('active.jsonl'));
+
+      expect(listPendingSessions().map(p => p.session_id)).toEqual([]);
+    });
+
+    it('finalizes a session once its transcript has gone quiet too', () => {
+      const transcript = statePath('quiet.jsonl');
+      atomicWrite(transcript, '{}\n');
+      pendingSession('quiet', transcript);
+      utimesSync(transcript, aged, aged);
+      activeSession('active', statePath('active.jsonl'));
+
+      expect(listPendingSessions().map(p => p.session_id)).toEqual(['quiet']);
+    });
+
+    it('still finalizes a session whose transcript never landed (#43)', () => {
+      // `stat` throws on a missing path rather than returning undefined, and the catch
+      // around this loop would swallow it and drop the session entirely -- which is
+      // exactly the not-yet-flushed ACP rollout that has to stay eligible.
+      pendingSession('unflushed', statePath('never-written.jsonl'));
+      activeSession('active', statePath('active.jsonl'));
+
+      expect(listPendingSessions().map(p => p.session_id)).toEqual(['unflushed']);
     });
   });
 

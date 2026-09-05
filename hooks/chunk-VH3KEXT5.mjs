@@ -4,7 +4,7 @@ import {
   INDEX_LOCK_RETRY_INTERVAL_MS,
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
-  advanceSessionCursor,
+  advanceSessionCursorUnlocked,
   appendInboxEntries,
   appendRecord,
   atomicWrite,
@@ -34,10 +34,12 @@ import {
   remove,
   rename,
   resolveProjectKey,
+  sessionGeneration,
   stat,
   statePath,
-  withProjectLock
-} from "./chunk-V6QKE7VP.mjs";
+  withProjectLock,
+  withSessionLock
+} from "./chunk-Y2I6CIDU.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -804,6 +806,12 @@ ${ROUTING_BLOCK}`;
   );
 }
 function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
+  return withSessionLock(
+    sessionId,
+    () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
+  ) ?? [];
+}
+function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
   if (!transcriptPath) return [];
   return failOpen(
     () => {
@@ -828,7 +836,7 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
         ...agent !== void 0 ? { agent } : {},
         ts
       }));
-      advanceSessionCursor(
+      advanceSessionCursorUnlocked(
         sessionId,
         transcriptPath,
         records[records.length - 1]?.uuid ?? "",
@@ -905,14 +913,22 @@ function staleSessionStartWarning(project) {
   if (!Number.isNaN(at) && Date.now() - at < WARNING_DRAIN_STALE_MS) return void 0;
   return pendingWarnings()[0];
 }
-function sessionEndLogTag(sessionId) {
-  return `(session ${sessionId})`;
+function sessionEndLogTag(sessionId, generation = 0) {
+  if (generation === 0) return `(session ${sessionId})`;
+  return `(session ${JSON.stringify({ id: sessionId, generation })})`;
 }
 function finalizeSession(sessionId, transcriptPath, project, host, config = loadConfig(), options = {}) {
+  return withSessionLock(
+    sessionId,
+    () => finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options)
+  ) ?? { capturedEntries: 0 };
+}
+function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options) {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
+  const generation = sessionGeneration(sessionId);
   if (isPaused(sessionId)) {
     deleteSessionState(sessionId);
-    markSessionFinalized(sessionId);
+    markSessionFinalized(sessionId, void 0, generation);
     return { capturedEntries: 0 };
   }
   if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath) && readSessionState(sessionId).transcript_path !== void 0) {
@@ -920,17 +936,17 @@ function finalizeSession(sessionId, transcriptPath, project, host, config = load
   }
   const home = mehmoryHome();
   const paths = scopePaths(project);
-  const alreadyLogged = pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId));
+  const alreadyLogged = pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId, generation));
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDelta(sessionId, transcriptPath, host, config);
+    const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
     if (entries.length > 0) {
       enqueueJob(distillJobPayload(project, entries), "distill-final");
     }
     appendLogEntry(
       project,
       "session-end",
-      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId)}`
+      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId, generation)}`
     );
     const touched = [paths.logFile, paths.inboxFile].filter(pathExists).map((path) => relative(home, path));
     if (touched.length > 0 && pathExists(join2(home, ".git"))) {
@@ -938,8 +954,9 @@ function finalizeSession(sessionId, transcriptPath, project, host, config = load
     }
     capturedEntries = entries.length;
   }
+  const finalCursor = readSessionState(sessionId).cursor;
   deleteSessionState(sessionId);
-  markSessionFinalized(sessionId);
+  markSessionFinalized(sessionId, finalCursor, generation);
   return { capturedEntries };
 }
 function finalizePendingSessions(currentSessionId, project, host, config = loadConfig()) {

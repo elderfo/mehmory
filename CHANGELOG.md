@@ -11,17 +11,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **An abandoned session is finalized into its own project, not the sweeping one.** A
-  session that ends without a `SessionEnd` is finalized later, from inside another
-  session's start hook. `finalizePendingSessions` scoped that work with
-  `state.project_key ?? project`, but nothing ever populated `state.project_key` -- its
-  only writer had no callers -- so the fallback fired every time and filed one project's
-  transcript under whichever project happened to open next. `rememberSessionOrigin` now
-  records the project key alongside the transcript path and host.
+- **A resumed session is finalized again instead of being written off forever.** The
+  finalization marker meant "this id is done", not "the transcript up to here is
+  captured", so once a harness reused a session id on resume every later `SessionEnd` for
+  it was a no-op and the entire resumed run was never captured. Seen in the wild: a marker
+  five days older than the same session's live state. `SessionStart` now clears its own
+  marker, and the marker carries the cursor so the resumed run reads on from where
+  finalization stopped rather than re-distilling the whole transcript.
 
-  Session states written before this release carry no key and still finalize into the
-  sweeping project on their first post-upgrade sweep. Existing stores can be corrected by
-  hand; there is no migration.
+  Clearing the marker alone was not enough: the `log.md` idempotency tag is the *other*
+  thing keyed by session id, so a resumed run's ending still read as a retry of the first
+  and was skipped. Session state now carries a generation, and both the marker and that
+  tag are keyed by id and generation. Generation 0 keeps the original tag spelling, so
+  existing `log.md` content still matches.
+
+- **A session in the middle of a long turn is no longer finalized while it is alive.**
+  Idle detection read the state file's mtime, which only moves when a hook writes. A
+  session waiting on a slow build or a long tool call fires no hooks, looked abandoned
+  after 30 minutes, and was retired by the next session's start: state deleted, id marked
+  done, everything it recorded afterwards dropped with no error anywhere.
+
+  A session is now eligible only once its **transcript** has gone quiet as well. That is
+  the file which actually grows while a session works -- Claude Code appends as it goes,
+  and a Codex rollout is written incrementally too.
+
+  Protect-only by design: a warm transcript defers the finalize to a later start, it never
+  loses one. A rollout flushed after `SessionEnd` (#43) waits out the window from its own
+  mtime, and a transcript that has not landed at all still falls back to the state mtime,
+  so it stays eligible rather than waiting forever for a file that is absent.
+
+- **Session-state writes are serialized.** `updateSessionState` was an unlocked
+  read-modify-write, and hooks for one session really do overlap -- a Stop alongside a
+  UserPromptSubmit, a `SessionEnd` racing a trailing Stop. The later writer discarded the
+  earlier one's field, which could roll an advanced cursor backwards into a re-distill. A
+  per-session lock now covers read and write together. It gets much tighter retry bounds
+  than the project lock, which busy-waits: this one is taken on every prompt.
 
 - **A project key that would escape the store is rejected at every read boundary.**
   `project_key` is joined under `<home>/projects/`, and now that it is written on every

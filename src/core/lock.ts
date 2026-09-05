@@ -17,6 +17,18 @@ import {
   createLockExclusive,
 } from './fs.js';
 
+/**
+ * Session locks get far tighter retry bounds than project locks.
+ *
+ * This one is taken on every prompt and every Stop, and `withProjectLock` retries by
+ * *busy-waiting* -- the project default of 50 x 100ms would burn five seconds of CPU
+ * inside a hook. The critical section here is one small read plus one atomic write, so
+ * contention resolves in microseconds or not at all; on timeout the session operation
+ * skips rather than running the unserialized write this replaces.
+ */
+const SESSION_LOCK_RETRY_COUNT = 10;
+const SESSION_LOCK_RETRY_INTERVAL_MS = 20;
+
 /** Lock file path for a project key. */
 function lockFilePath(key: string): string {
   return join(statePath('locks'), key.replace(/\//g, '_') + '.lock');
@@ -32,13 +44,29 @@ function lockFilePath(key: string): string {
  * @param fn - Function to execute with lock
  * @param retryCount - Max retry attempts (default: 50)
  * @param retryIntervalMs - Interval between retries in ms (default: 100)
+ * @param failOpen - Run without the lock after retries when true (default: true)
  */
 export function withProjectLock<T>(
   key: string,
   fn: () => T,
+  retryCount?: number,
+  retryIntervalMs?: number,
+  failOpen?: true
+): T;
+export function withProjectLock<T>(
+  key: string,
+  fn: () => T,
+  retryCount: number,
+  retryIntervalMs: number,
+  failOpen: false
+): T | undefined;
+export function withProjectLock<T>(
+  key: string,
+  fn: () => T,
   retryCount: number = LOCK_RETRY_COUNT,
-  retryIntervalMs: number = LOCK_RETRY_INTERVAL_MS
-): T {
+  retryIntervalMs: number = LOCK_RETRY_INTERVAL_MS,
+  failOpen = true
+): T | undefined {
   const lockPath = lockFilePath(key);
   mkdir(join(mehmoryHome(), '.state', 'locks'));
 
@@ -97,18 +125,19 @@ export function withProjectLock<T>(
       }
     }
 
-    // If we couldn't acquire lock after all retries, proceed without lock (fail-open)
     if (!acquired) {
       const error: MehmoryError = {
         code: 'E_LOCK_TIMEOUT',
         kind: 'informational',
-        what: `project lock held for over ${String((retryCount * retryIntervalMs) / 1000)}s; proceeded without it`,
-        consequence: 'A concurrent session may have overwritten an index rewrite',
+        what: `project lock held for over ${String((retryCount * retryIntervalMs) / 1000)}s; ${failOpen ? 'proceeded without it' : 'skipped the operation'}`,
+        consequence: failOpen
+          ? 'A concurrent session may have overwritten an index rewrite'
+          : 'The operation will be retried by a later hook',
       };
       logError(error);
+      if (!failOpen) return undefined;
     }
 
-    // Execute function (with or without lock)
     return fn();
   } finally {
     // Release lock on both success and throw
@@ -149,4 +178,29 @@ export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
       }
     }
   }
+}
+
+/**
+ * Acquire exclusive access to one session's state file, execute fn, then release.
+ *
+ * Session state is read-modify-write (`updateSessionState`), and hooks for one session
+ * genuinely overlap: a Stop and a UserPromptSubmit can be in flight together, and a
+ * SessionEnd can race a trailing Stop. Without this, two processes read the same state,
+ * change different fields, and the later write silently discards the earlier one -- a
+ * stale Stop counter can roll an advanced cursor backwards and cause a re-distill.
+ *
+ * Namespaced under `sessions/` so a session id can never collide with a project key in
+ * the shared lock directory. Lock ordering is one-way: a session lock may be held while
+ * a project lock is acquired (`finalizeSession` → `appendLogEntry` → `withProjectLock`),
+ * never the reverse. Do not take a session lock inside a project lock, or the two orders
+ * can deadlock until both retry budgets expire.
+ */
+export function withSessionLock<T>(sessionId: string, fn: () => T): T | undefined {
+  return withProjectLock(
+    `sessions/${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
+    fn,
+    SESSION_LOCK_RETRY_COUNT,
+    SESSION_LOCK_RETRY_INTERVAL_MS,
+    false
+  );
 }

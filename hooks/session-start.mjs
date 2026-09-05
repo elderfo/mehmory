@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-PTXQ5VQ2.mjs";
+} from "./chunk-VH3KEXT5.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -31,10 +31,11 @@ import {
   readFrontmatter,
   readInboxEntries,
   rename,
+  resumeFinalizedSession,
   stat,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-V6QKE7VP.mjs";
+} from "./chunk-Y2I6CIDU.mjs";
 
 // src/core/store.ts
 import { join } from "path";
@@ -387,6 +388,7 @@ function maintenance(sessionId, project, host, config) {
 }
 runHook("SessionStart", (input, project, host, config) => {
   if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  resumeFinalizedSession(input.session_id);
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
   const injection = buildScopeInjection(project, config);

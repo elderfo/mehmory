@@ -11,7 +11,7 @@ import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
 import { pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
-import { isPaused, sweepSessionState } from '../core/session.js';
+import { isPaused, resumeFinalizedSession, sweepSessionState } from '../core/session.js';
 import { readInboxEntries } from '../core/inbox.js';
 import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
@@ -66,6 +66,12 @@ function maintenance(
 
 runHook('SessionStart', (input, project, host, config) => {
   if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+
+  // A start for an id that already has a finalization marker is a resume: the harness
+  // reuses the id, so without this every later SessionEnd for it is a no-op and the whole
+  // resumed run is never captured. Runs before `maintenance`, whose sweep skips this
+  // session id anyway, so the two cannot contend.
+  resumeFinalizedSession(input.session_id);
 
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);

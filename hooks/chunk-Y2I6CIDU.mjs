@@ -516,10 +516,12 @@ function deepClone(obj) {
 
 // src/core/lock.ts
 import { join as join3 } from "path";
+var SESSION_LOCK_RETRY_COUNT = 10;
+var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
   return join3(statePath("locks"), key.replace(/\//g, "_") + ".lock");
 }
-function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS) {
+function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
   const lockPath = lockFilePath(key);
   mkdir(join3(mehmoryHome(), ".state", "locks"));
   let acquired = false;
@@ -563,10 +565,11 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
       const error = {
         code: "E_LOCK_TIMEOUT",
         kind: "informational",
-        what: `project lock held for over ${String(retryCount * retryIntervalMs / 1e3)}s; proceeded without it`,
-        consequence: "A concurrent session may have overwritten an index rewrite"
+        what: `project lock held for over ${String(retryCount * retryIntervalMs / 1e3)}s; ${failOpen2 ? "proceeded without it" : "skipped the operation"}`,
+        consequence: failOpen2 ? "A concurrent session may have overwritten an index rewrite" : "The operation will be retried by a later hook"
       };
       logError(error);
+      if (!failOpen2) return void 0;
     }
     return fn();
   } finally {
@@ -592,6 +595,15 @@ function tryProjectLock(key, fn) {
       }
     }
   }
+}
+function withSessionLock(sessionId, fn) {
+  return withProjectLock(
+    `sessions/${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}`,
+    fn,
+    SESSION_LOCK_RETRY_COUNT,
+    SESSION_LOCK_RETRY_INTERVAL_MS,
+    false
+  );
 }
 
 // src/schema/format.ts
@@ -1036,6 +1048,7 @@ function parseSessionState(raw, sessionId) {
     // and the queue, so the key is re-validated here rather than trusted because the only
     // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
     // finalize then falls back to the sweeping session's key, which is wrong but in-store.
+    ...typeof v["generation"] === "number" && Number.isInteger(v["generation"]) ? { generation: v["generation"] } : {},
     ...typeof v["project_key"] === "string" && isContainedProjectKey(v["project_key"]) ? { project_key: v["project_key"] } : {},
     ...typeof v["transcript_path"] === "string" ? { transcript_path: v["transcript_path"] } : {},
     ...host !== void 0 ? { host } : {},
@@ -1061,10 +1074,15 @@ function readSessionState(sessionId) {
 function writeSessionState(state) {
   atomicWrite(sessionStatePath(state.session_id), JSON.stringify(state));
 }
+function tryUpdateSessionState(sessionId, mutate) {
+  return withSessionLock(sessionId, () => {
+    const next = mutate(readSessionState(sessionId));
+    writeSessionState(next);
+    return next;
+  });
+}
 function updateSessionState(sessionId, mutate) {
-  const next = mutate(readSessionState(sessionId));
-  writeSessionState(next);
-  return next;
+  return tryUpdateSessionState(sessionId, mutate) ?? readSessionState(sessionId);
 }
 function deleteSessionState(sessionId) {
   const path = sessionStatePath(sessionId);
@@ -1080,17 +1098,67 @@ function finalizedMarkerPath(sessionId) {
 function isSessionFinalized(sessionId) {
   return pathExists(finalizedMarkerPath(sessionId));
 }
-function markSessionFinalized(sessionId) {
-  atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
+function markSessionFinalized(sessionId, cursor, generation = 0) {
+  atomicWrite(
+    finalizedMarkerPath(sessionId),
+    JSON.stringify({ session_id: sessionId, generation, ...cursor ? { cursor } : {} })
+  );
+}
+function sessionGeneration(sessionId) {
+  return readSessionState(sessionId).generation ?? 0;
+}
+function resumeFinalizedSession(sessionId) {
+  return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
+}
+function resumeFinalizedSessionUnlocked(sessionId) {
+  const marker = finalizedMarkerPath(sessionId);
+  if (!pathExists(marker)) return false;
+  let cursor;
+  let generation = 0;
+  try {
+    const parsed = JSON.parse(readFile(marker));
+    if (typeof parsed === "object" && parsed !== null) {
+      const raw = parsed["cursor"];
+      if (isCursorState(raw)) cursor = raw;
+      const gen = parsed["generation"];
+      if (typeof gen === "number" && Number.isInteger(gen)) generation = gen;
+    }
+  } catch {
+  }
+  const current = readSessionState(sessionId);
+  const next = Math.max(generation, current.generation ?? 0) + 1;
+  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...freshSessionState(sessionId), ...cursor ? { cursor } : {}, generation: next };
+  let markerRemoved = false;
+  try {
+    remove(marker);
+    markerRemoved = true;
+    writeSessionState(nextState);
+  } catch {
+    if (markerRemoved) {
+      try {
+        markSessionFinalized(sessionId, cursor, generation);
+      } catch {
+      }
+    }
+    return false;
+  }
+  return true;
 }
 function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
-  if (isSessionFinalized(sessionId)) return;
-  const state = readSessionState(sessionId);
-  if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
-    return;
-  }
-  writeSessionState({ ...state, transcript_path: transcriptPath, host, project_key: projectKey });
+  withSessionLock(sessionId, () => {
+    if (isSessionFinalized(sessionId)) return;
+    const state = readSessionState(sessionId);
+    if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
+      return;
+    }
+    writeSessionState({
+      ...state,
+      transcript_path: transcriptPath,
+      host,
+      project_key: projectKey
+    });
+  });
 }
 var PENDING_FINALIZE_IDLE_MS = 30 * 60 * 1e3;
 function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
@@ -1103,13 +1171,17 @@ function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
     try {
       const path = join5(dir, name);
       const mtime = stat(path)?.mtimeMs;
-      if (mtime === void 0 || mtime > cutoff) continue;
       const raw = readFile(path);
       const id = JSON.parse(raw)["session_id"];
       if (typeof id !== "string" || id.trim() === "") continue;
       const state = parseSessionState(raw, id);
       if (!state || state.transcript_path === void 0) continue;
       if (isSessionFinalized(id)) continue;
+      if (mtime === void 0 || mtime > cutoff) continue;
+      if (pathExists(state.transcript_path)) {
+        const transcriptMtime = stat(state.transcript_path)?.mtimeMs;
+        if (transcriptMtime !== void 0 && transcriptMtime > cutoff) continue;
+      }
       pending.push(state);
     } catch {
     }
@@ -1150,11 +1222,14 @@ function sweepSessionState(maxAgeDays) {
   }
   return deleted;
 }
-function advanceSessionCursor(sessionId, filepath, recordHash, newOffset) {
-  return updateSessionState(sessionId, (s) => ({
-    ...s,
-    cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset)
-  })).cursor;
+function advanceSessionCursorUnlocked(sessionId, filepath, recordHash, newOffset) {
+  const state = readSessionState(sessionId);
+  const next = {
+    ...state,
+    cursor: advanceCursor(state.cursor, filepath, recordHash, newOffset)
+  };
+  writeSessionState(next);
+  return next.cursor;
 }
 function incrementStopCount(sessionId) {
   return updateSessionState(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
@@ -1335,6 +1410,7 @@ export {
   currentAgentName,
   withProjectLock,
   tryProjectLock,
+  withSessionLock,
   readFrontmatter,
   pageAgeDays,
   ARCHIVE_DIVIDER,
@@ -1354,10 +1430,12 @@ export {
   deleteSessionState,
   isSessionFinalized,
   markSessionFinalized,
+  sessionGeneration,
+  resumeFinalizedSession,
   rememberSessionOrigin,
   listPendingSessions,
   sweepSessionState,
-  advanceSessionCursor,
+  advanceSessionCursorUnlocked,
   incrementStopCount,
   resetStopCount,
   topicCacheHit,
