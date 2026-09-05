@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { loadConfig } from './config.js';
+import { loadConfig, type MehmoryConfig } from './config.js';
 import { realpath } from './fs.js';
 
 /**
@@ -8,6 +8,15 @@ import { realpath } from './fs.js';
  * Safe for a hook's lifetime: the resolved key is deterministic per cwd.
  */
 const projectKeyCache = new Map<string, string>();
+
+function configuredAlias(config: MehmoryConfig, key: string): string | undefined {
+  const identity: unknown = config.identity;
+  if (typeof identity !== 'object' || identity === null) return undefined;
+  const aliases = (identity as Record<string, unknown>)['aliases'];
+  if (typeof aliases !== 'object' || aliases === null || Array.isArray(aliases)) return undefined;
+  const alias = (aliases as Record<string, unknown>)[key];
+  return typeof alias === 'string' ? alias : undefined;
+}
 
 /**
  * A project key becomes a directory name under <home>/projects/, so it must not be
@@ -19,13 +28,32 @@ const projectKeyCache = new Map<string, string>();
  * Accepts only host/owner/repo shapes built from safe characters. Anything else is
  * rejected so the caller can fall back to the hash-based key.
  */
-const SAFE_KEY = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){1,4}$/;
+const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * True when `key` can only ever name a location *inside* `<home>/projects/`.
+ *
+ * This is the containment question on its own, deliberately separate from the
+ * remote-slug shape check below. A one-segment key is perfectly contained -- an
+ * `identity.aliases` entry of `my-custom-key` is a documented, supported shape -- it
+ * simply is not a `host/owner/repo` slug. Conflating the two rejects valid aliases.
+ *
+ * Use this at every boundary where a key arrives from outside the process and is about
+ * to become a path: the session state file, the queue payload, config aliases.
+ */
+export function isContainedProjectKey(key: string): boolean {
+  const segments = key.split('/');
+  if (segments.length === 0 || segments.length > 5) return false;
+  // No segment may be empty or a traversal token, and `.`-only segments would collapse
+  // the path even though they pass the character class.
+  return segments.every(seg => seg !== '.' && seg !== '..' && SAFE_SEGMENT.test(seg));
+}
 
 function isSafeProjectKey(key: string): boolean {
-  if (!SAFE_KEY.test(key)) return false;
-  // Belt and braces: no segment may be a traversal token, and `.`-only segments
-  // would collapse the path even though they pass the character class above.
-  return key.split('/').every(seg => seg !== '.' && seg !== '..' && seg.length > 0);
+  // A remote-derived key is `host/owner/repo`-ish, so it must have at least two segments
+  // on top of being contained; a bare one-segment result means normalization went wrong
+  // and hashing it is better than trusting it.
+  return key.includes('/') && isContainedProjectKey(key);
 }
 
 /**
@@ -75,10 +103,21 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
     // Alias lookup uses the sanitized key, which is what lands on disk and what a
     // user would see in `mehmory status` and copy into config.json.
     const config = loadConfig();
-    if (config.identity.aliases[remoteKey]) {
-      const aliasKey = config.identity.aliases[remoteKey];
-      projectKeyCache.set(cwd, aliasKey);
-      return aliasKey;
+    const aliasKey = configuredAlias(config, remoteKey);
+    if (aliasKey !== undefined) {
+      // An alias is hand-written config, so unlike the computed key above it never passed
+      // through `safeRemoteKey`. It becomes a directory name all the same, so an alias of
+      // `../../../tmp/x` would escape the store exactly like a hostile remote would.
+      // Reject rather than sanitize: silently rewriting someone's alias to a hash would be
+      // more confusing than ignoring it and using the real key.
+      // `aliases` is typed `Record<string, string>`, but config.json is user JSON and
+      // `deepMerge` enforces no value types -- a number reaches `key.split` and throws out
+      // of `resolveProjectKey`, which `runHook` catches fail-open, so every hook for that
+      // project silently does nothing.
+      if (typeof aliasKey === 'string' && isContainedProjectKey(aliasKey)) {
+        projectKeyCache.set(cwd, aliasKey);
+        return aliasKey;
+      }
     }
     projectKeyCache.set(cwd, remoteKey);
     return remoteKey;
@@ -98,10 +137,13 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
 
   // Check alias override
   const config = loadConfig();
-  if (config.identity.aliases[pathKey]) {
-    const aliasKey = config.identity.aliases[pathKey];
-    projectKeyCache.set(cwd, aliasKey);
-    return aliasKey;
+  const aliasKey = configuredAlias(config, pathKey);
+  if (aliasKey !== undefined) {
+    // Same reason as the remote-derived branch: an alias is unvalidated user config.
+    if (isContainedProjectKey(aliasKey)) {
+      projectKeyCache.set(cwd, aliasKey);
+      return aliasKey;
+    }
   }
 
   projectKeyCache.set(cwd, pathKey);

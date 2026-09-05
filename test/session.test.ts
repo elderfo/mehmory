@@ -7,12 +7,14 @@ import {
   freshSessionState,
   incrementStopCount,
   isPaused,
+  isSessionFinalized,
+  markSessionFinalized,
   readSessionState,
   rememberTopic,
   resetSessionCursor,
   resetStopCount,
   sessionStatePath,
-  setCachedProjectKey,
+  rememberSessionOrigin,
   setPaused,
   sweepSessionState,
   topicCacheHit,
@@ -63,13 +65,68 @@ describe('session state', () => {
     expect(readSessionState('s2').stop_count).toBe(0);
   });
 
-  it('stores the pause flag and the cached project key', () => {
+  it('stores the pause flag', () => {
     setPaused('s3', true);
     expect(isPaused('s3')).toBe(true);
-    setCachedProjectKey('s3', 'github.com/acme/repo');
-    expect(readSessionState('s3').project_key).toBe('github.com/acme/repo');
     setPaused('s3', false);
     expect(isPaused('s3')).toBe(false);
+  });
+
+  it('records transcript, host and project key as the session origin', () => {
+    rememberSessionOrigin('s5', '/tmp/t.jsonl', 'claude-code', 'github.com/acme/repo');
+    const state = readSessionState('s5');
+    expect(state.transcript_path).toBe('/tmp/t.jsonl');
+    expect(state.host).toBe('claude-code');
+    expect(state.project_key).toBe('github.com/acme/repo');
+  });
+
+  // Both arms of the guard: a payload really can carry `transcript_path: ''`, and neither
+  // shape has anything a later sweep could finalize, so neither should leave state behind.
+  it.each([undefined, ''])('ignores an origin with no transcript to finalize (%p)', path => {
+    rememberSessionOrigin('s6', path, 'claude-code', 'github.com/acme/repo');
+    expect(pathExists(sessionStatePath('s6'))).toBe(false);
+  });
+
+  // Last write wins, deliberately. `project_key` is read by exactly one consumer -- the
+  // deferred-finalize fallback -- and what it scopes is the transcript tail after the last
+  // Stop, which was produced under the most recent cwd. Pinning the first key instead would
+  // file that tail under the project it demonstrably was not written in.
+  it('rewrites the origin when the same session reports a new project key', () => {
+    rememberSessionOrigin('s7', '/tmp/t.jsonl', 'claude-code', 'github.com/acme/first');
+    rememberSessionOrigin('s7', '/tmp/t.jsonl', 'claude-code', 'github.com/acme/second');
+    expect(readSessionState('s7').project_key).toBe('github.com/acme/second');
+  });
+
+  // `project_key` is joined under `<home>/projects/`, so the state file is a read
+  // boundary: a key that climbs out of the store must not survive the parse.
+  it.each(['../../../../tmp/pwned', '/etc/passwd', 'ok/..', '', 'a/./b'])(
+    'drops a project_key that would escape the store (%p)',
+    bad => {
+      atomicWrite(
+        sessionStatePath('s8'),
+        JSON.stringify({ ...freshSessionState('s8'), project_key: bad })
+      );
+      expect(readSessionState('s8').project_key).toBeUndefined();
+    }
+  );
+
+  it('keeps a one-segment project_key, which is a supported alias shape', () => {
+    atomicWrite(
+      sessionStatePath('s9'),
+      JSON.stringify({ ...freshSessionState('s9'), project_key: 'my-custom-key' })
+    );
+    expect(readSessionState('s9').project_key).toBe('my-custom-key');
+  });
+
+  // A trailing hook for a finalized session would otherwise rebuild its state from
+  // `freshSessionState` -- cursor at 0 -- and `finalizeSession` never deletes it again.
+  it('does not resurrect state for a session that was already finalized', () => {
+    markSessionFinalized('s10');
+    expect(isSessionFinalized('s10')).toBe(true);
+
+    rememberSessionOrigin('s10', '/tmp/t.jsonl', 'claude-code', 'github.com/acme/repo');
+
+    expect(pathExists(sessionStatePath('s10'))).toBe(false);
   });
 
   it('deletes its own state file', () => {
@@ -131,6 +188,48 @@ describe('session state', () => {
       expect(pathExists(sessionStatePath('stale'))).toBe(false);
       expect(pathExists(sessionStatePath('recent'))).toBe(true);
       expect(pathExists(statePath('warnings.json'))).toBe(true);
+    });
+
+    // A marker ends in `.json` and carries a `session_id`, so it matches the sweep's own
+    // filter. Removing one while its state file survives un-finalizes that session: the
+    // state re-qualifies as pending and the transcript is distilled a second time.
+    it('never removes a finalization marker while its state file is still there', () => {
+      markSessionFinalized('paired');
+      writeSessionState(freshSessionState('paired'));
+
+      const marker = statePath('paired.finalized.json');
+      const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
+      utimesSync(marker, old, old);
+
+      expect(sweepSessionState(14)).toBe(0);
+      expect(pathExists(marker)).toBe(true);
+      expect(isSessionFinalized('paired')).toBe(true);
+    });
+
+    it('removes a marker whose paired state file is unparseable', () => {
+      // A malformed state file is skipped by its own iteration and is invisible to
+      // `listPendingSessions`, so it can never un-finalize anything. Pinning the marker
+      // behind it would strand both files permanently.
+      markSessionFinalized('mangled');
+      atomicWrite(sessionStatePath('mangled'), '{ not json');
+
+      const marker = statePath('mangled.finalized.json');
+      const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
+      utimesSync(marker, old, old);
+
+      expect(sweepSessionState(14)).toBe(1);
+      expect(pathExists(marker)).toBe(false);
+    });
+
+    it('removes a marker once its state file is gone', () => {
+      markSessionFinalized('orphaned-marker');
+
+      const marker = statePath('orphaned-marker.finalized.json');
+      const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
+      utimesSync(marker, old, old);
+
+      expect(sweepSessionState(14)).toBe(1);
+      expect(pathExists(marker)).toBe(false);
     });
   });
 

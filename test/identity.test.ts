@@ -155,6 +155,108 @@ describe('resolveProjectKey', () => {
     expect(key2).toBe(key3);
   });
 
+  it('ignores a config alias that would escape the store', () => {
+    // An alias is hand-written config and never passes through `safeRemoteKey`, but it
+    // becomes a directory name all the same. Fall back to the real computed key rather
+    // than silently rewriting someone's alias into a hash.
+    const repoDir = join(tempDir, 'repo-with-escaping-alias');
+    mkdirSync(repoDir, { recursive: true });
+
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git remote add origin https://github.com/owner/repo.git', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
+
+    const home = join(tempDir, '.mehmory-escape');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        identity: { aliases: { 'github.com/owner/repo': '../../../../tmp/pwned' } },
+      }),
+      'utf-8'
+    );
+
+    const originalHome = process.env.MEHMORY_HOME;
+    process.env.MEHMORY_HOME = home;
+
+    try {
+      expect(resolveProjectKey(repoDir)).toBe('github.com/owner/repo');
+    } finally {
+      if (originalHome) {
+        process.env.MEHMORY_HOME = originalHome;
+      } else {
+        delete process.env.MEHMORY_HOME;
+      }
+    }
+  });
+
+  it('ignores a non-string alias instead of throwing out of resolveProjectKey', () => {
+    // `aliases` is typed Record<string, string>, but config.json is user JSON and no
+    // runtime check enforces the value type. A number would reach `key.split` and throw;
+    // `runHook` catches fail-open, so every hook for that project would silently no-op.
+    const repoDir = join(tempDir, 'repo-with-numeric-alias');
+    mkdirSync(repoDir, { recursive: true });
+
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git remote add origin https://github.com/owner/repo.git', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
+
+    const home = join(tempDir, '.mehmory-numeric');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ identity: { aliases: { 'github.com/owner/repo': 42 } } }),
+      'utf-8'
+    );
+
+    const originalHome = process.env.MEHMORY_HOME;
+    process.env.MEHMORY_HOME = home;
+
+    try {
+      expect(() => resolveProjectKey(repoDir)).not.toThrow();
+      expect(resolveProjectKey(repoDir)).toBe('github.com/owner/repo');
+    } finally {
+      if (originalHome) {
+        process.env.MEHMORY_HOME = originalHome;
+      } else {
+        delete process.env.MEHMORY_HOME;
+      }
+    }
+  });
+
+  it('ignores a null aliases container instead of throwing', () => {
+    const repoDir = join(tempDir, 'repo-with-null-aliases');
+    mkdirSync(repoDir, { recursive: true });
+
+    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git remote add origin https://github.com/owner/repo.git', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
+
+    const home = join(tempDir, '.mehmory-null-aliases');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ identity: { aliases: null } }), 'utf-8');
+
+    const originalHome = process.env.MEHMORY_HOME;
+    process.env.MEHMORY_HOME = home;
+
+    try {
+      expect(() => resolveProjectKey(repoDir)).not.toThrow();
+      expect(resolveProjectKey(repoDir)).toBe('github.com/owner/repo');
+    } finally {
+      if (originalHome) {
+        process.env.MEHMORY_HOME = originalHome;
+      } else {
+        delete process.env.MEHMORY_HOME;
+      }
+    }
+  });
+
   it('allows config.json alias to override computed key', () => {
     // This test verifies that if config.json has an alias entry,
     // resolveProjectKey will return the alias instead of the computed key.

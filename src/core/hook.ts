@@ -132,7 +132,7 @@ export function runHook(
       } else {
         // Where this session's material lives and who wrote it, so the next session start
         // can finalize it even if this session never reports an end (issue #24).
-        rememberSessionOrigin(input.session_id, input.transcript_path, host);
+        rememberSessionOrigin(input.session_id, input.transcript_path, host, project);
         result = body(input, project, host, config);
       }
     }

@@ -18,6 +18,7 @@ import { logError } from './errors.js';
 import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
+import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
 /** Cached prompt token set used to skip repeat lookups within a TTL. */
@@ -99,7 +100,14 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
     cursor: v['cursor'],
     stop_count: v['stop_count'],
     ...(topicCache ? { topic: topicCache } : {}),
-    ...(typeof v['project_key'] === 'string' ? { project_key: v['project_key'] } : {}),
+    // `project_key` is read back from disk and handed straight to `scopePaths()`, which
+    // joins it under `<home>/projects/`. The state file is a read boundary like the inbox
+    // and the queue, so the key is re-validated here rather than trusted because the only
+    // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
+    // finalize then falls back to the sweeping session's key, which is wrong but in-store.
+    ...(typeof v['project_key'] === 'string' && isContainedProjectKey(v['project_key'])
+      ? { project_key: v['project_key'] }
+      : {}),
     ...(typeof v['transcript_path'] === 'string' ? { transcript_path: v['transcript_path'] } : {}),
     ...(host !== undefined ? { host } : {}),
     paused: v['paused'] === true,
@@ -185,19 +193,38 @@ export function markSessionFinalized(sessionId: string): void {
  * Record where this session's material lives, so a session that never reports an end can
  * still be finalized later (issue #24).
  *
- * Every hook payload carries `transcript_path`, and `runHook` already knows the harness,
- * so the cheapest place to learn both is the invocation itself. Written only when
- * something actually changed — the common case is a no-op read.
+ * Every hook payload carries `transcript_path`, and `runHook` already knows the harness
+ * and the project key, so the cheapest place to learn all three is the invocation itself.
+ * Written only when something actually changed — the common case is a no-op read.
+ *
+ * `projectKey` is the load-bearing one. A deferred finalize runs inside *another*
+ * session's hook, so by then the only record of where this session ran is what was
+ * persisted here; `finalizePendingSessions` falls back to the sweeping session's project
+ * when it is missing, which files one project's transcript under another's scope.
  */
 export function rememberSessionOrigin(
   sessionId: string,
   transcriptPath: string | undefined,
-  host: InboxHost
+  host: InboxHost,
+  projectKey: string
 ): void {
   if (transcriptPath === undefined || transcriptPath === '') return;
+  // A hook that fires after the session was finalized (a trailing Stop, a retry, a sweep
+  // that retired a session still running elsewhere) would otherwise recreate `<id>.json`
+  // from `freshSessionState` -- cursor back at 0. `finalizeSession` short-circuits on the
+  // marker before it ever deletes state again, so that file would sit there until
+  // `sweepSessionState` removed it, and its cursor would re-distill the whole transcript
+  // if the marker aged out first.
+  if (isSessionFinalized(sessionId)) return;
   const state = readSessionState(sessionId);
-  if (state.transcript_path === transcriptPath && state.host === host) return;
-  writeSessionState({ ...state, transcript_path: transcriptPath, host });
+  if (
+    state.transcript_path === transcriptPath &&
+    state.host === host &&
+    state.project_key === projectKey
+  ) {
+    return;
+  }
+  writeSessionState({ ...state, transcript_path: transcriptPath, host, project_key: projectKey });
 }
 
 /**
@@ -256,6 +283,23 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
 }
 
 /**
+ * True when `path` holds something this sweep would recognize as session state: parseable
+ * JSON carrying a string `session_id`. Anything else -- truncated, hand-mangled, a
+ * different file that happens to end in `.json` -- is invisible to both the sweep and
+ * `listPendingSessions`, so it protects nothing and pins nothing.
+ */
+function isSweepableState(path: string): boolean {
+  if (!pathExists(path)) return false;
+  try {
+    const parsed: unknown = JSON.parse(readFile(path));
+    if (typeof parsed !== 'object' || parsed === null) return false;
+    return typeof (parsed as Record<string, unknown>)['session_id'] === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Delete session-state files older than `maxAgeDays` (SessionStart maintenance lane).
  * Only files that parse as session state are considered — `.state/` also holds
  * `warnings.json`, locks and logs.
@@ -278,7 +322,19 @@ export function sweepSessionState(maxAgeDays?: number): number {
       if (mtime === undefined || mtime > cutoff) continue;
       const parsed: unknown = JSON.parse(readFile(path));
       if (typeof parsed !== 'object' || parsed === null) continue;
-      if (typeof (parsed as Record<string, unknown>)['session_id'] !== 'string') continue;
+      const id = (parsed as Record<string, unknown>)['session_id'];
+      if (typeof id !== 'string') continue;
+      // A marker matches this filter too -- it ends in `.json` and carries a `session_id`.
+      // Removing one while its state file survives would un-finalize that session: the
+      // state re-qualifies in `listPendingSessions` with whatever cursor it holds and the
+      // transcript is distilled a second time. The marker is the younger file only when
+      // state was rewritten after finalization, so outlive it rather than race it.
+      //
+      // Only for a state file this sweep could actually act on, though. An unparseable one
+      // is skipped by its own iteration, and `listPendingSessions` skips it too, so it can
+      // never un-finalize anything -- pinning the marker behind it would strand both files
+      // for good instead of protecting anything.
+      if (name.endsWith('.finalized.json') && isSweepableState(sessionStatePath(id))) continue;
       remove(path);
       deleted++;
     } catch {
@@ -353,12 +409,7 @@ export function rememberTopic(
   updateSessionState(sessionId, s => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
 }
 
-// ─── Project key cache / pause ───
-
-/** Cache the resolved project key on the session (avoids re-resolving per prompt). */
-export function setCachedProjectKey(sessionId: string, key: string): void {
-  updateSessionState(sessionId, s => ({ ...s, project_key: key }));
-}
+// ─── Pause ───
 
 /** Set or clear the session pause flag. */
 export function setPaused(sessionId: string, paused: boolean): void {

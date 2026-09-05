@@ -1,7 +1,7 @@
 /** `finalizeSession` core-op tests (issue #16): the SessionEnd hook adapter is now
  * just a caller of this. */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -147,6 +147,13 @@ describe('finalizePendingSessions', () => {
     initStore();
   });
 
+  // Restoring inline at the end of each test loses the spy when an assertion throws, and
+  // a leaked `listPendingSessions` stub turns one real failure into a cascade in the next
+  // describe. vitest.config.ts sets no `restoreMocks`, so the cleanup has to be here.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('one bad session does not abandon the rest of the sweep (F3-10)', () => {
     const transcript = writeTranscript([{ text: 'We decided to ship the plugin unbundled.' }]);
     const pending = ['bad', 'good'].map(id => ({
@@ -168,7 +175,55 @@ describe('finalizePendingSessions', () => {
 
     const log = readFileSync(scopePaths(key).logFile, 'utf-8');
     expect(log).toContain('(session good)');
-    vi.restoreAllMocks();
+  });
+
+  // Regression: an abandoned session must finalize into the project it actually ran in,
+  // not into whichever project the next session happened to start in. The fallback in
+  // `finalizePendingSessions` (`state.project_key ?? project`) is only correct if the
+  // origin write records the key -- nothing did, so every deferred finalize filed one
+  // project's transcript under another's scope.
+  //
+  // Note this test deliberately does NOT hand-write `project_key` into the fixture: it
+  // goes through `rememberSessionOrigin`, the same call the hook makes. Constructing the
+  // state by hand is what hid the bug from the sweep test above.
+  it('finalizes an abandoned session into its own project, not the sweeping one', () => {
+    const otherCwd = createTempDir('mehmory-other-project');
+    const otherKey = resolveProjectKey(otherCwd);
+    expect(otherKey).not.toBe(key);
+
+    const transcript = writeTranscript([{ text: 'We decided to pin the runtime to Node 22.' }]);
+
+    // The abandoned session's own hook invocation, recording where it ran.
+    sessionModule.rememberSessionOrigin('orphan', transcript, 'claude-code', otherKey);
+
+    vi.spyOn(sessionModule, 'listPendingSessions').mockReturnValue([
+      sessionModule.readSessionState('orphan'),
+    ]);
+
+    // A session in `key` sweeps it up.
+    expect(finalizePendingSessions('current', key, 'claude-code')).toBe(1);
+
+    expect(readFileSync(scopePaths(otherKey).logFile, 'utf-8')).toContain('(session orphan)');
+    expect(existsSync(scopePaths(key).logFile)).toBe(false);
+  });
+
+  // The `state.project_key ?? project` fallback still has a live job after this change:
+  // every session state written before it carries no key. Those sessions finalize into the
+  // sweeping project on their one post-upgrade sweep, which is wrong but bounded -- the
+  // alternative is dropping them. Pinned so the fallback is not "cleaned up" later.
+  it('falls back to the sweeping project for pre-upgrade state that has no project_key', () => {
+    const transcript = writeTranscript([{ text: 'We decided to pin the runtime to Node 22.' }]);
+    const legacy = {
+      ...freshSessionState('legacy'),
+      transcript_path: transcript,
+      host: 'claude-code' as const,
+    };
+    expect(legacy.project_key).toBeUndefined();
+
+    vi.spyOn(sessionModule, 'listPendingSessions').mockReturnValue([legacy]);
+
+    expect(finalizePendingSessions('current', key, 'claude-code')).toBe(1);
+    expect(readFileSync(scopePaths(key).logFile, 'utf-8')).toContain('(session legacy)');
   });
 });
 
