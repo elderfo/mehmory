@@ -939,7 +939,7 @@ function resolveProjectKey(cwd = process.cwd()) {
   const config = loadConfig();
   const aliasKey = configuredAlias(config, pathKey);
   if (aliasKey !== void 0) {
-    if (typeof aliasKey === "string" && isContainedProjectKey(aliasKey)) {
+    if (isContainedProjectKey(aliasKey)) {
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;
     }

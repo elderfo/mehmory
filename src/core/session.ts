@@ -283,13 +283,6 @@ export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): 
 }
 
 /**
- * Delete session-state files older than `maxAgeDays` (SessionStart maintenance lane).
- * Only files that parse as session state are considered — `.state/` also holds
- * `warnings.json`, locks and logs.
- *
- * @returns number of files deleted
- */
-/**
  * True when `path` holds something this sweep would recognize as session state: parseable
  * JSON carrying a string `session_id`. Anything else -- truncated, hand-mangled, a
  * different file that happens to end in `.json` -- is invisible to both the sweep and
@@ -306,6 +299,13 @@ function isSweepableState(path: string): boolean {
   }
 }
 
+/**
+ * Delete session-state files older than `maxAgeDays` (SessionStart maintenance lane).
+ * Only files that parse as session state are considered — `.state/` also holds
+ * `warnings.json`, locks and logs.
+ *
+ * @returns number of files deleted
+ */
 export function sweepSessionState(maxAgeDays?: number): number {
   const days = maxAgeDays ?? loadConfig().session_state.max_age_days;
   const dir = statePath();

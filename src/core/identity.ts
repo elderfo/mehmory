@@ -140,8 +140,7 @@ export function resolveProjectKey(cwd: string = process.cwd()): string {
   const aliasKey = configuredAlias(config, pathKey);
   if (aliasKey !== undefined) {
     // Same reason as the remote-derived branch: an alias is unvalidated user config.
-    // Same reason as the remote-derived branch: the value is unenforced user JSON.
-    if (typeof aliasKey === 'string' && isContainedProjectKey(aliasKey)) {
+    if (isContainedProjectKey(aliasKey)) {
       projectKeyCache.set(cwd, aliasKey);
       return aliasKey;
     }
