@@ -1222,12 +1222,6 @@ function sweepSessionState(maxAgeDays) {
   }
   return deleted;
 }
-function advanceSessionCursor(sessionId, filepath, recordHash, newOffset) {
-  return tryUpdateSessionState(sessionId, (s) => ({
-    ...s,
-    cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset)
-  }))?.cursor;
-}
 function advanceSessionCursorUnlocked(sessionId, filepath, recordHash, newOffset) {
   const state = readSessionState(sessionId);
   const next = {
@@ -1441,7 +1435,6 @@ export {
   rememberSessionOrigin,
   listPendingSessions,
   sweepSessionState,
-  advanceSessionCursor,
   advanceSessionCursorUnlocked,
   incrementStopCount,
   resetStopCount,

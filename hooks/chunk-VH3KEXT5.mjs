@@ -4,7 +4,6 @@ import {
   INDEX_LOCK_RETRY_INTERVAL_MS,
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
-  advanceSessionCursor,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
   appendRecord,
@@ -40,7 +39,7 @@ import {
   statePath,
   withProjectLock,
   withSessionLock
-} from "./chunk-54Y7MYUK.mjs";
+} from "./chunk-Y2I6CIDU.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -806,7 +805,13 @@ ${ROUTING_BLOCK}`;
     "E_ATOMIC_WRITE"
   );
 }
-function distillDelta(sessionId, transcriptPath, host, config = loadConfig(), lockHeld = false) {
+function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
+  return withSessionLock(
+    sessionId,
+    () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
+  ) ?? [];
+}
+function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
   if (!transcriptPath) return [];
   return failOpen(
     () => {
@@ -831,8 +836,7 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig(), lo
         ...agent !== void 0 ? { agent } : {},
         ts
       }));
-      const advance = lockHeld ? advanceSessionCursorUnlocked : advanceSessionCursor;
-      advance(
+      advanceSessionCursorUnlocked(
         sessionId,
         transcriptPath,
         records[records.length - 1]?.uuid ?? "",
@@ -935,7 +939,7 @@ function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, confi
   const alreadyLogged = pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId, generation));
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDelta(sessionId, transcriptPath, host, config, true);
+    const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
     if (entries.length > 0) {
       enqueueJob(distillJobPayload(project, entries), "distill-final");
     }
