@@ -153,12 +153,27 @@ describe('withSessionLock', () => {
     expect(order).toEqual(['project', 'session']);
   });
 
+  it('does not run without the lock after contention expires', () => {
+    const lockFile = join(statePath('locks'), 'sessions_sess-d.lock');
+    mkdirSync(join(statePath('locks')), { recursive: true });
+    writeFileSync(lockFile, '');
+
+    let executed = false;
+    expect(
+      withSessionLock('sess-d', () => {
+        executed = true;
+        return 'unexpected';
+      })
+    ).toBeUndefined();
+    expect(executed).toBe(false);
+  });
+
   it('releases on throw', () => {
-    expect(() =>
+    expect(() => {
       withSessionLock('sess-c', () => {
         throw new Error('boom');
-      })
-    ).toThrow('boom');
+      });
+    }).toThrow('boom');
     expect(withSessionLock('sess-c', () => 'reacquired')).toBe('reacquired');
   });
 });

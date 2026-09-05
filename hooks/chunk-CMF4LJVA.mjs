@@ -521,7 +521,7 @@ var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
   return join3(statePath("locks"), key.replace(/\//g, "_") + ".lock");
 }
-function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS) {
+function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
   const lockPath = lockFilePath(key);
   mkdir(join3(mehmoryHome(), ".state", "locks"));
   let acquired = false;
@@ -565,10 +565,11 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
       const error = {
         code: "E_LOCK_TIMEOUT",
         kind: "informational",
-        what: `project lock held for over ${String(retryCount * retryIntervalMs / 1e3)}s; proceeded without it`,
-        consequence: "A concurrent session may have overwritten an index rewrite"
+        what: `project lock held for over ${String(retryCount * retryIntervalMs / 1e3)}s; ${failOpen2 ? "proceeded without it" : "skipped the operation"}`,
+        consequence: failOpen2 ? "A concurrent session may have overwritten an index rewrite" : "The operation will be retried by a later hook"
       };
       logError(error);
+      if (!failOpen2) return void 0;
     }
     return fn();
   } finally {
@@ -600,7 +601,8 @@ function withSessionLock(sessionId, fn) {
     `sessions/${sessionId.replace(/[^A-Za-z0-9._-]/g, "_")}`,
     fn,
     SESSION_LOCK_RETRY_COUNT,
-    SESSION_LOCK_RETRY_INTERVAL_MS
+    SESSION_LOCK_RETRY_INTERVAL_MS,
+    false
   );
 }
 
@@ -1077,7 +1079,7 @@ function updateSessionState(sessionId, mutate) {
     const next = mutate(readSessionState(sessionId));
     writeSessionState(next);
     return next;
-  });
+  }) ?? readSessionState(sessionId);
 }
 function deleteSessionState(sessionId) {
   const path = sessionStatePath(sessionId);
@@ -1103,6 +1105,9 @@ function sessionGeneration(sessionId) {
   return readSessionState(sessionId).generation ?? 0;
 }
 function resumeFinalizedSession(sessionId) {
+  return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
+}
+function resumeFinalizedSessionUnlocked(sessionId) {
   const marker = finalizedMarkerPath(sessionId);
   if (!pathExists(marker)) return false;
   let cursor;
@@ -1117,19 +1122,14 @@ function resumeFinalizedSession(sessionId) {
     }
   } catch {
   }
-  const next = Math.max(generation, readSessionState(sessionId).generation ?? 0) + 1;
-  if (pathExists(sessionStatePath(sessionId))) {
-    updateSessionState(sessionId, (state) => ({ ...state, generation: next }));
-  } else {
-    writeSessionState({
-      ...freshSessionState(sessionId),
-      ...cursor ? { cursor } : {},
-      generation: next
-    });
-  }
+  const current = readSessionState(sessionId);
+  const next = Math.max(generation, current.generation ?? 0) + 1;
+  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...freshSessionState(sessionId), ...cursor ? { cursor } : {}, generation: next };
   try {
     remove(marker);
+    writeSessionState(nextState);
   } catch {
+    return false;
   }
   return true;
 }
@@ -1396,6 +1396,7 @@ export {
   currentAgentName,
   withProjectLock,
   tryProjectLock,
+  withSessionLock,
   readFrontmatter,
   pageAgeDays,
   ARCHIVE_DIVIDER,

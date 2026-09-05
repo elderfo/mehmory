@@ -37,8 +37,9 @@ import {
   sessionGeneration,
   stat,
   statePath,
-  withProjectLock
-} from "./chunk-VNJFSDR4.mjs";
+  withProjectLock,
+  withSessionLock
+} from "./chunk-CMF4LJVA.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -907,9 +908,16 @@ function staleSessionStartWarning(project) {
   return pendingWarnings()[0];
 }
 function sessionEndLogTag(sessionId, generation = 0) {
-  return generation === 0 ? `(session ${sessionId})` : `(session ${sessionId}#${String(generation)})`;
+  if (generation === 0) return `(session ${sessionId})`;
+  return `(session ${JSON.stringify({ id: sessionId, generation })})`;
 }
 function finalizeSession(sessionId, transcriptPath, project, host, config = loadConfig(), options = {}) {
+  return withSessionLock(
+    sessionId,
+    () => finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options)
+  ) ?? { capturedEntries: 0 };
+}
+function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options) {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
   const generation = sessionGeneration(sessionId);
   if (isPaused(sessionId)) {

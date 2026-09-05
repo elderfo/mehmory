@@ -293,14 +293,20 @@ describe('session state', () => {
       utimesSync(sessionStatePath(id), aged, aged);
     }
 
+    function activeSession(id: string, transcript: string): void {
+      atomicWrite(transcript, '{}\n');
+      writeSessionState({ ...freshSessionState(id), transcript_path: transcript });
+    }
+
     it('leaves a session alone while its transcript is still growing', () => {
       // No hook has written state for six hours, which is what one long tool call looks
       // like. The transcript says the session is very much alive.
       const transcript = statePath('busy.jsonl');
       atomicWrite(transcript, '{}\n');
       pendingSession('busy', transcript);
+      activeSession('active', statePath('active.jsonl'));
 
-      expect(listPendingSessions().map(p => p.session_id)).not.toContain('busy');
+      expect(listPendingSessions().map(p => p.session_id)).toEqual([]);
     });
 
     it('finalizes a session once its transcript has gone quiet too', () => {
@@ -308,8 +314,9 @@ describe('session state', () => {
       atomicWrite(transcript, '{}\n');
       pendingSession('quiet', transcript);
       utimesSync(transcript, aged, aged);
+      activeSession('active', statePath('active.jsonl'));
 
-      expect(listPendingSessions().map(p => p.session_id)).toContain('quiet');
+      expect(listPendingSessions().map(p => p.session_id)).toEqual(['quiet']);
     });
 
     it('still finalizes a session whose transcript never landed (#43)', () => {
@@ -317,8 +324,9 @@ describe('session state', () => {
       // around this loop would swallow it and drop the session entirely -- which is
       // exactly the not-yet-flushed ACP rollout that has to stay eligible.
       pendingSession('unflushed', statePath('never-written.jsonl'));
+      activeSession('active', statePath('active.jsonl'));
 
-      expect(listPendingSessions().map(p => p.session_id)).toContain('unflushed');
+      expect(listPendingSessions().map(p => p.session_id)).toEqual(['unflushed']);
     });
   });
 

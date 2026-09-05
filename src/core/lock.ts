@@ -44,13 +44,29 @@ function lockFilePath(key: string): string {
  * @param fn - Function to execute with lock
  * @param retryCount - Max retry attempts (default: 50)
  * @param retryIntervalMs - Interval between retries in ms (default: 100)
+ * @param failOpen - Run without the lock after retries when true (default: true)
  */
 export function withProjectLock<T>(
   key: string,
   fn: () => T,
+  retryCount?: number,
+  retryIntervalMs?: number,
+  failOpen?: true
+): T;
+export function withProjectLock<T>(
+  key: string,
+  fn: () => T,
+  retryCount: number,
+  retryIntervalMs: number,
+  failOpen: false
+): T | undefined;
+export function withProjectLock<T>(
+  key: string,
+  fn: () => T,
   retryCount: number = LOCK_RETRY_COUNT,
-  retryIntervalMs: number = LOCK_RETRY_INTERVAL_MS
-): T {
+  retryIntervalMs: number = LOCK_RETRY_INTERVAL_MS,
+  failOpen = true
+): T | undefined {
   const lockPath = lockFilePath(key);
   mkdir(join(mehmoryHome(), '.state', 'locks'));
 
@@ -109,18 +125,19 @@ export function withProjectLock<T>(
       }
     }
 
-    // If we couldn't acquire lock after all retries, proceed without lock (fail-open)
     if (!acquired) {
       const error: MehmoryError = {
         code: 'E_LOCK_TIMEOUT',
         kind: 'informational',
-        what: `project lock held for over ${String((retryCount * retryIntervalMs) / 1000)}s; proceeded without it`,
-        consequence: 'A concurrent session may have overwritten an index rewrite',
+        what: `project lock held for over ${String((retryCount * retryIntervalMs) / 1000)}s; ${failOpen ? 'proceeded without it' : 'skipped the operation'}`,
+        consequence: failOpen
+          ? 'A concurrent session may have overwritten an index rewrite'
+          : 'The operation will be retried by a later hook',
       };
       logError(error);
+      if (!failOpen) return undefined;
     }
 
-    // Execute function (with or without lock)
     return fn();
   } finally {
     // Release lock on both success and throw
@@ -176,11 +193,12 @@ export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
  * the shared lock directory. Session locks are leaves: nothing taken inside one acquires
  * a project lock, so the two can never deadlock against each other.
  */
-export function withSessionLock<T>(sessionId: string, fn: () => T): T {
+export function withSessionLock<T>(sessionId: string, fn: () => T): T | undefined {
   return withProjectLock(
     `sessions/${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
     fn,
     SESSION_LOCK_RETRY_COUNT,
-    SESSION_LOCK_RETRY_INTERVAL_MS
+    SESSION_LOCK_RETRY_INTERVAL_MS,
+    false
   );
 }

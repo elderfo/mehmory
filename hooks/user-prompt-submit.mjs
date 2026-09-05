@@ -3,7 +3,7 @@ import {
   runHook,
   scopePaths,
   staleSessionStartWarning
-} from "./chunk-NOJLHJTQ.mjs";
+} from "./chunk-EPG4KWT2.mjs";
 import {
   appendInboxEntries,
   isPaused,
@@ -13,7 +13,7 @@ import {
   rememberTopic,
   tokenize,
   topicCacheHit
-} from "./chunk-VNJFSDR4.mjs";
+} from "./chunk-CMF4LJVA.mjs";
 
 // src/hooks/user-prompt-submit.ts
 import { join } from "path";

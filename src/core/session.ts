@@ -164,11 +164,13 @@ export function updateSessionState(
   // Stop alongside a UserPromptSubmit, a SessionEnd racing a trailing Stop -- and an
   // unserialized read-modify-write lets the later writer discard the earlier one's field,
   // which can roll an advanced cursor backwards into a re-distill.
-  return withSessionLock(sessionId, () => {
-    const next = mutate(readSessionState(sessionId));
-    writeSessionState(next);
-    return next;
-  });
+  return (
+    withSessionLock(sessionId, () => {
+      const next = mutate(readSessionState(sessionId));
+      writeSessionState(next);
+      return next;
+    }) ?? readSessionState(sessionId)
+  );
 }
 
 /** Delete a session's state file (SessionEnd). No-op if it is already gone. */
@@ -242,6 +244,10 @@ export function sessionGeneration(sessionId: string): number {
  * @returns true when a marker was cleared, i.e. this really is a resume
  */
 export function resumeFinalizedSession(sessionId: string): boolean {
+  return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
+}
+
+function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
   const marker = finalizedMarkerPath(sessionId);
   if (!pathExists(marker)) return false;
 
@@ -267,21 +273,18 @@ export function resumeFinalizedSession(sessionId: string): boolean {
   // store gets into once an id has been resumed, and skipping the bump there would leave
   // the very case this exists to fix still broken. Seed the cursor only when there is no
   // live state to take it from; never overwrite one that is already running.
-  const next = Math.max(generation, readSessionState(sessionId).generation ?? 0) + 1;
-  if (pathExists(sessionStatePath(sessionId))) {
-    updateSessionState(sessionId, state => ({ ...state, generation: next }));
-  } else {
-    writeSessionState({
-      ...freshSessionState(sessionId),
-      ...(cursor ? { cursor } : {}),
-      generation: next,
-    });
-  }
+  const current = readSessionState(sessionId);
+  const next = Math.max(generation, current.generation ?? 0) + 1;
+  const nextState = pathExists(sessionStatePath(sessionId))
+    ? { ...current, generation: next }
+    : { ...freshSessionState(sessionId), ...(cursor ? { cursor } : {}), generation: next };
 
   try {
     remove(marker);
+    writeSessionState(nextState);
   } catch {
-    // Fail-open: leaving it costs a re-finalize, not data.
+    // Do not report a resume when the marker remains or the new state was not persisted.
+    return false;
   }
   return true;
 }

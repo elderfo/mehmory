@@ -10,7 +10,7 @@
 import { join, relative } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { appendRecord, listDir, mkdir, pathExists, readFile, stat } from './fs.js';
-import { withProjectLock } from './lock.js';
+import { withProjectLock, withSessionLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
@@ -505,7 +505,8 @@ export interface FinalizeSessionOptions {
  * spelling so existing `log.md` content still matches.
  */
 function sessionEndLogTag(sessionId: string, generation = 0): string {
-  return generation === 0 ? `(session ${sessionId})` : `(session ${sessionId}#${String(generation)})`;
+  if (generation === 0) return `(session ${sessionId})`;
+  return `(session ${JSON.stringify({ id: sessionId, generation })})`;
 }
 
 /**
@@ -545,6 +546,21 @@ export function finalizeSession(
   host: InboxHost,
   config: MehmoryConfig = loadConfig(),
   options: FinalizeSessionOptions = {}
+): FinalizeSessionResult {
+  return (
+    withSessionLock(sessionId, () =>
+      finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options)
+    ) ?? { capturedEntries: 0 }
+  );
+}
+
+function finalizeSessionUnlocked(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  project: string,
+  host: InboxHost,
+  config: MehmoryConfig,
+  options: FinalizeSessionOptions
 ): FinalizeSessionResult {
   if (isSessionFinalized(sessionId)) return { capturedEntries: 0 };
 

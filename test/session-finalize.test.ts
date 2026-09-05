@@ -12,7 +12,13 @@ import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
 import * as sessionModule from '../src/core/session.js';
-import { freshSessionState, sessionStatePath, writeSessionState } from '../src/core/session.js';
+import {
+  freshSessionState,
+  markSessionFinalized,
+  resumeFinalizedSession,
+  sessionStatePath,
+  writeSessionState,
+} from '../src/core/session.js';
 import { initStore } from '../src/core/store.js';
 
 /** Every file under the store, keyed by its path relative to `mehmoryHome()`, content
@@ -88,6 +94,21 @@ describe('finalizeSession', () => {
     const afterSecond = snapshotStore();
 
     expect(afterSecond).toEqual(afterFirst);
+  });
+
+  it('keeps resumed-session tags distinct from ids containing the generation separator', () => {
+    const first = writeTranscript([{ text: 'Use alpha one.' }]);
+    const firstResult = finalizeSession('alpha#1', first, key, 'claude-code');
+
+    markSessionFinalized('alpha', undefined, 0);
+    expect(resumeFinalizedSession('alpha')).toBe(true);
+
+    const resumed = writeTranscript([{ text: 'Use alpha two.' }]);
+    const resumedResult = finalizeSession('alpha', resumed, key, 'claude-code');
+
+    expect(firstResult.capturedEntries).toBe(1);
+    expect(resumedResult.capturedEntries).toBe(1);
+    expect(readFileSync(scopePaths(key).logFile, 'utf-8').match(/session-end/g)).toHaveLength(2);
   });
 
   it('does not double-log or double-commit when the completion marker write fails after the rest of the work already landed (seam defect)', () => {
