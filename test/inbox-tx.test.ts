@@ -51,8 +51,9 @@ let key: string;
 beforeEach(() => {
   const home = process.env.MEHMORY_HOME as string;
   mkdirSync(join(home, '.state'), { recursive: true });
-  inbox = join(home, 'inbox.md');
   key = 'github.com/acme/widget';
+  inbox = join(home, 'projects', key, 'inbox.md');
+  mkdirSync(join(home, 'projects', key), { recursive: true });
   writeFileSync(inbox, '# Inbox\n');
 });
 

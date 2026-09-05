@@ -12,7 +12,7 @@
  */
 
 import { join } from 'node:path';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { tokenize } from './match.js';
 import {
   ARCHIVED_SCORE_MULTIPLIER,
@@ -128,13 +128,14 @@ function markdownDocs(
   now: number
 ): Doc[] {
   const docs: Doc[] = [];
-  if (!pathExists(dir)) return docs;
+  if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return docs;
   for (const name of listDir(dir)) {
     if (!name.endsWith('.md')) continue;
     const filePath = join(dir, name);
     let body: string;
     let mtimeMs: number;
     try {
+      if (lstat(filePath)?.isSymbolicLink()) continue;
       const stats = stat(filePath);
       if (!stats?.isFile()) continue;
       mtimeMs = stats.mtime.getTime();
@@ -215,7 +216,7 @@ export function searchScope(
     }
   }
 
-  if (pathExists(files.logFile)) {
+  if (pathExists(files.logFile) && !lstat(files.logFile)?.isSymbolicLink()) {
     let logBody: string | undefined;
     try {
       if (stat(files.logFile)?.isFile()) logBody = readFile(files.logFile);

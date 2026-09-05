@@ -9,6 +9,7 @@
  */
 
 import { redact, type RedactOptions } from './redact.js';
+import { MAX_INJECTION_BUDGET_TOKENS } from './config.js';
 import {
   estimateTokens,
   INJECTION_IDENTITY_TOKENS,
@@ -88,7 +89,10 @@ export function buildInjection(
   const isNamed = parts.some(part => part.label === 'agent');
   const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
   const budget =
-    options.budgetTokens !== undefined && options.budgetTokens > 0
+    options.budgetTokens !== undefined &&
+    Number.isInteger(options.budgetTokens) &&
+    options.budgetTokens >= 1 &&
+    options.budgetTokens <= MAX_INJECTION_BUDGET_TOKENS
       ? options.budgetTokens
       : INJECTION_BUDGET_TOKENS;
   const scale = budget / nominalTotal;

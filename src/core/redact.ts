@@ -86,22 +86,32 @@ const userPatternCache = new Map<string, RegExp[]>();
 
 /** Compile `/source/flags` strings to regexes, skipping (and logging) malformed ones. */
 function compileUserPatterns(patterns: readonly string[]): RegExp[] {
-  const cacheKey = JSON.stringify(patterns);
+  const boundedPatterns = patterns.slice(0, 64).filter(raw => raw.length <= 512);
+  const cacheKey = JSON.stringify(boundedPatterns);
   const cached = userPatternCache.get(cacheKey);
   if (cached) return cached;
 
   const compiled: RegExp[] = [];
-  for (const raw of patterns) {
+  for (const raw of boundedPatterns) {
     const parsed = /^\/(.*)\/([a-z]*)$/s.exec(raw);
     try {
       if (!parsed?.[1]) throw new Error('not in /source/flags form');
+      if (
+        parsed[1].length > 256 ||
+        (parsed[1].match(/[+*]|\\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 ||
+        /\\[1-9]|\([^()]*[+*{][^)]*\)[+*{]/.test(parsed[1]) ||
+        /\([^()]*\|[^()]*\)[+*]/.test(parsed[1]) ||
+        /\(\?<?[=!]/.test(parsed[1])
+      ) {
+        throw new Error('pattern is too complex or too long');
+      }
       const flags = parsed[2] ?? '';
       compiled.push(new RegExp(parsed[1], flags.includes('g') ? flags : flags + 'g'));
     } catch (err) {
       logError({
         code: 'E_CONFIG_PARSE',
         kind: 'actionable',
-        what: `secrets.patterns entry ${JSON.stringify(raw)} is not a usable regex (${
+        what: `secrets.patterns entry ${String(patterns.indexOf(raw))} is not a usable regex (${
           err instanceof Error ? err.message : String(err)
         })`,
         consequence: 'That pattern is skipped; the built-in secret patterns still apply',
@@ -190,8 +200,16 @@ export function redact(text: string, options: RedactOptions = {}): string {
   }
 
   try {
-    const extra = options.patterns ? compileUserPatterns(options.patterns) : [];
-    const whitelist = (options.whitelist ?? []).filter(entry => entry !== '');
+    const candidate = options as unknown as Record<string, unknown>;
+    const patterns = Array.isArray(candidate.patterns)
+      ? candidate.patterns.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    const whitelist = Array.isArray(candidate.whitelist)
+      ? candidate.whitelist.filter(
+          (entry): entry is string => typeof entry === 'string' && entry !== ''
+        )
+      : [];
+    const extra = compileUserPatterns(patterns);
 
     // Patterns run first; the whitelist can only spare a match it fully contains.
     // ponytail: whitelist ranges are recomputed per pattern — O(patterns × entries)

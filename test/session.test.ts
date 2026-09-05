@@ -5,6 +5,7 @@ import {
   advanceSessionCursor,
   deleteSessionState,
   freshSessionState,
+  finalizedMarkerPath,
   incrementStopCount,
   isPaused,
   isSessionFinalized,
@@ -199,7 +200,7 @@ describe('session state', () => {
       markSessionFinalized('paired');
       writeSessionState(freshSessionState('paired'));
 
-      const marker = statePath('paired.finalized.json');
+      const marker = finalizedMarkerPath('paired');
       const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
       utimesSync(marker, old, old);
 
@@ -215,7 +216,7 @@ describe('session state', () => {
       markSessionFinalized('mangled');
       atomicWrite(sessionStatePath('mangled'), '{ not json');
 
-      const marker = statePath('mangled.finalized.json');
+      const marker = finalizedMarkerPath('mangled');
       const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
       utimesSync(marker, old, old);
 
@@ -226,7 +227,7 @@ describe('session state', () => {
     it('removes a marker once its state file is gone', () => {
       markSessionFinalized('orphaned-marker');
 
-      const marker = statePath('orphaned-marker.finalized.json');
+      const marker = finalizedMarkerPath('orphaned-marker');
       const old = Date.now() / 1000 - 30 * 24 * 60 * 60;
       utimesSync(marker, old, old);
 
@@ -278,7 +279,7 @@ describe('session state', () => {
     });
 
     it('clears an unreadable marker rather than leaving the id unfinalizable', () => {
-      atomicWrite(statePath('mangled-marker.finalized.json'), '{ not json');
+      atomicWrite(finalizedMarkerPath('mangled-marker'), '{ not json');
       expect(resumeFinalizedSession('mangled-marker')).toBe(true);
       expect(isSessionFinalized('mangled-marker')).toBe(false);
     });

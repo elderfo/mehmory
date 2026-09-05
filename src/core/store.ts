@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mehmoryHome } from './home.js';
-import { logError, type MehmoryError } from './errors.js';
+import { logError, shellQuote, type MehmoryError } from './errors.js';
 import { mkdir, pathExists, readFile, atomicWrite } from './fs.js';
 
 /** Result type for store initialization (A11: never throws across boundary). */
@@ -97,7 +97,7 @@ export function initStore(): InitStoreResult {
           consequence: 'Store is initialized but git repository was not created',
           // The resolved home, not a literal `~/.mehmory`: the documented
           // MEHMORY_HOME override would otherwise make this command wrong.
-          fix: `git -C ${home} init`,
+          fix: `git -C ${shellQuote(home)} init`,
         };
         logError(error);
         return { ok: false, error };

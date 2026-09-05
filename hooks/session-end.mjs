@@ -1,8 +1,8 @@
 import {
   finalizeSession,
   runHook
-} from "./chunk-VH3KEXT5.mjs";
-import "./chunk-Y2I6CIDU.mjs";
+} from "./chunk-VZM22H3S.mjs";
+import "./chunk-HNC6COVE.mjs";
 
 // src/hooks/session-end.ts
 runHook("SessionEnd", (input, project, host, config) => {

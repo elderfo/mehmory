@@ -1,5 +1,5 @@
 import {
-  applyDistillJob,
+  applyDistillJobResult,
   buildScopeInjection,
   claimJob,
   completeJob,
@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-VH3KEXT5.mjs";
+} from "./chunk-VZM22H3S.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -21,6 +21,7 @@ import {
   listDir,
   loadConfig,
   logError,
+  lstat,
   mehmoryHome,
   mkdir,
   pageAgeDays,
@@ -30,12 +31,14 @@ import {
   readFile,
   readFrontmatter,
   readInboxEntries,
+  realpath,
   rename,
   resumeFinalizedSession,
+  shellQuote,
   stat,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-Y2I6CIDU.mjs";
+} from "./chunk-HNC6COVE.mjs";
 
 // src/core/store.ts
 import { join } from "path";
@@ -78,7 +81,7 @@ function initStore() {
           consequence: "Store is initialized but git repository was not created",
           // The resolved home, not a literal `~/.mehmory`: the documented
           // MEHMORY_HOME override would otherwise make this command wrong.
-          fix: `git -C ${home} init`
+          fix: `git -C ${shellQuote(home)} init`
         };
         logError(error);
         return { ok: false, error };
@@ -278,7 +281,7 @@ Every commit has a message summarizing the operation and entry count. The full g
 `;
 
 // src/core/decay.ts
-import { join as join2 } from "path";
+import { join as join2, relative } from "path";
 function lineRefersTo(line, pageFile) {
   return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, "");
 }
@@ -300,7 +303,7 @@ function decayPass(scopeDir, options = {}) {
       for (const name of listDir(pagesDir)) {
         if (!name.endsWith(".md")) continue;
         const pagePath = join2(pagesDir, name);
-        if (!stat(pagePath)?.isFile()) continue;
+        if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
         const decayClass = fields["decay"] ?? "default";
@@ -312,7 +315,14 @@ function decayPass(scopeDir, options = {}) {
         }
         if (age > purgeDays) {
           const archiveDir = join2(scopeDir, ARCHIVE_DIR);
+          if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
+            throw new Error("archive directory must not be a symlink");
+          }
           mkdir(archiveDir);
+          const suffix = relative(realpath(scopeDir), realpath(archiveDir));
+          if (suffix !== "" && suffix !== ".." && suffix.startsWith("..")) {
+            throw new Error("archive directory must remain inside the scope");
+          }
           rename(pagePath, join2(archiveDir, name));
           archived.push(name);
         } else if (age > archiveDays) {
@@ -380,8 +390,17 @@ function maintenance(sessionId, project, host, config) {
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob("distill-final");
     if (!job) break;
-    applyDistillJob(job.data, config);
-    completeJob(job.id);
+    try {
+      const result = applyDistillJobResult(job.data, config);
+      if (result.failed === 0) completeJob(job.id, job.claimFile);
+    } catch (err) {
+      logError({
+        code: "E_QUEUE_CLAIM",
+        kind: "informational",
+        what: err instanceof Error ? err.message : String(err),
+        consequence: "The queued job remains for stale recovery"
+      });
+    }
   }
   sweepSessionState();
   return finalized;

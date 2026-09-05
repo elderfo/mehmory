@@ -231,6 +231,12 @@ export function serializeInboxEntry(entry: InboxEntry): string {
     .replace(/\n/g, '\\n')
     .replace(/--(!?)>/g, '--$1\\>')
     .trim();
+  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
+    throw new Error('inbox entry source contains unsafe metadata characters');
+  }
+  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
+    throw new Error('inbox entry metadata is malformed');
+  }
   const host = entry.host ?? DEFAULT_INBOX_HOST;
   // Omitted entirely when there is no name — no sentinel to teach every reader about.
   // Revalidated here as well as on parse (KTD5): this is the write boundary, and an

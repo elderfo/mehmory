@@ -11,8 +11,8 @@
  * editorially by `integrate` (run-1 amendment 10, closed by spec gap 19).
  */
 
-import { join } from 'node:path';
-import { atomicWrite, listDir, mkdir, pathExists, readFile, rename, stat } from './fs.js';
+import { join, relative } from 'node:path';
+import { atomicWrite, listDir, lstat, mkdir, pathExists, readFile, realpath, rename, stat } from './fs.js';
 import { loadConfig } from './config.js';
 import { failOpen } from './errors.js';
 import {
@@ -85,7 +85,7 @@ export function decayPass(
       for (const name of listDir(pagesDir)) {
         if (!name.endsWith('.md')) continue;
         const pagePath = join(pagesDir, name);
-        if (!stat(pagePath)?.isFile()) continue;
+        if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
 
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
@@ -101,7 +101,14 @@ export function decayPass(
 
         if (age > purgeDays) {
           const archiveDir = join(scopeDir, ARCHIVE_DIR);
+          if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
+            throw new Error('archive directory must not be a symlink');
+          }
           mkdir(archiveDir);
+          const suffix = relative(realpath(scopeDir), realpath(archiveDir));
+          if (suffix !== '' && suffix !== '..' && suffix.startsWith('..')) {
+            throw new Error('archive directory must remain inside the scope');
+          }
           rename(pagePath, join(archiveDir, name));
           archived.push(name);
         } else if (age > archiveDays) {

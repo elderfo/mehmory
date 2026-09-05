@@ -10,11 +10,25 @@
  * A11 still binds: nothing here exits or prompts. It returns plans and outcomes.
  */
 
-import { join, relative } from 'node:path';
-import { atomicWrite, listDir, mkdir, pathExists, readFile, remove, removeDir, stat } from './fs.js';
+import { basename, join, relative, resolve, sep } from 'node:path';
+import {
+  atomicWrite,
+  listDir,
+  lstat,
+  readFileFromNoFollow,
+  realpath,
+  mkdir,
+  pathExists,
+  readFile,
+  remove,
+  removeDir,
+  stat,
+} from './fs.js';
 import { mehmoryHome } from './home.js';
-import { commitPaths } from './git.js';
+import { commitPaths, ensureGitBaseline } from './git.js';
+import { withProjectLock } from './lock.js';
 import { clearInboxEntries, readInboxEntries } from './inbox.js';
+import { parseInboxEntries } from '../schema/format.js';
 import { listProjects } from './scopes.js';
 import type { MehmoryError } from './errors.js';
 
@@ -50,6 +64,8 @@ export interface PageCandidates {
 
 /** Where a page with a given slug lives. */
 export function findPages(slug: string): readonly { scope: string; path: string }[] {
+  if (slug !== basename(slug) || slug === '.' || slug === '..' || slug.includes('\u0000')) return [];
+
   const home = mehmoryHome();
   const found: { scope: string; path: string }[] = [];
   const candidates: { scope: string; dir: string }[] = [
@@ -144,7 +160,7 @@ export function planAll(): PurgePlan {
     form: 'all',
     label: 'all memory in ' + home,
     token: 'DELETE ALL',
-    paths: [join(home, 'global'), join(home, 'projects')].filter(p => pathExists(p)),
+    paths: [join(home, 'global'), join(home, 'projects'), join(home, 'agents')].filter(p => pathExists(p)),
     inboxEdits: [],
   };
 }
@@ -172,10 +188,17 @@ export function historyNotice(plan: PurgePlan): readonly string[] {
   // A `--session` purge removes lines from inboxes rather than whole paths, so the
   // recipe names the inboxes — a recipe pointing at a file the purge never touched
   // would be worse than none.
-  const paths = [...plan.paths, ...plan.inboxEdits.map(edit => edit.inboxFile)]
+  if (plan.form === 'session') {
+    return [
+      'note: purge deletes selected inbox entries from the working tree and commits the removal.',
+      '      mehmory never rewrites your git history. Selective line history removal requires',
+      '      a separate manual rewrite procedure; the whole inbox must not be removed.',
+    ];
+  }
+  const paths = plan.paths
     .map(p => relative(home, p))
     .filter(p => p !== '');
-  const recipe = `git -C ${home} filter-repo ${paths.map(p => `--path ${p}`).join(' ')} --invert-paths`;
+  const recipe = `git -C ${shellQuote(home)} filter-repo ${paths.map(p => `--path ${shellQuote(p)}`).join(' ')} --invert-paths`;
   return [
     'note: purge deletes from the working tree and commits the removal. mehmory never',
     '      rewrites your git history, so the content remains reachable there. To remove',
@@ -190,13 +213,44 @@ export type PurgeOutcome =
   | { readonly ok: true; readonly removed: number; readonly entries: number }
   | { readonly ok: false; readonly error: MehmoryError; readonly deleted: boolean };
 
+/** Quote one value for a POSIX shell command shown to a user. */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isSafeStoreTarget(path: string, home: string): boolean {
+  try {
+    if (lstat(path)?.isSymbolicLink()) return false;
+    const suffix = relative(realpath(home), realpath(path));
+    return suffix === '' || (suffix !== '..' && !suffix.startsWith('..' + sep));
+  } catch {
+    return false;
+  }
+}
+
+function assertNoSymlinkComponents(path: string): void {
+  let current = resolve(path);
+  for (;;) {
+    try {
+      if (lstat(current)?.isSymbolicLink()) throw new Error(`refusing symlink export component ${current}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('refusing symlink')) throw err;
+    }
+    const parent = resolve(current, '..');
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
 function copyTree(from: string, to: string): void {
+  assertNoSymlinkComponents(to);
+  if (lstat(from)?.isSymbolicLink()) throw new Error(`refusing symlink export source ${from}`);
   if (stat(from)?.isDirectory() === true) {
     mkdir(to);
     for (const name of listDir(from)) copyTree(join(from, name), join(to, name));
     return;
   }
-  atomicWrite(to, readFile(from));
+  atomicWrite(to, readFileFromNoFollow(from, 0));
 }
 
 /**
@@ -207,16 +261,22 @@ function copyTree(from: string, to: string): void {
  * destroys the only copy.
  */
 function exportTargets(plan: PurgePlan, dest: string): void {
+  assertNoSymlinkComponents(dest);
   const home = mehmoryHome();
   for (const path of plan.paths) {
     copyTree(path, join(dest, relative(home, path)));
   }
   for (const edit of plan.inboxEdits) {
+    const output = join(dest, relative(home, edit.inboxFile));
+    assertNoSymlinkComponents(output);
     const doomed = new Set(edit.ids);
-    const lines = readInboxEntries(edit.inboxFile)
-      .filter(entry => doomed.has(entry.id))
-      .map(entry => entry.text);
-    atomicWrite(join(dest, relative(home, edit.inboxFile)), lines.join('\n') + '\n');
+    const lines = readFile(edit.inboxFile)
+      .split('\n')
+      .filter(line => parseInboxEntries(line).some(entry => doomed.has(entry.id)));
+    atomicWrite(
+      output,
+      lines.length > 0 ? lines.join('\n') + '\n' : ''
+    );
   }
 }
 
@@ -247,9 +307,50 @@ function pruneEmptyParents(dir: string, stop: string): void {
  * dirty store with a runnable remedy rather than as a rollback that cannot happen.
  */
 export function executePurge(plan: PurgePlan, exportTo: string | undefined): PurgeOutcome {
+  return (
+    withProjectLock('__store__', () => executePurgeUnlocked(plan, exportTo), 50, 100, false) ?? {
+      ok: false,
+      deleted: false,
+      error: {
+        code: 'E_LOCK_TIMEOUT',
+        kind: 'informational',
+        what: 'the memory store is busy with another write',
+        consequence: 'Nothing was deleted; retry the purge',
+      },
+    }
+  );
+}
+
+function executePurgeUnlocked(plan: PurgePlan, exportTo: string | undefined): PurgeOutcome {
   const home = mehmoryHome();
 
   if (exportTo !== undefined) {
+    const destination = resolve(exportTo);
+    const overlapTargets = [...plan.paths, ...plan.inboxEdits.map(edit => edit.inboxFile)];
+    const overlaps = overlapTargets.some(path => {
+      const target = resolve(path);
+      const destinationInsideTarget = relative(target, destination);
+      const targetInsideDestination = relative(destination, target);
+      return (
+        destinationInsideTarget === '' ||
+        !destinationInsideTarget.startsWith('..') ||
+        targetInsideDestination === '' ||
+        !targetInsideDestination.startsWith('..')
+      );
+    });
+    if (overlaps) {
+      return {
+        ok: false,
+        deleted: false,
+        error: {
+          code: 'E_PURGE_FAILED',
+          kind: 'actionable',
+          what: `export destination ${exportTo} overlaps a purge target`,
+          consequence: 'Nothing was deleted',
+          fix: 'choose an export directory outside the memory store',
+        },
+      };
+    }
     try {
       exportTargets(plan, exportTo);
     } catch (err) {
@@ -261,16 +362,37 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
           kind: 'actionable',
           what: `export to ${exportTo} failed: ${err instanceof Error ? err.message : String(err)}`,
           consequence: 'Nothing was deleted',
-          fix: `mkdir -p ${exportTo}`,
+          fix: `mkdir -p ${shellQuote(exportTo)}`,
         },
       };
     }
+  }
+
+  const commitTargets = [
+    ...plan.paths.map(path => `:(top,literal)${relative(home, path)}`),
+    ...plan.inboxEdits.map(edit => `:(top,literal)${relative(home, edit.inboxFile)}`),
+  ].filter(path => path !== '');
+
+  const baseline = ensureGitBaseline(home);
+  if (!baseline.ok) {
+    return {
+      ok: false,
+      deleted: false,
+      error: {
+        code: 'E_PURGE_FAILED',
+        kind: 'actionable',
+        what: `the memory store has no usable git baseline at ${home}`,
+        consequence: 'Nothing was deleted',
+        fix: `git -C ${shellQuote(home)} status`,
+      },
+    };
   }
 
   let removed = 0;
   try {
     for (const path of plan.paths) {
       if (!pathExists(path)) continue;
+      if (!isSafeStoreTarget(path, home)) throw new Error(`refusing unsafe purge target ${path}`);
       if (stat(path)?.isDirectory() === true) {
         removeDir(path);
         pruneEmptyParents(path, join(home, 'projects'));
@@ -288,19 +410,37 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
         kind: 'actionable',
         what: err instanceof Error ? err.message : String(err),
         consequence: `${String(removed)} of ${String(plan.paths.length)} targets were deleted before the failure`,
-        fix: `git -C ${home} status`,
+        fix: `git -C ${shellQuote(home)} status`,
       },
     };
   }
 
   let entries = 0;
   for (const edit of plan.inboxEdits) {
-    entries += clearInboxEntries(edit.inboxFile, edit.key, edit.ids).removed;
+    const cleared = clearInboxEntries(edit.inboxFile, edit.key, edit.ids);
+    if (cleared === undefined) {
+      return {
+        ok: false,
+        deleted: removed > 0 || entries > 0,
+        error: {
+          code: 'E_LOCK_TIMEOUT',
+          kind: 'informational',
+          what: `could not lock inbox ${edit.inboxFile}`,
+          consequence: 'The selected inbox entries remain; retry the purge',
+        },
+      };
+    }
+    entries += cleared.removed;
   }
 
   if (removed === 0 && entries === 0) return { ok: true, removed, entries };
 
-  const committed = commitPaths(['.'], `purge: ${plan.label}`, home);
+  const committed = commitPaths(
+    [...new Set(commitTargets)],
+    `purge: ${plan.label}`,
+    home,
+    true
+  );
   if (!committed.ok) {
     // The files are already gone; there is no rollback. Say exactly that, and give the
     // command that finishes the job (criterion 11).
@@ -312,7 +452,7 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
         kind: 'actionable',
         what: `the deletion could not be committed to ${home}`,
         consequence: 'The content is deleted but the store is left dirty',
-        fix: `git -C ${home} commit -a -m "purge"`,
+        fix: `git -C ${shellQuote(home)} commit -a -m purge`,
       },
     };
   }

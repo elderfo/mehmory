@@ -7,9 +7,10 @@
  * in this module so it is testable in-process and reusable by run 3's CLI.
  */
 
-import { join, relative } from 'node:path';
-import { mehmoryHome } from './home.js';
-import { appendRecord, listDir, mkdir, pathExists, readFile, stat } from './fs.js';
+import { homedir } from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { codexHome, mehmoryHome } from './home.js';
+import { appendRecord, listDir, lstat, mkdir, pathExists, readFile, realpath, stat } from './fs.js';
 import { withProjectLock, withSessionLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
@@ -143,7 +144,17 @@ export interface ScopeInjection {
 }
 
 function readIfPresent(path: string): string {
-  return pathExists(path) ? readFile(path).trim() : '';
+  try {
+    const candidate = resolve(path);
+    const parent = realpath(dirname(candidate));
+    const home = realpath(resolve(mehmoryHome()));
+    const suffix = relative(home, parent);
+    if (suffix !== '' && (suffix === '..' || suffix.startsWith(`..${sep}`))) return '';
+    if (lstat(candidate)?.isSymbolicLink()) return '';
+    return pathExists(candidate) ? readFile(candidate).trim() : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -295,13 +306,30 @@ export function distillDelta(
   ) ?? [];
 }
 
+function isApprovedTranscript(path: string, host: InboxHost): boolean {
+  const candidate = resolve(path);
+  const roots = [
+    host === 'codex' ? join(codexHome(), 'sessions') : join(homedir(), '.claude', 'projects'),
+    join(mehmoryHome(), '.state', 'transcripts'),
+  ];
+  try {
+    if (lstat(candidate)?.isSymbolicLink() || stat(candidate)?.isFile() !== true) return false;
+    return roots.some(root => {
+      const suffix = relative(realpath(root), realpath(candidate));
+      return suffix !== '..' && !suffix.startsWith(`..${sep}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
 function distillDeltaUnlocked(
   sessionId: string,
   transcriptPath: string | undefined,
   host: InboxHost,
   config: MehmoryConfig
 ): InboxEntry[] {
-  if (!transcriptPath) return [];
+  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) return [];
 
   return failOpen(
     () => {
@@ -403,18 +431,17 @@ export function distillJobPayload(
   return { key, entries };
 }
 
-/**
- * Apply a claimed `distill-final` job: append its entries to the scope's inbox.
- *
- * SessionEnd distills but does not append — the transcript may be gone by the time
- * anything runs again, so the work is done up front and the *write* is what defers.
- *
- * @returns number of entries appended (0 for a malformed payload)
- */
-export function applyDistillJob(
+/** Result of applying a claimed deferred distill job. */
+export interface DistillJobResult {
+  readonly appended: number;
+  readonly failed: number;
+}
+
+/** Apply a claimed deferred distill job and preserve write failures for retry. */
+export function applyDistillJobResult(
   data: Record<string, unknown>,
   config: MehmoryConfig = loadConfig()
-): number {
+): DistillJobResult {
   const key = data['key'];
   const raw = data['entries'];
   // `host` and `agent` are already revalidated below because the queue file on disk is a
@@ -422,17 +449,26 @@ export function applyDistillJob(
   // `scopePaths(key).inboxFile` -- and a deferred job now carries a *foreign* session's
   // persisted key rather than the running session's freshly resolved one, so it gets the
   // same treatment.
-  if (typeof key !== 'string' || !isContainedProjectKey(key) || !Array.isArray(raw)) return 0;
+  if (typeof key !== 'string' || !isContainedProjectKey(key) || !Array.isArray(raw)) {
+    return { appended: 0, failed: 1 };
+  }
 
   const entries: InboxEntry[] = [];
+  let malformed = 0;
   for (const item of raw) {
-    if (typeof item !== 'object' || item === null) continue;
+    if (typeof item !== 'object' || item === null) {
+      malformed++;
+      continue;
+    }
     const e = item as Record<string, unknown>;
     if (
       typeof e['id'] === 'string' &&
+      /^[0-9a-f]{16}$/.test(e['id']) &&
       typeof e['text'] === 'string' &&
       typeof e['src'] === 'string' &&
-      typeof e['ts'] === 'string'
+      /^[A-Za-z0-9._:-]+$/.test(e['src']) &&
+      typeof e['ts'] === 'string' &&
+      !Number.isNaN(Date.parse(e['ts']))
     ) {
       // The queued payload is JSON round-tripped, so `host` survives as a plain string:
       // narrow it back rather than dropping it, or a Codex session's deferred entries
@@ -457,10 +493,21 @@ export function applyDistillJob(
         ...(agent !== undefined ? { agent } : {}),
         ts: e['ts'],
       });
+    } else {
+      malformed++;
     }
   }
-  if (entries.length === 0) return 0;
-  return appendInboxEntries(scopePaths(key).inboxFile, entries, key).appended;
+  if (malformed > 0 || entries.length === 0) return { appended: 0, failed: 1 };
+  const result = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
+  return { appended: result.appended, failed: result.failed ?? 0 };
+}
+
+/** Compatibility result used by library callers that only need the append count. */
+export function applyDistillJob(
+  data: Record<string, unknown>,
+  config: MehmoryConfig = loadConfig()
+): number {
+  return applyDistillJobResult(data, config).appended;
 }
 
 /**
@@ -613,7 +660,8 @@ function finalizeSessionUnlocked(
   if (!alreadyLogged) {
     const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
     if (entries.length > 0) {
-      enqueueJob(distillJobPayload(project, entries), 'distill-final');
+      const jobId = enqueueJob(distillJobPayload(project, entries), 'distill-final');
+      if (jobId === null) return { capturedEntries: 0, deferred: true };
     }
 
     appendLogEntry(

@@ -47,8 +47,9 @@ describe('durable queue (done-when 9)', () => {
       expect(claimed.data.task).toBe('work');
 
       // Job should be in claimed/ directory
-      const claimedPath = join(queueDir, 'claimed', `${jobId}.${String(process.pid)}.json`);
-      expect(pathExists(claimedPath)).toBe(true);
+      const claimedFiles = listDir(join(queueDir, 'claimed'));
+      expect(claimedFiles).toContain(claimed.claimFile);
+      expect(claimed.claimFile).toMatch(new RegExp(`^${jobId}\\.${String(process.pid)}\\.[0-9a-f]{32}\\.json$`));
     }
   });
 
@@ -140,7 +141,11 @@ if (claimed) {
               if (!winner) throw new Error('No winner');
               expect(winner.id).toBe(jobId);
               expect(pathExists(join(queueDir, `${jobId}.json`))).toBe(false);
-              expect(pathExists(join(queueDir, 'claimed', `${jobId}.${String(winner.pid)}.json`))).toBe(true);
+              expect(
+                listDir(join(queueDir, 'claimed')).some(file =>
+                  new RegExp(`^${jobId}\\.${String(winner.pid)}\\.[0-9a-f]{32}\\.json$`).test(file)
+                )
+              ).toBe(true);
               resolve();
             } catch (err) {
               reject(err instanceof Error ? err : new Error(String(err)));
@@ -159,20 +164,9 @@ if (claimed) {
     const queueDir = join(statePath('queue'));
     mkdir(queueDir);
 
-    const jobId = enqueueJob({ task: 'will-fail' });
+    const jobId = enqueueJob({ task: 'will-fail', _attempts: 3 });
     if (!jobId) throw new Error('Failed to enqueue');
 
-    // Simulate multiple failed claims by creating fake claim records
-    const claimedDir = join(queueDir, 'claimed');
-    mkdir(claimedDir);
-
-    // Create 3 claim records for this job
-    for (let i = 0; i < 3; i++) {
-      const claimPath = join(claimedDir, `${jobId}.${String(1000 + i)}.json`);
-      writeFileSync(claimPath, JSON.stringify({ attempt: i }));
-    }
-
-    // Next claimJob should move the job to failed/
     claimJob();
 
     const failedPath = join(queueDir, 'failed', `${jobId}.json`);

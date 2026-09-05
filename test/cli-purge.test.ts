@@ -72,7 +72,7 @@ describe('mehmory purge', () => {
 
     expect(run.status).toBe(4);
     expect(run.stdout).toContain('purge    all memory in ' + home());
-    expect(run.stderr).toContain("printf '%s\\n' 'DELETE ALL' | mehmory purge --all");
+    expect(run.stderr).toContain("printf '%s\\n' 'DELETE ALL' | mehmory 'purge' '--all'");
     expect(treeDigest(home())).toBe(before);
   });
 
@@ -92,7 +92,7 @@ describe('mehmory purge', () => {
     const run = runCliTyped(['purge', '--all'], 'DELETE ALL');
     expect(run.stdout).toContain('never');
     expect(run.stdout).toContain('rewrites your git history');
-    expect(run.stdout).toContain(`git -C ${home()} filter-repo --path global --path projects --invert-paths`);
+    expect(run.stdout).toContain(`git -C '${home()}' filter-repo --path 'global' --path 'projects' --invert-paths`);
   });
 
   it('pins the project token to the resolved key, not the substring typed', () => {
@@ -215,7 +215,7 @@ describe('mehmory purge', () => {
     expect(existsSync(join(home(), 'global', 'identity.md'))).toBe(false);
     expect(run.stderr).toContain('MEHMORY E_PURGE_FAILED');
     expect(run.stderr).toContain('The content is deleted but the store is left dirty');
-    expect(run.stderr).toContain(`Fix: git -C ${home()} commit -a -m "purge"`);
+    expect(run.stderr).toContain(`Fix: git -C '${home()}' commit -a -m purge`);
   });
 
   // ─── usage and fail-open ───

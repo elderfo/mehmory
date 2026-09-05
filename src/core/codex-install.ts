@@ -18,12 +18,13 @@
  * out the tools that own the rest of it.
  */
 
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWrite, listDir, pathExists, readFile, removeDir } from './fs.js';
+import { atomicWrite, listDir, lstat, pathExists, readFile, remove, removeDir } from './fs.js';
 import { codexHome } from './home.js';
+import { withProjectLock } from './lock.js';
 import { HOOK_EVENTS, type HookConfigKey } from './environment.js';
-import { failOpen, type MehmoryError } from './errors.js';
+import { failOpen, shellQuote, type MehmoryError } from './errors.js';
 import type { InboxHost } from '../schema/format.js';
 
 /**
@@ -144,12 +145,57 @@ export type CodexResult =
  * the six skills into `codexSkillsDir()` — the doctor check `codex.skills` (`E_CODEX_SKILLS_MISSING`)
  * cannot pass without the latter.
  */
+interface FileSnapshot {
+  readonly path: string;
+  readonly contents: string | undefined;
+}
+
+function snapshotFile(path: string): FileSnapshot {
+  return { path, contents: pathExists(path) ? readFile(path) : undefined };
+}
+
+function restoreSnapshot(snapshot: FileSnapshot): void {
+  if (snapshot.contents === undefined) {
+    if (pathExists(snapshot.path)) remove(snapshot.path);
+  } else {
+    atomicWrite(snapshot.path, snapshot.contents);
+  }
+}
+
 export function installCodex(host: InboxHost): CodexResult {
+  return (
+    withProjectLock('__codex__', () => installCodexUnlocked(host), 50, 100, false) ?? {
+      ok: false,
+      error: {
+        code: 'E_CODEX_INSTALL',
+        kind: 'actionable',
+        what: 'another Codex installation is in progress',
+        consequence: 'Codex configuration was not changed',
+        fix: 'retry the install after the other process finishes',
+      },
+    }
+  );
+}
+
+function installCodexUnlocked(host: InboxHost): CodexResult {
+  let snapshots: readonly FileSnapshot[];
+  try {
+    snapshots = [snapshotFile(codexHooksFile()), snapshotFile(codexConfigFile())];
+  } catch (err) {
+    return { ok: false, error: writeFailed(codexHome(), err) };
+  }
   const wired = editCodex(doc => withMehmoryHooks(doc, host), true);
   if (!wired.ok) return wired;
 
   const skills = writeCodexSkills();
-  if (!skills.ok) return skills;
+  if (!skills.ok) {
+    try {
+      for (const snapshot of snapshots) restoreSnapshot(snapshot);
+    } catch {
+      // The original error remains actionable and the per-file backups remain available.
+    }
+    return skills;
+  }
 
   return {
     ok: true,
@@ -166,11 +212,39 @@ export function installCodex(host: InboxHost): CodexResult {
  * entries, the feature flag, and any foreign `skills/` directory alone.
  */
 export function uninstallCodex(): CodexResult {
+  return (
+    withProjectLock('__codex__', () => uninstallCodexUnlocked(), 50, 100, false) ?? {
+      ok: false,
+      error: {
+        code: 'E_CODEX_INSTALL',
+        kind: 'actionable',
+        what: 'another Codex installation is in progress',
+        consequence: 'Codex configuration was not changed',
+        fix: 'retry the uninstall after the other process finishes',
+      },
+    }
+  );
+}
+
+function uninstallCodexUnlocked(): CodexResult {
+  let snapshots: readonly FileSnapshot[];
+  try {
+    snapshots = [snapshotFile(codexHooksFile()), snapshotFile(codexConfigFile())];
+  } catch (err) {
+    return { ok: false, error: writeFailed(codexHome(), err) };
+  }
   const wired = editCodex(withoutMehmoryHooks, false);
   if (!wired.ok) return wired;
 
   const removed = removeCodexSkills();
-  if (!removed.ok) return removed;
+  if (!removed.ok) {
+    try {
+      for (const snapshot of snapshots) restoreSnapshot(snapshot);
+    } catch {
+      // Preserve the removal error; the backups remain available.
+    }
+    return removed;
+  }
 
   return {
     ok: true,
@@ -203,6 +277,20 @@ type SkillResult = SkillWriteResult | { readonly ok: false; readonly error: Mehm
  * stale exactly when a `pnpm build`/npm upgrade replaces it. Re-running only rewrites a
  * skill whose body actually changed, so a plain re-install reports nothing changed.
  */
+function assertNoSymlinkComponents(path: string): void {
+  let current = path;
+  for (;;) {
+    try {
+      if (lstat(current)?.isSymbolicLink()) throw new Error(`refusing symlink component ${current}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('refusing symlink')) throw err;
+    }
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
 function writeCodexSkills(): SkillResult {
   const sourceDir = codexSkillSourceDir();
   if (!pathExists(sourceDir)) {
@@ -221,19 +309,35 @@ function writeCodexSkills(): SkillResult {
   const skillNames = listDir(sourceDir).filter(name => pathExists(join(sourceDir, name, 'SKILL.md')));
   const changed: string[] = [];
   const names: string[] = [];
+  const originals = new Map<string, string | undefined>();
 
   try {
-    for (const skillName of skillNames) {
-      const body = readFile(join(sourceDir, skillName, 'SKILL.md'));
+    assertNoSymlinkComponents(codexSkillsDir());
+    const sources = skillNames.map(skillName => ({
+      skillName,
+      body: readFile(join(sourceDir, skillName, 'SKILL.md')),
+    }));
+    for (const { skillName, body } of sources) {
       const dirName = codexSkillDirName(skillName);
       const target = join(codexSkillsDir(), dirName, 'SKILL.md');
-      if (!pathExists(target) || readFile(target) !== body) {
+      assertNoSymlinkComponents(target);
+      const previous = pathExists(target) ? readFile(target) : undefined;
+      if (previous !== body) {
+        originals.set(target, previous);
         atomicWrite(target, body);
         changed.push(target);
       }
       names.push(dirName);
     }
   } catch (err) {
+    for (const [target, previous] of originals) {
+      try {
+        if (previous === undefined) remove(target);
+        else atomicWrite(target, previous);
+      } catch {
+        // Preserve the original install error; the backup is still available.
+      }
+    }
     return { ok: false, error: writeFailed(codexSkillsDir(), err) };
   }
 
@@ -278,7 +382,21 @@ function editCodex(
   const existing = readJsonObject(hooksFile);
   if (!existing.ok) return existing;
 
-  const rendered = renderHooksDoc(transform(existing.value), existing.raw);
+  let originalConfig: string | undefined;
+  if (enableFeature) {
+    try {
+      originalConfig = pathExists(configFile) ? readFile(configFile) : '';
+    } catch (err) {
+      return { ok: false, error: writeFailed(configFile, err) };
+    }
+  }
+
+  let rendered: string;
+  try {
+    rendered = renderHooksDoc(transform(existing.value), existing.raw);
+  } catch (err) {
+    return { ok: false, error: writeFailed(hooksFile, err) };
+  }
   try {
     if (existing.raw !== rendered) {
       const saved = backupFile(hooksFile);
@@ -292,16 +410,21 @@ function editCodex(
 
   let featureFlag: CodexReport['featureFlag'] = 'untouched';
   if (enableFeature) {
-    const toml = pathExists(configFile) ? readFile(configFile) : '';
-    const next = enableHooksFeature(toml);
+    const next = enableHooksFeature(originalConfig ?? '');
     if (next === undefined) {
       featureFlag = 'already-on';
     } else {
       try {
         const saved = backupFile(configFile);
         if (saved !== undefined) backups.push(saved);
-        atomicWrite(configFile, next);
+        atomicWrite(configFile, next, pathExists(configFile) ? undefined : 0o600);
       } catch (err) {
+        try {
+          if (existing.raw === undefined) remove(hooksFile);
+          else atomicWrite(hooksFile, existing.raw);
+        } catch {
+          // Preserve the original install error; the backup remains available.
+        }
         return { ok: false, error: writeFailed(configFile, err) };
       }
       changed.push(configFile);
@@ -331,7 +454,7 @@ function writeFailed(path: string, err: unknown): MehmoryError {
     kind: 'actionable',
     what: err instanceof Error ? err.message : String(err),
     consequence: `${path} was not modified, so the Codex integration is not in place`,
-    fix: `ls -l ${dirname(path)}`,
+    fix: `ls -l ${shellQuote(dirname(path))}`,
   };
 }
 
@@ -375,7 +498,12 @@ type ReadJsonResult =
  */
 function readJsonObject(path: string): ReadJsonResult {
   if (!pathExists(path)) return { ok: true, value: {}, raw: undefined };
-  const raw = readFile(path);
+  let raw: string;
+  try {
+    raw = readFile(path);
+  } catch (err) {
+    return { ok: false, error: unparseable(path, err instanceof Error ? err.message : String(err)) };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -394,7 +522,7 @@ function unparseable(path: string, what: string): MehmoryError {
     kind: 'actionable',
     what,
     consequence: `${path} was left exactly as it is, so no hook registration was changed`,
-    fix: `$EDITOR ${path}`,
+    fix: `$EDITOR ${shellQuote(path)}`,
   };
 }
 
@@ -438,9 +566,16 @@ function hookCommand(key: HookConfigKey, host: InboxHost, bundlesDir: string): s
 
 /** True for a `{type, command}` entry mehmory wrote. */
 function isMehmoryHook(entry: unknown): boolean {
-  if (!isJsonObject(entry)) return false;
+  if (!isJsonObject(entry) || entry['type'] !== 'command') return false;
   const command = entry['command'];
-  return typeof command === 'string' && command.split(/\s+/).includes(CODEX_HOOK_MARKER);
+  if (typeof command !== 'string') return false;
+  const match = /^node\s+(.+)\s+(claude-code|codex)\s+--mehmory$/.exec(command);
+  if (!match) return false;
+  const rawPath = match[1] ?? '';
+  const bundle = rawPath.startsWith("'")
+    ? rawPath.slice(1, -1).replace(/'\\''/g, "'")
+    : rawPath;
+  return CODEX_HOOK_KEYS.some(key => basename(bundle) === bundleName(key));
 }
 
 /**
@@ -479,6 +614,10 @@ function withoutMehmoryHooks(doc: JsonObject): JsonObject {
  * second one, and running it twice unchanged produces identical bytes.
  */
 function withMehmoryHooks(doc: JsonObject, host: InboxHost): JsonObject {
+  const existingHooks = doc['hooks'];
+  if (existingHooks !== undefined && !isJsonObject(existingHooks)) {
+    throw new Error('hooks.json has an unsupported hooks shape');
+  }
   const stripped = withoutMehmoryHooks(doc);
   const existing = stripped['hooks'];
   const hooks: JsonObject = isJsonObject(existing) ? { ...existing } : {};

@@ -13,7 +13,7 @@
 
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { statePath } from './home.js';
 import { failOpen, logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
@@ -79,7 +79,7 @@ export function claudeProjectsDir(): string {
 
 function isDirectory(path: string): boolean {
   try {
-    return stat(path)?.isDirectory() === true;
+    return lstat(path)?.isSymbolicLink() !== true && stat(path)?.isDirectory() === true;
   } catch {
     return false;
   }
@@ -136,7 +136,7 @@ function sessionsIn(dir: string): readonly TranscriptSession[] {
     let mtime = 0;
     try {
       const info = stat(file);
-      if (info?.isFile() !== true) continue;
+      if (lstat(file)?.isSymbolicLink() || info?.isFile() !== true) continue;
       bytes = Number(info.size);
       mtime = Number(info.mtimeMs);
     } catch {
@@ -377,6 +377,7 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
       const written = appendInboxEntries(inboxFile, produced, options.scopeLabel);
       appended += written.appended;
       skipped += written.skipped;
+      if (written.failed !== undefined && written.failed > 0) break;
     }
     done.add(session.file);
     if (!options.dryRun) writeState({ scope: options.scopeLabel, done: [...done] });

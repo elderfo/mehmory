@@ -33,8 +33,15 @@ Use its `project_key` for `key`, its `session_id` for `src`, and its `host` for 
 Then append:
 
 ```bash
-echo '{"inbox":"'"$HOME_DIR"'/projects/<key>/inbox.md","key":"<key>","host":"<host>",
-       "entries":[{"text":"<the fact, one line>","src":"<session id>"}]}' \
+printf '%s\n' "$FACT" \
+  | node -e '
+      const fs = require("node:fs");
+      const [inbox, key, host, src] = process.argv.slice(1);
+      const text = fs.readFileSync(0, "utf8").trimEnd();
+      const input = { inbox, key, entries: [{ text, src }] };
+      if (host) input.host = host;
+      process.stdout.write(JSON.stringify(input));
+    ' "$HOME_DIR/projects/<key>/inbox.md" "<key>" "<host>" "<session id>" \
   | mehmory inbox-tx append
 ```
 

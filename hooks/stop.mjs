@@ -3,12 +3,12 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-VH3KEXT5.mjs";
+} from "./chunk-VZM22H3S.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-Y2I6CIDU.mjs";
+} from "./chunk-HNC6COVE.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";
@@ -20,7 +20,8 @@ function appendCommand(key, sessionId) {
     key,
     entries: [{ text: "<the learning>", src: sessionId }]
   });
-  return `node ${HOOK_DIR}/inbox-tx.mjs append <<'JSON'
+  const helper = `${HOOK_DIR}/inbox-tx.mjs`.replace(/'/g, `'\\''`);
+  return `node '${helper}' append <<'JSON'
 ${payload}
 JSON
 `;
