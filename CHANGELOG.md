@@ -24,7 +24,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   marker, and the marker carries the cursor so the resumed run reads on from where
   finalization stopped rather than re-distilling the whole transcript.
 
-  Clearing the marker alone was not enough: the `log.md` idempotency tag is the *other*
+  Clearing the marker alone was not enough: the `log.md` idempotency tag is the _other_
   thing keyed by session id, so a resumed run's ending still read as a retry of the first
   and was skipped. Session state now carries a generation, and both the marker and that
   tag are keyed by id and generation. Generation 0 keeps the original tag spelling, so
@@ -84,12 +84,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that field, and takes the project key as a required fourth argument -- a breaking change
   to the same subpath export for any consumer that called either function directly.
 
+### Added
+
+- **`.github/copilot-instructions.md`**, with a maintenance matrix (what to update when
+  hooks, config keys, error codes, CLI commands, or skills change) and conventions mined
+  from past PR review feedback, mainly around session-state locking.
+- **`.github/workflows/copilot-setup-steps.yml`**, so a Copilot coding agent session starts
+  with dependencies installed and the project built, matching local setup.
+- **README now links to `CONTRIBUTING.md`.**
+
 ## [0.4.0] - 2026-08-25
 
 ### Added
 
 - **Agent scopes: per-agent memory beside the shared project scope.** A third scope,
-  `agents/<name>/`, holds what an agent *is* — its preferences, its style, what it has
+  `agents/<name>/`, holds what an agent _is_ — its preferences, its style, what it has
   learned about itself — alongside `global/` (facts about you) and `projects/<key>/` (facts
   about the repo). An agent declares its name through `MEHMORY_AGENT`, falling back to the
   new `identity.agent` config key; instances that share a model can then accumulate distinct
@@ -130,7 +139,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **ACP sessions no longer lose their transcript to a finalize race.** The Claude Agent SDK
-  (ACP) writes its rollout *after* `SessionEnd` fires, so `finalizeSession` was retiring the
+  (ACP) writes its rollout _after_ `SessionEnd` fires, so `finalizeSession` was retiring the
   session and capturing nothing when the file had not yet reached disk. It now defers a
   named-but-absent transcript, leaving the session pending so the next start's sweep captures
   it once the rollout lands; a transcript that never appears still retires after the sweep's
