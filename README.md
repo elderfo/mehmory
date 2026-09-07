@@ -1,5 +1,7 @@
 # mehmory
 
+[![AI Ready](https://img.shields.io/badge/AI--Ready-yes-brightgreen?style=flat)](https://github.com/johnpapa/ai-ready)
+
 Hook-enforced, model-maintained markdown wiki memory for **Claude Code and Codex CLI**. A
 deliberately "meh"-tier improvement in harness memory and continuity, built from boring parts:
 your project's memory is a git-backed directory of markdown at `~/.mehmory` that a Claude Code
