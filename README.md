@@ -167,6 +167,10 @@ mehmory doctor
 - `docs/UPGRADE.md` — what a `schema_version` drift warning from `doctor` means and what to do.
 - `docs/CLI.md` — every command, including `mehmory init --host codex [--uninstall]`.
 
+## Contributing
+
+See `CONTRIBUTING.md` for setup, local checks, and conventions.
+
 ## License
 
 MIT — see `LICENSE`.

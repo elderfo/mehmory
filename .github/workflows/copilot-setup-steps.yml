@@ -1,0 +1,42 @@
+name: Copilot Setup Steps
+
+# Runs before a Copilot coding agent session starts, so the agent's sandbox has the
+# same toolchain and built artifacts as a local checkout. Mirrors the install/build
+# steps in ci.yml; lint/test/typecheck stay CI-only since the agent runs them itself.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+permissions: {}
+
+jobs:
+  # The job must be named `copilot-setup-steps` — Copilot's coding agent only
+  # recognizes and runs a job with this exact name.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
