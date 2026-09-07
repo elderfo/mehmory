@@ -299,11 +299,12 @@ the alternatives (writing the nudge to stderr, blocking a run that cannot answer
 be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
 for it in the prompt — `remember:` works there like anywhere else.
 
-## Not an error: a Codex session is finalized by the *next* session, not by its own end
+## Not an error: a session is finalized by the *next* session when its end hook never runs
 
-This was Codex's only route into the inbox until mehmory started wiring `SessionEnd`
-there, which Codex 0.153.4 fires. It still applies to any session whose end mehmory never
-sees, on either harness: a terminal closed, a process killed, a hook that never ran.
+This is the fallback for any session whose `SessionEnd` mehmory never sees, on either
+harness: a terminal closed, a process killed, or a Codex hook skipped for want of a trust
+decision. It was Codex's only route into the inbox until mehmory started wiring
+`SessionEnd` there, which Codex 0.153.4 fires.
 
 Claude Code fires `SessionEnd`, mehmory distills the last stretch of the transcript there,
 and the next `SessionStart` writes it to the inbox. When no session-end hook runs, that

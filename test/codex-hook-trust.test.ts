@@ -34,7 +34,7 @@ describe('readTrustedHookEvents', () => {
     expect(readTrustedHookEvents('[features]\nhooks = true\n', HOOKS_FILE)).toEqual([]);
   });
 
-  it('ignores trust decisions about another tool s hooks file', () => {
+  it("ignores trust decisions about another tool's hooks file", () => {
     const foreign = `[hooks.state."context-mode@context-mode:.codex-plugin/hooks.json:stop:0:0"]\ntrusted_hash = "sha256:abc"\n`;
     expect(readTrustedHookEvents(foreign, HOOKS_FILE)).toEqual([]);
   });
@@ -44,12 +44,12 @@ describe('readTrustedHookEvents', () => {
     expect(readTrustedHookEvents(toml, HOOKS_FILE)).toEqual([]);
   });
 
-  it('does not let a later table s enabled = false disable an earlier entry', () => {
+  it("does not let a later table's enabled = false disable an earlier entry", () => {
     const toml = `${trustEntry('stop')}\n[some.other.table]\nenabled = false\n`;
     expect(readTrustedHookEvents(toml, HOOKS_FILE)).toEqual(['stop']);
   });
 
-  it('matches whatever group and hook indices mehmory s entries landed on', () => {
+  it("matches whatever group and hook indices mehmory's entries landed on", () => {
     expect(readTrustedHookEvents(trustEntry('pre_compact', 2, 1), HOOKS_FILE)).toEqual(['pre_compact']);
   });
 });

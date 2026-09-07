@@ -418,7 +418,7 @@ describe('mehmory doctor — the Codex surface', () => {
     expect(findings(fixture.codexHome).get('codex.hooks_trust')).toMatchObject({ level: 'ok' });
   });
 
-  it('reports all five checks once Codex is present, each with its error code', () => {
+  it('reports the harness, flag, wiring and skills once Codex is present, each with its error code', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     const found = findings(fixture.codexHome);
     expect(found.get('codex.harness')).toMatchObject({ level: 'ok' });
@@ -435,6 +435,9 @@ describe('mehmory doctor — the Codex surface', () => {
       level: 'warn',
       code: 'E_CODEX_SKILLS_MISSING',
     });
+    // Nothing is wired, so the trust check has nothing to say: an `[ok]` line directly
+    // under the unwired error would read as reassurance about an install that is not there.
+    expect(found.has('codex.hooks_trust')).toBe(false);
   });
 
   it('still reports when config.toml exists but cannot be read (F3-8)', () => {

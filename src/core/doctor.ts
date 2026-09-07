@@ -177,7 +177,10 @@ function checkCodex(): readonly Finding[] {
     checkCodexHarness(probe),
     checkCodexFeatureFlag(probe),
     checkCodexWiring(probe),
-    checkCodexHookTrust(probe),
+    // Omitted rather than reported ok when nothing is wired: `checkCodexWiring` already
+    // owns that finding, and an `[ok] codex.hooks_trust` line directly under an unwired
+    // error reads as reassurance about an install that does not exist.
+    ...(probe.wiredEvents.length > 0 ? [checkCodexHookTrust(probe)] : []),
     checkCodexSkills(probe),
   ];
 }
@@ -239,14 +242,12 @@ function checkCodexWiring(probe: CodexProbe): Finding {
  * nothing when it skips one, so every other check here can pass while capture has never
  * fired once (issue #39).
  *
- * Silent when nothing is wired: `checkCodexWiring` already owns that finding, and two
- * errors for one cause is noise. Presence-only, so it cannot see a `trusted_hash` that
- * has gone stale; the fix is the same review either way.
+ * Silent when nothing is wired — `checkCodex` omits the check entirely in that case,
+ * because `checkCodexWiring` already owns the finding and two errors for one cause is
+ * noise. Presence-only, so it cannot see a `trusted_hash` that has gone stale; the fix is
+ * the same review either way.
  */
 function checkCodexHookTrust(probe: CodexProbe): Finding {
-  if (probe.wiredEvents.length === 0) {
-    return { check: 'codex.hooks_trust', level: 'ok', message: 'no wired Codex hook to review' };
-  }
   if (probe.untrustedEvents.length === 0) {
     return { check: 'codex.hooks_trust', level: 'ok', message: 'Codex hooks reviewed and trusted' };
   }

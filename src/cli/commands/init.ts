@@ -13,7 +13,7 @@
 
 import { initStore } from '../../core/store.js';
 import { PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } from '../../core/environment.js';
-import { installCodex, uninstallCodex, type CodexResult } from '../../core/codex-install.js';
+import { installCodex, probeCodexInstall, uninstallCodex, type CodexResult } from '../../core/codex-install.js';
 import { DEFAULT_INBOX_HOST, INBOX_HOSTS, type InboxHost } from '../../schema/format.js';
 import { flagString, parseFlags } from '../args.js';
 import { EXIT, operationFailed, usageError, type Command, type CommandResult } from '../command.js';
@@ -143,9 +143,14 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
           ? 'Codex `[features] hooks` already on'
           : 'Codex `[features] hooks` enabled',
         `skills: ${report.skills.join(', ')}`,
-        // The install is not live yet, and nothing downstream says so: Codex skips an
-        // unreviewed hook without a warning (issue #39).
-        'action required: run `codex` and approve the mehmory hooks when it asks you to review them',
+        // Codex skips a hook it has no trust decision for, and says nothing when it does
+        // (issue #39). Conditional on the probe rather than unconditional: telling a user
+        // who approved these months ago to go approve them is how a real warning gets
+        // trained away. Rewriting the entries can still stale an existing `trusted_hash`,
+        // which mehmory cannot compute, so the trusted branch says "may" and means it.
+        probeCodexInstall().untrustedEvents.length > 0
+          ? 'action required: run `codex` and approve the mehmory hooks when it asks you to review them'
+          : 'Codex has already approved these hooks; it may ask you to re-approve them now that the entries changed',
       ];
 
   for (const path of report.backups) lines.push(`backed up to ${path}`);
