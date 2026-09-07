@@ -80,14 +80,16 @@ const mehmoryCommands = (fixture: Fixture): string[] =>
   commands(fixture).filter(c => c.split(/\s+/).includes('--mehmory'));
 
 describe('mehmory init --host codex', () => {
-  it('writes the four Codex hooks and turns the hooks feature on', () => {
+  it('writes the five Codex hooks and turns the hooks feature on', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     const run = init(fixture);
     expect(run.status).toBe(0);
 
-    // SessionEnd is deliberately absent: Codex has no session-end event.
+    // SessionEnd included: Codex 0.153.4 fires it with the same payload Claude Code
+    // sends, so Codex no longer depends on the next session's start to capture a tail.
     expect(Object.keys(hooksDoc(fixture).hooks).sort()).toEqual([
       'PreCompact',
+      'SessionEnd',
       'SessionStart',
       'Stop',
       'UserPromptSubmit',
@@ -174,12 +176,12 @@ describe('mehmory init --host codex', () => {
     const fixture = codexFixture({ hooks: FOREIGN_HOOKS });
     expect(init(fixture).status).toBe(0);
     const after = readFileSync(fixture.hooksFile, 'utf-8');
-    expect(mehmoryCommands(fixture)).toHaveLength(4);
+    expect(mehmoryCommands(fixture)).toHaveLength(5);
 
     const second = envelopeOf(init(fixture, '--json'))['data'] as Record<string, unknown>;
     expect(second['changed']).toEqual([]);
     expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(after);
-    expect(mehmoryCommands(fixture)).toHaveLength(4);
+    expect(mehmoryCommands(fixture)).toHaveLength(5);
   });
 
   it('replaces its own stale entry instead of adding a second one', () => {
@@ -199,7 +201,7 @@ describe('mehmory init --host codex', () => {
       )}\n`,
     });
     expect(init(fixture).status).toBe(0);
-    expect(mehmoryCommands(fixture)).toHaveLength(4);
+    expect(mehmoryCommands(fixture)).toHaveLength(5);
     expect(commands(fixture).some(c => c.includes('/gone/v1/'))).toBe(false);
   });
 
@@ -391,12 +393,32 @@ describe('mehmory doctor — the Codex surface', () => {
   it('says nothing about Codex when neither Codex nor the install is present', () => {
     const fixture = codexFixture();
     const found = findings(fixture.codexHome);
-    for (const check of ['codex.harness', 'codex.hooks_flag', 'codex.hooks', 'codex.skills']) {
+    for (const check of ['codex.harness', 'codex.hooks_flag', 'codex.hooks', 'codex.hooks_trust', 'codex.skills']) {
       expect(found.has(check), check).toBe(false);
     }
   });
 
-  it('reports all four checks once Codex is present, each with its error code', () => {
+  it('reports a wired install Codex has never approved, which is the only symptom there is', () => {
+    // The reported #39 failure exactly: init succeeds, every other check is satisfiable,
+    // and Codex silently runs none of the hooks because nothing has reviewed them.
+    const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
+    expect(init(fixture).status).toBe(0);
+
+    const untrusted = findings(fixture.codexHome).get('codex.hooks_trust');
+    expect(untrusted).toMatchObject({ level: 'error', code: 'E_CODEX_HOOKS_UNTRUSTED' });
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'SessionEnd']) {
+      expect(untrusted?.message).toContain(event);
+    }
+
+    const approved = ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end']
+      .map(event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`)
+      .join('\n');
+    writeFileSync(fixture.configFile, `${readFileSync(fixture.configFile, 'utf-8')}\n${approved}`);
+
+    expect(findings(fixture.codexHome).get('codex.hooks_trust')).toMatchObject({ level: 'ok' });
+  });
+
+  it('reports the harness, flag, wiring and skills once Codex is present, each with its error code', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     const found = findings(fixture.codexHome);
     expect(found.get('codex.harness')).toMatchObject({ level: 'ok' });
@@ -413,6 +435,9 @@ describe('mehmory doctor — the Codex surface', () => {
       level: 'warn',
       code: 'E_CODEX_SKILLS_MISSING',
     });
+    // Nothing is wired, so the trust check has nothing to say: an `[ok]` line directly
+    // under the unwired error would read as reassurance about an install that is not there.
+    expect(found.has('codex.hooks_trust')).toBe(false);
   });
 
   it('still reports when config.toml exists but cannot be read (F3-8)', () => {

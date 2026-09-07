@@ -71,6 +71,9 @@ var ERROR_KINDS = {
   /** `$CODEX_HOME/hooks.json` carries no mehmory entry for one or more events, so those
    * lifecycle events capture and inject nothing under Codex. */
   E_CODEX_HOOKS_UNWIRED: "actionable",
+  /** Codex has registered mehmory's hooks but has no trust decision for them, so it
+   * skips every one silently: capture never fires and no surface says why (issue #39). */
+  E_CODEX_HOOKS_UNTRUSTED: "actionable",
   /** The mehmory skills are not installed for Codex, so the judgment-work commands
    * (integrate, lint, onboard) are unavailable there. Capture still runs. */
   E_CODEX_SKILLS_MISSING: "actionable",

@@ -85,10 +85,17 @@ files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONF
 plus the six skills:
 
 - **`hooks.json`** gets one entry per Codex lifecycle event mehmory captures:
-  `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. There is no `SessionEnd`
-  entry, because Codex has no session-end event.
+  `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact` and `SessionEnd`. Earlier
+  versions skipped `SessionEnd`, because Codex had no session-end event when the
+  integration was written; Codex 0.153.4 fires it with the same payload Claude Code
+  sends.
 - **`config.toml`** gets `[features] hooks = true`, which Codex requires before any hook of
   any tool runs. Already on, and it is left exactly as it was.
+
+Writing those files is not the last step. Codex will not run a hook until you have
+approved it, so a fresh install captures nothing until you start `codex` once and accept
+the hook review it shows you. `mehmory doctor`'s `codex.hooks_trust` check is what tells
+you the review is still outstanding.
 - **`skills/`** gets one directory per skill — `mehmory-remember`, `mehmory-integrate`,
   `mehmory-lint`, `mehmory-onboard-session`, `mehmory-pause`, `mehmory-resume` — each holding
   a verbatim copy of the same `SKILL.md` Claude Code loads, the flat, prefix-named layout

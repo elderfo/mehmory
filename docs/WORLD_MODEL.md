@@ -489,3 +489,37 @@ guessing from the host is precisely the conflation (several agents resolving to 
 declared and threaded — and upholds A21: config still arrives as a parameter, and the
 environment is read once at the resolution site the way `mehmoryHome()` reads
 `MEHMORY_HOME`.
+
+### A28. A Codex install is not live until Codex trusts it, so `doctor` reads the trust state
+
+Codex refuses to run a registered hook until the user has reviewed and approved it, and
+records that decision in `config.toml` under
+`[hooks.state."<hooks.json>:<event>:<group>:<index>"]`. An unreviewed hook is skipped in
+silence: nothing in the session, nothing in `codex exec` output, nothing anywhere mehmory
+can see. Measured against Codex CLI 0.153.4 — sentinel hooks on every event fired zero
+times, and only `--dangerously-bypass-hook-trust` made them run.
+
+So `mehmory init --host codex` writing both files correctly is not the same as mehmory
+working, and every check `doctor` had could pass on an install that had never captured a
+single event (issue #39). `doctor` gains `codex.hooks_trust`, which reads those keys back,
+and `init` says the review is outstanding rather than reporting plain success.
+
+The check is presence-only. mehmory cannot recompute Codex's `trusted_hash`, so it detects
+the install that was never reviewed and not the approval that went stale when an upgrade
+moved the bundle path. Presence is what the reported failure is made of, and a check that
+diagnoses the common case honestly beats one that guesses at the hash and is wrong.
+
+The same measurement retired the exclusion behind A22's Codex hook set: Codex fires
+`SessionEnd` now, with the payload Claude Code sends, so it is wired like every other
+event. Deferred finalization stays exactly as it is — it is still the only route for a
+session whose end-hook never ran, on either harness — but it is no longer the *only* route
+Codex has.
+
+**Rejected:** *Writing `trusted_hash` from `init`* — it is a security control, forging it
+would defeat the review Codex added on purpose, and the hash algorithm is not mehmory's to
+depend on. *Warning unconditionally after install* — it would keep firing at users who
+approved the hooks months ago, which is how a real warning gets ignored.
+
+**WORLD_MODEL check.** Upholds A2 (the probe never throws; an unreadable `config.toml`
+reads as unknown) and A21 (the trust state arrives through the existing `CodexProbe`
+parameter rather than being read ambiently at the check site).

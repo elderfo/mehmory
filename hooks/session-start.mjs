@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-VZM22H3S.mjs";
+} from "./chunk-JHPESCDX.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -38,7 +38,7 @@ import {
   stat,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-HNC6COVE.mjs";
+} from "./chunk-L6YLRONZ.mjs";
 
 // src/core/store.ts
 import { join } from "path";

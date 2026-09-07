@@ -27,3 +27,6 @@ site/.vitepress/cache/
 
 # Local session artifacts written by the Codex host, never part of the repo.
 .context/
+
+# Pi harness session scratch
+.pi/
