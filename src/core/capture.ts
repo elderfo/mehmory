@@ -585,8 +585,8 @@ function sessionEndLogTag(sessionId: string, generation = 0): string {
  * Not gated by `hooks.session_end.enabled`. That toggle governs the SessionEnd *hook*,
  * so it is checked in the SessionEnd adapter like every other hook checks its own —
  * and only there. This function is also the recovery path `finalizePendingSessions`
- * drives from SessionStart, which for Codex (no session-end event at all) is the only
- * route the session's tail has into the inbox. Gating it here made the toggle delete
+ * drives from SessionStart, which is the only route the session's tail has into the inbox
+ * whenever no session-end hook ran. Gating it here made the toggle delete
  * un-distilled material instead of deferring it: a disabled event must capture nothing,
  * never destroy anything. `isPaused` still short-circuits, because discarding the
  * session's tail is what `/mehmory:pause` explicitly promises.
@@ -692,9 +692,9 @@ function finalizeSessionUnlocked(
  * Finalize every session left pending — state on disk, no finalization marker, idle long
  * enough to be abandoned — at the next session start (issue #24).
  *
- * Codex has no session-end event at all, so for a Codex session this is not a fallback:
- * it is the only route the last stretch of the session has into the inbox. A Claude Code
- * session killed before SessionEnd fires is the same shape, and recovers the same way.
+ * A session whose end mehmory never sees — killed before SessionEnd fires, a hook Codex
+ * skipped for want of a trust decision, a harness with no session-end event — has no other
+ * route for its last stretch into the inbox. Every such shape recovers the same way.
  * Either way the work goes through `finalizeSession` — one operation, one marker, so a
  * session already finalized by its own SessionEnd is skipped and nothing is written twice.
  *

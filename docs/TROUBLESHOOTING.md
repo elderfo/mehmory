@@ -174,14 +174,29 @@ perfectly registered and still never run, because the flag gates all of them.
 
 ## E_CODEX_HOOKS_UNWIRED (actionable)
 
-`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the four Codex events
-mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`) — or the file
+`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the five Codex events
+mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `SessionEnd`)
+— or the file
 does not parse, in which case nothing at all is registered. Consequence: *those events
 capture and inject nothing under Codex.* Fix: `mehmory init --host codex`, or `$EDITOR
 $CODEX_HOME/hooks.json` when `doctor` reports the file as unparseable.
 
 `mehmory doctor` names the specific events that are missing, so a partial wiring — one hook
 hand-deleted, or an install interrupted — reads as such rather than as "not installed".
+
+## E_CODEX_HOOKS_UNTRUSTED (actionable)
+
+Codex will not run a hook it has not been told to trust. It records each decision in
+`config.toml` under `[hooks.state]`, and it skips an unreviewed hook silently: no warning
+in the session, nothing in `codex exec` output, nothing in mehmory's own logs. Every other
+check passes and `stats.jsonl` has no `host=codex` line. Consequence: *mehmory captures
+nothing under Codex, and no surface says why.* Fix: run `codex` and approve the mehmory
+hooks when it asks you to review them.
+
+The check is presence-only. mehmory cannot recompute Codex's `trusted_hash`, so it can
+tell you the review never happened but not that an approval has gone stale after an
+upgrade moved the bundle path. If capture stops after a mehmory upgrade and
+`codex.hooks_trust` is green, start `codex` and look for a second review prompt.
 
 ## E_CODEX_SKILLS_MISSING (actionable)
 
@@ -286,10 +301,13 @@ for it in the prompt — `remember:` works there like anywhere else.
 
 ## Not an error: a Codex session is finalized by the *next* session, not by its own end
 
-Codex has no session-end event. Claude Code fires `SessionEnd`, mehmory distills the last
-stretch of the transcript there, and the next `SessionStart` writes it to the inbox. Under Codex
-that first half never happens — nothing tells mehmory the session is over, including when the
-session is over because the terminal was closed or the process was killed.
+This was Codex's only route into the inbox until mehmory started wiring `SessionEnd`
+there, which Codex 0.153.4 fires. It still applies to any session whose end mehmory never
+sees, on either harness: a terminal closed, a process killed, a hook that never ran.
+
+Claude Code fires `SessionEnd`, mehmory distills the last stretch of the transcript there,
+and the next `SessionStart` writes it to the inbox. When no session-end hook runs, that
+first half never happens — nothing tells mehmory the session is over.
 
 So finalization moves to the front of the next session instead. Every hook invocation records
 which transcript the session is reading and which harness is reading it; a session whose state is

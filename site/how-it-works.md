@@ -32,12 +32,13 @@ no `SessionEnd` event, so that one runs on Claude Code only — see below):
 | `UserPromptSubmit` | Point at pages relevant to what you just typed | ✓ | ✓ |
 | `Stop` | Distill the turn into inbox entries once the capture threshold is crossed | ✓ | ✓ |
 | `PreCompact` | Capture before the context window collapses | ✓ | ✓ (payload unverified) |
-| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up | ✓ | — (no such event; see below) |
+| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up | ✓ | ✓ |
 
-Codex has no session-end event, so a Codex session is finalized at the *next* session's start
-instead of its own end — the deterministic capture is not late by more than one session, but
-`mehmory status` won't show that last stretch until then. A per-harness `hosts.<host>.enabled`
-config toggle lets you turn either side off independently.
+When a session ends without its `SessionEnd` hook running — the process was killed, or
+Codex skipped the hook because you have not approved it yet — that session is finalized at
+the *next* session's start instead. The deterministic capture is not late by more than one
+session, but `mehmory status` won't show that last stretch until then. A per-harness
+`hosts.<host>.enabled` config toggle lets you turn either side off independently.
 
 Three properties matter more than what they do:
 

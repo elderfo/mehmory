@@ -361,8 +361,8 @@ export const PENDING_FINALIZE_IDLE_MS = 30 * 60 * 1000;
 
 /**
  * Sessions with state on disk, no finalization marker, and nothing left to lose but their
- * transcript delta: the leftovers of a session that crashed, was killed, or ran under a
- * harness with no session-end event at all (Codex).
+ * transcript delta: the leftovers of a session that crashed, was killed, or whose
+ * session-end hook never ran.
  *
  * Only states idle for `idleMs` qualify, so a session running concurrently in another
  * terminal is not retired out from under itself. States with no recorded transcript are

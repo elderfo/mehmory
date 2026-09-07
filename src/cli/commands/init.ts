@@ -143,6 +143,9 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
           ? 'Codex `[features] hooks` already on'
           : 'Codex `[features] hooks` enabled',
         `skills: ${report.skills.join(', ')}`,
+        // The install is not live yet, and nothing downstream says so: Codex skips an
+        // unreviewed hook without a warning (issue #39).
+        'action required: run `codex` and approve the mehmory hooks when it asks you to review them',
       ];
 
   for (const path of report.backups) lines.push(`backed up to ${path}`);

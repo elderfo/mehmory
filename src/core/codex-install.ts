@@ -40,18 +40,31 @@ export const CODEX_HOOK_MARKER = '--mehmory';
 export const CODEX_BACKUP_SUFFIX = '.mehmory.bak';
 
 /**
- * The hooks mehmory registers with Codex: every event except `session_end`.
+ * The hooks mehmory registers with Codex: every event in `HOOK_EVENTS`.
  *
- * Codex has no session-end event — measured against Codex CLI 0.146.0, see
- * `.research/codex-spike/VERDICT.md`. Derived from `HOOK_EVENTS` rather than re-listed,
- * so a new event added there is wired on both harnesses or explicitly excluded here.
+ * `session_end` used to be excluded, on a measurement against Codex CLI 0.146.0 that
+ * found no session-end event. Codex has one now: a sentinel hook registered on
+ * `SessionEnd` under 0.153.4 fires with the same `{session_id, transcript_path, cwd,
+ * hook_event_name, reason}` payload Claude Code sends. Wiring it is what stops Codex
+ * depending solely on the next session's start to capture a session's tail (issue #51).
+ *
+ * Derived from `HOOK_EVENTS` rather than re-listed, so a new event added there is wired
+ * on both harnesses or explicitly excluded here.
  */
-export const CODEX_HOOK_KEYS: readonly HookConfigKey[] = (
-  Object.keys(HOOK_EVENTS) as HookConfigKey[]
-).filter(key => key !== 'session_end');
+export const CODEX_HOOK_KEYS: readonly HookConfigKey[] = Object.keys(
+  HOOK_EVENTS
+) as HookConfigKey[];
 
 /** Codex event names mehmory wires, in the order it writes them. */
 export const CODEX_HOOK_EVENTS: readonly string[] = CODEX_HOOK_KEYS.map(key => HOOK_EVENTS[key]);
+
+/**
+ * `SessionStart` → `session_start`. `hooks.json` names events in PascalCase; the
+ * `[hooks.state]` trust keys in `config.toml` name the same events in snake_case.
+ */
+function configKeyFor(event: string): string {
+  return CODEX_HOOK_KEYS.find(key => HOOK_EVENTS[key] === event) ?? event;
+}
 
 // ─── Paths ───
 
@@ -692,6 +705,48 @@ export function readHooksFeature(toml: string): boolean | undefined {
   return value === 'true' ? true : value === 'false' ? false : undefined;
 }
 
+/**
+ * Codex events that `config.toml` records a hook-trust decision for, in `hooks.json`.
+ *
+ * Codex will not run a registered hook until it has been reviewed and approved. Approval
+ * writes `[hooks.state."<hooks.json>:<event>:<group>:<index>"]` carrying a `trusted_hash`;
+ * until then the hook is silently skipped, with no warning on any surface (issue #39).
+ * `doctor` reads these keys because a wired-but-unreviewed install is otherwise
+ * indistinguishable from a working one.
+ *
+ * Matched on the `<hooks.json>:<event>:` prefix rather than the whole key, because the
+ * trailing indices depend on where mehmory's group landed among other tools'. That makes
+ * this a presence check, not a validity check: it catches the never-reviewed install,
+ * which is the reported failure, and cannot detect a `trusted_hash` gone stale because
+ * mehmory cannot compute Codex's hash.
+ *
+ * An entry explicitly turned off (`enabled = false`) counts as untrusted: the user
+ * reviewed it and declined, and the hook does not run either way.
+ */
+export function readTrustedHookEvents(toml: string, hooksFile: string): readonly string[] {
+  const header = /^\s*\[hooks\.state\."(.+)"\]\s*$/;
+  const lines = toml.split('\n');
+  const trusted = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const key = header.exec(lines[i] ?? '')?.[1];
+    if (key === undefined || !key.startsWith(`${hooksFile}:`)) continue;
+    const event = key.slice(hooksFile.length + 1).split(':')[0];
+    if (event === undefined || event === '') continue;
+    if (!sectionDisabled(lines, i)) trusted.add(event);
+  }
+  return [...trusted];
+}
+
+/** True when the TOML table starting at `start` sets `enabled = false`. */
+function sectionDisabled(lines: readonly string[], start: number): boolean {
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i] ?? '')) return false;
+    if (/^\s*enabled\s*=\s*false\b/.test(lines[i] ?? '')) return true;
+  }
+  return false;
+}
+
 interface SectionRange {
   readonly start: number;
   readonly end: number;
@@ -730,6 +785,11 @@ export interface CodexProbe {
   readonly wiredEvents: readonly string[];
   /** Codex events mehmory should occupy but does not. */
   readonly missingEvents: readonly string[];
+  /**
+   * Codex events mehmory has wired but Codex has no trust decision for, so they do not
+   * run. Empty when nothing is wired, or when every wired event has been reviewed.
+   */
+  readonly untrustedEvents: readonly string[];
   /** True when at least one `mehmory*` skill directory is installed for Codex. */
   readonly skillsInstalled: boolean;
 }
@@ -759,6 +819,7 @@ export function probeCodexInstall(): CodexProbe {
     hooksFileBroken: pathExists(hooksFile),
     wiredEvents: [],
     missingEvents: CODEX_HOOK_EVENTS,
+    untrustedEvents: [],
     skillsInstalled: false,
   };
 
@@ -766,16 +827,20 @@ export function probeCodexInstall(): CodexProbe {
     () => {
       const parsed = readJsonObject(hooksFile);
       const wiredEvents = parsed.ok ? mehmoryEvents(parsed.value) : [];
+      const configToml = pathExists(configFile) ? readFile(configFile) : undefined;
+      const trusted =
+        configToml === undefined ? [] : readTrustedHookEvents(configToml, hooksFile);
 
       return {
         codexHome: home,
         hooksFile,
         configFile,
         harnessPresent: pathExists(configFile),
-        hooksFeature: pathExists(configFile) ? readHooksFeature(readFile(configFile)) : undefined,
+        hooksFeature: configToml === undefined ? undefined : readHooksFeature(configToml),
         hooksFileBroken: !parsed.ok,
         wiredEvents,
         missingEvents: CODEX_HOOK_EVENTS.filter(event => !wiredEvents.includes(event)),
+        untrustedEvents: wiredEvents.filter(event => !trusted.includes(configKeyFor(event))),
         skillsInstalled: hasCodexSkills(home),
       };
     },

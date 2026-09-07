@@ -177,6 +177,7 @@ function checkCodex(): readonly Finding[] {
     checkCodexHarness(probe),
     checkCodexFeatureFlag(probe),
     checkCodexWiring(probe),
+    checkCodexHookTrust(probe),
     checkCodexSkills(probe),
   ];
 }
@@ -230,6 +231,31 @@ function checkCodexWiring(probe: CodexProbe): Finding {
     check: 'codex.hooks',
     level: 'ok',
     message: `mehmory wired into ${probe.wiredEvents.join(', ')}`,
+  };
+}
+
+/**
+ * The trust gate. Codex will not run a hook it has not been told to trust, and says
+ * nothing when it skips one, so every other check here can pass while capture has never
+ * fired once (issue #39).
+ *
+ * Silent when nothing is wired: `checkCodexWiring` already owns that finding, and two
+ * errors for one cause is noise. Presence-only, so it cannot see a `trusted_hash` that
+ * has gone stale; the fix is the same review either way.
+ */
+function checkCodexHookTrust(probe: CodexProbe): Finding {
+  if (probe.wiredEvents.length === 0) {
+    return { check: 'codex.hooks_trust', level: 'ok', message: 'no wired Codex hook to review' };
+  }
+  if (probe.untrustedEvents.length === 0) {
+    return { check: 'codex.hooks_trust', level: 'ok', message: 'Codex hooks reviewed and trusted' };
+  }
+  return {
+    check: 'codex.hooks_trust',
+    level: 'error',
+    code: 'E_CODEX_HOOKS_UNTRUSTED',
+    message: `Codex has no trust decision for ${probe.untrustedEvents.join(', ')} in ${probe.configFile}, so it skips those hooks without a warning and mehmory captures nothing`,
+    fix: 'run `codex` and approve the mehmory hooks when it asks you to review them',
   };
 }
 
