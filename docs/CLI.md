@@ -258,7 +258,12 @@ Also broken down **per harness** (issue #14 story 39): every `stats.jsonl` recor
 `host`, so the report includes an invocation count and a captured-entry count for each
 harness seen — `claude-code`, `codex`, or both, whichever actually wrote records in the
 selected scope. Text output adds one indented line per harness under `captured`; `--json`
-carries the same data as `data.hosts: [{host, count, capturedEntries}]`.
+carries the same data as `data.hosts: [{host, count, capturedEntries, suppressed}]`.
+
+`suppressed` counts invocations that skipped their body, by reason: `host_disabled`
+(`hosts.<host>.enabled` is `false`) or `active_host` (`MEHMORY_ACTIVE_HOST` names another
+harness, or `none`). A skipped hook reads no stdin, so its record carries the project key
+`unknown` and shows up only under `--all`. The text line appends `N suppressed (<reason>)`.
 
 ### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
 

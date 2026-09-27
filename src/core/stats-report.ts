@@ -36,6 +36,8 @@ export interface HostAggregate {
   readonly count: number;
   /** Sum of `captured_entries` for this harness. */
   readonly capturedEntries: number;
+  /** Invocations that skipped their body, by the `suppressed` reason `runHook` recorded. */
+  readonly suppressed: Readonly<Record<string, number>>;
 }
 
 /** Everything `mehmory stats` reports from `stats.jsonl`. */
@@ -106,7 +108,10 @@ export function aggregateStats(filter: StatsFilter = {}): StatsReport {
 /** Roll up records already read (doctor reads once and asks several questions). */
 export function summarize(records: readonly StatRecord[]): StatsReport {
   const byHook = new Map<string, number[]>();
-  const byHost = new Map<string, { count: number; capturedEntries: number }>();
+  const byHost = new Map<
+    string,
+    { count: number; capturedEntries: number; suppressed: Record<string, number> }
+  >();
   const injected: number[] = [];
   let pointersOffered = 0;
   let capturedEntries = 0;
@@ -125,9 +130,11 @@ export function summarize(records: readonly StatRecord[]): StatsReport {
 
     const host = record['host'];
     if (typeof host === 'string') {
-      const entry = byHost.get(host) ?? { count: 0, capturedEntries: 0 };
+      const entry = byHost.get(host) ?? { count: 0, capturedEntries: 0, suppressed: {} };
       entry.count += 1;
       if (typeof captured === 'number') entry.capturedEntries += captured;
+      const reason = record['suppressed'];
+      if (typeof reason === 'string') entry.suppressed[reason] = (entry.suppressed[reason] ?? 0) + 1;
       byHost.set(host, entry);
     }
   }
@@ -142,7 +149,7 @@ export function summarize(records: readonly StatRecord[]): StatsReport {
     .sort((a, b) => a.hook.localeCompare(b.hook));
 
   const hosts: HostAggregate[] = [...byHost.entries()]
-    .map(([host, agg]) => ({ host, count: agg.count, capturedEntries: agg.capturedEntries }))
+    .map(([host, agg]) => ({ host, ...agg }))
     .sort((a, b) => a.host.localeCompare(b.host));
 
   const p50 = percentile(injected, 0.5);

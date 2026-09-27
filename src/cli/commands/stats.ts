@@ -91,8 +91,11 @@ export const command: Command = {
     lines.push(`pointers   ${String(report.pointersOffered)} offered`);
     lines.push(`captured   ${String(report.capturedEntries)} entries`);
     for (const host of report.hosts) {
+      const suppressed = Object.entries(host.suppressed).map(
+        ([reason, n]) => `   ${String(n)} suppressed (${reason})`
+      );
       lines.push(
-        `  ${host.host.padEnd(18)} ${String(host.count).padStart(5)} calls   ${String(host.capturedEntries)} captured`
+        `  ${host.host.padEnd(18)} ${String(host.count).padStart(5)} calls   ${String(host.capturedEntries)} captured${suppressed.join('')}`
       );
     }
     // Suffix only under `--all`, where the record counts above span every key in
