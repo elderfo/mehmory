@@ -197,8 +197,9 @@ const SKILL_REFS = {
  * flat, prefix-named directories under `$CODEX_HOME/skills/` and has no slash commands at
  * all, so telling a Codex user to run `/mehmory:integrate` names something that does not
  * exist. Pi loads the package's `skills/` directory and exposes each skill by its
- * frontmatter `name`, unprefixed, as `/skill:<name>`. The host is already threaded into every hook body (A21/A23) — this is the one
- * thing the user actually reads, so it is the one thing that has to be shaped by it.
+ * frontmatter `name`, unprefixed, as `/skill:<name>`. The host is already threaded into
+ * every hook body (A21/A23) — this is the one thing the user actually reads, so it is
+ * the one thing that has to be shaped by it.
  *
  * The `remember:` prefix deliberately is *not* host-shaped: it is delivered by the
  * UserPromptSubmit hook, which mehmory wires on every harness.
