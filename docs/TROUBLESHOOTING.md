@@ -299,6 +299,23 @@ the alternatives (writing the nudge to stderr, blocking a run that cannot answer
 be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
 for it in the prompt — `remember:` works there like anywhere else.
 
+## Pi: mehmory does nothing, and says nothing
+
+The Pi extension runs the hook bundles with `node` from `PATH`, and treats every failure as
+silence so it can never break a Pi session (A2). If `node` is missing from the `PATH` Pi was
+started with, or is older than 22, every hook fails and nothing is injected or captured, with
+no message. Run `node --version` in the same shell you start `pi` from. `mehmory stats` shows
+no `host: pi` invocations when this is the cause.
+
+## Not an error: Pi and a Claude Code-backed provider both capture
+
+If Pi's model provider runs Claude Code underneath it, and the mehmory Claude Code plugin is
+also installed, one Pi turn fires two sets of hooks: the Pi extension's (`host=pi`) and the
+nested Claude Code session's (`host=claude-code`). Measured with such a provider: the nested
+session saw mehmory's injected context as part of its user message and filed it into the
+inbox. Turn one side off with `hosts.claude-code.enabled: false` or `hosts.pi.enabled: false`
+in `config.json` (`docs/CONFIG.md`), or uninstall the Claude Code plugin on that machine.
+
 ## Not an error: a session is finalized by the *next* session when its end hook never runs
 
 This is the fallback for any session whose `SessionEnd` mehmory never sees, on either

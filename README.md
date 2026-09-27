@@ -2,10 +2,10 @@
 
 [![AI Ready](https://img.shields.io/badge/AI--Ready-yes-brightgreen?style=flat)](https://github.com/johnpapa/ai-ready)
 
-Hook-enforced, model-maintained markdown wiki memory for **Claude Code and Codex CLI**. A
+Hook-enforced, model-maintained markdown wiki memory for **Claude Code, Codex CLI and Pi**. A
 deliberately "meh"-tier improvement in harness memory and continuity, built from boring parts:
-your project's memory is a git-backed directory of markdown at `~/.mehmory` that a Claude Code
-or Codex CLI session reads and writes with ordinary file operations. No embeddings, no MCP
+your project's memory is a git-backed directory of markdown at `~/.mehmory` that a Claude Code,
+Codex CLI or Pi session reads and writes with ordinary file operations. No embeddings, no MCP
 server, no external services.
 
 Website: <https://elderfo.github.io/mehmory/> — the pitch, the quickstart, and how it works.
@@ -13,7 +13,8 @@ Website: <https://elderfo.github.io/mehmory/> — the pitch, the quickstart, and
 mehmory ships a portable Agent Plugins v1.0.0 package: the root `plugin.json` and `skills/`
 directory are client-neutral. Claude Code is supported through its compatibility manifest in
 `.claude-plugin/` and the bundled lifecycle hooks; Codex CLI uses the same skills plus its
-native hook installation path.
+native hook installation path; Pi installs the repository as a Pi package, whose extension
+runs the same hook bundles.
 
 See `docs/CLI.md` for the full command reference, `docs/CONFIG.md` for every config key,
 `docs/TROUBLESHOOTING.md` for error messages, `docs/PRIVACY.md` for the secret filter's
@@ -41,7 +42,7 @@ Requires Node.js 22 or newer.
 > `read:packages` token from every installer. If you installed it that way, replace it:
 > `npm uninstall -g @elderfo/mehmory && npm install -g mehmory`.
 
-Then wire mehmory into whichever harness (or both) you use. The two paths differ, because the
+Then wire mehmory into whichever harnesses you use. The paths differ, because the
 harnesses themselves differ — pick the one for the harness you're setting up:
 
 **Claude Code** installs the plugin from the marketplace:
@@ -58,14 +59,25 @@ session, not a shell.
 **Codex CLI** has no plugin mechanism of its own for hooks, so `mehmory init --host codex`
 (next step) writes the wiring directly — there is no separate marketplace step to run first.
 
+**Pi** installs the repository as a Pi package, which brings both the extension that runs the
+hooks and the six skills (as `/skill:remember`, `/skill:integrate`, and so on). In a shell:
+
+```bash
+pi install git:github.com/elderfo/mehmory
+```
+
+`pi remove git:github.com/elderfo/mehmory` takes it out again. The hooks run with `node` from
+your `PATH`, so Node 22+ has to be on it even if Pi itself runs on another runtime.
+
 ### 2. Initialize the store
 
 ```bash
 mehmory init                    # Claude Code (default)
 mehmory init --host codex       # Codex CLI
+mehmory init --host pi          # Pi
 ```
 
-Both are idempotent — running either twice changes nothing on disk.
+All three are idempotent — running any of them twice changes nothing on disk.
 
 **Claude Code default:** creates `~/.mehmory` (or `$MEHMORY_HOME` if you've set it), a
 `.gitignore`, an empty `config.json`, and a git repo. Checks your Node version against the
@@ -79,6 +91,10 @@ ever adds or removes entries it can positively identify as its own, and backs ea
 before touching it. `mehmory init --host codex --uninstall` reverses all of it — the store
 itself is untouched either way (see `docs/PRIVACY.md`). Full detail, including what survives
 a hand-edited config: `docs/CLI.md`.
+
+**`--host pi`:** does the same store setup and writes nothing into Pi's configuration — the
+`pi install` above owns that. It ends by naming that install command, so running `init` first
+is fine too.
 
 Expected: a summary of what was created (or confirmation that it already existed), plus a
 line naming the next step — prefixed "in a Claude Code session, run …" for anything that's a
@@ -110,7 +126,7 @@ history yet.
 
 ### 4. Your first session
 
-Start `claude` (or `codex`) in your project as usual. `SessionStart` injects `identity.md` +
+Start `claude` (or `codex`, or `pi`) in your project as usual. `SessionStart` injects `identity.md` +
 the stub `project.md` from onboarding + `index.md`, within an 800-token budget, on either
 harness. Because onboarding just seeded a batch of inbox entries, you'll likely see a nudge
 toward integrating:
@@ -136,7 +152,7 @@ hook-trust mechanism.)
 
 ### 5. Your second session — this is where it knows your project
 
-Start a new `claude` (or `codex`) session. **Now** `project.md` carries what the first
+Start a new `claude` (or `codex`, or `pi`) session. **Now** `project.md` carries what the first
 integrate actually wrote, not the onboarding stub — this is the session where "it already
 knows my project" becomes true, not the first one.
 

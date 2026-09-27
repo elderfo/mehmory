@@ -523,3 +523,50 @@ approved the hooks months ago, which is how a real warning gets ignored.
 **WORLD_MODEL check.** Upholds A2 (the probe never throws; an unreadable `config.toml`
 reads as unknown) and A21 (the trust state arrives through the existing `CodexProbe`
 parameter rather than being read ambiently at the check site).
+
+### A29. Pi is a host through a Pi package whose extension is the hook runner
+
+Pi (`@earendil-works/pi-coding-agent`, measured against 0.87.1) has no command-hook
+configuration to write into. It loads extensions in-process and installs packages from git.
+So the repository is also a Pi package: `package.json`'s `pi` manifest names
+`hooks/pi-extension.mjs` and `skills/`, and `pi install git:github.com/elderfo/mehmory`
+brings both. `init --host pi` writes nothing into Pi; the package manager owns the install.
+
+The extension is Pi's `hooks.json`, not a second implementation. It maps Pi lifecycle events
+onto the same five bundles, spawned with `node` and `pi` as the host argument (A12, A23),
+and maps their stdout back into Pi results. Everything host-specific below it is one row in
+a per-host table: the reader (`readPiSession`), the approved transcript root
+(`PI_CODING_AGENT_SESSION_DIR`, else `sessions/` under `PI_CODING_AGENT_DIR`, default
+`~/.pi/agent`), the skill wording (`/skill:<name>`), and the Stop nudge shape.
+
+Three event choices are forced by measurement, not taste:
+
+- **Injection rides `before_agent_start`, not `session_start`.** Pi creates the session file
+  lazily and has no prompt at `session_start`, so there is nothing to attach a message to.
+  SessionStart output is held and joined to the first prompt's UserPromptSubmit output as
+  one hidden `custom_message`, which Pi persists and the model sees that turn. `session_compact`
+  re-queues it, because compaction dropped the earlier one. A `reload` runs nothing: the
+  session and its injection are already there.
+- **`agent_before_settle` is the Stop block.** Returning a `custom_message` entry with
+  `continue: true` re-invokes the model once, and the next settle carries the extension's
+  own loop guard as `stop_hook_active`. Only a `completed` outcome counts. The nudge carries
+  the literal `inbox-tx` command as Codex's does, since Pi's model cannot type a slash
+  command either, but in the `additionalContext` shape the extension turns into a message.
+- **The session file is complete by the time settle and shutdown fire**, so Stop and
+  SessionEnd read the same file Pi is writing, from the same cursor, like every other host.
+
+Pi's session file is a tree (`parentId`), and the reader reads every branch, abandoned ones
+included. Mehmory's own `custom_message` entries are never records, and a `/skill:` expansion
+is reduced to what the user typed after it, so a SKILL.md body is never filed as a user
+decision.
+
+**Rejected:** *Running the hook bodies in-process inside the extension* — a second
+implementation of every hook, and it would inherit Pi's runtime (possibly bun) instead of the
+Node the bundles are built for. *Injecting from `session_start`* — measured: the file does
+not exist yet and there is no turn to carry a message. *Walking `parentId` to read only the
+live branch* — correct but not yet worth it; an abandoned branch's decisions were still said.
+
+**WORLD_MODEL check.** Upholds A2 (every extension failure, including a missing `node`, is
+silence), A7 (one normalized record type; the tree is a parse detail below `readSession`),
+A12 and A23 (thin adapters, host declared as an argument), and A25 (the extension is a
+committed bundle under `hooks/`, covered by the same drift gate).

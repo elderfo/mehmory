@@ -27,7 +27,7 @@ Change these deliberately, and prefer to note *why* somewhere your future self w
 | Key | What a change actually does |
 |---|---|
 | `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never *destroys* material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how any session whose end-hook never ran — killed, or skipped by Codex for want of a trust decision — captures its tail. |
-| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
+| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` (or `hosts.pi.enabled`) mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
 | `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
 | `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
 | `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
@@ -152,17 +152,20 @@ a hook is found disabled.
 {
   "hosts": {
     "claude-code": { "enabled": true },
-    "codex": { "enabled": true }
+    "codex": { "enabled": true },
+    "pi": { "enabled": true }
   }
 }
 ```
 
-Per-harness on/off switch, so you can adopt the Codex side gradually — turn capture on for one
-harness while leaving the other exactly as it is. Off for a harness means **every** hook that
+Per-harness on/off switch, so you can adopt a new harness gradually — turn capture on for one
+harness while leaving the others exactly as they are. A `config.json` written before a harness
+existed does not list it, and that harness defaults to on: the merge fills the missing key in
+before validation. Off for a harness means **every** hook that
 harness invokes skips capture, injection and pointers entirely: no inbox writes, no context
 injection, nothing recorded beyond the stats line that a hook fired at all. Unlike `hooks.*`,
 which is per lifecycle event, this key is per harness — the two combine, so `hooks.stop.enabled:
-false` still turns Stop off everywhere even if both harnesses are individually on.
+false` still turns Stop off everywhere even if every harness is individually on.
 
 **Honored** (`src/core/hook.ts`) — `runHook()` resolves the invoking harness and checks
 `hosts.<host>.enabled` before reading stdin or calling into the hook body, the same choke point

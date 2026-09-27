@@ -57,10 +57,11 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
 
 ### `mehmory init [--host <name>] [--uninstall]`
 
-`--host` selects the harness to wire mehmory into: `claude-code` (the default) or `codex`.
-`--uninstall` reverses the wiring, and requires a non-default `--host` — Claude Code installs
-and removes mehmory through its own plugin system, so there is nothing there for `init` to
-undo.
+`--host` selects the harness to wire mehmory into: `claude-code` (the default), `codex` or
+`pi`. `--uninstall` reverses the wiring, and only `--host codex` has any — Claude Code and Pi
+install and remove mehmory through their own plugin and package systems, so there is nothing
+there for `init` to undo. On either of those, `--uninstall` exits 1 with `E_USAGE` and names
+the harness's own removal command as the fix.
 
 #### Default host
 
@@ -132,6 +133,20 @@ result, and **never turns the hooks feature back off** — the flag is Codex's, 
 tools' hooks depend on it.
 
 Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
+
+#### Pi host
+
+Pi installs mehmory as a Pi package (`pi install git:github.com/elderfo/mehmory`), and the
+package manifest in `package.json` gives Pi both halves: the extension
+`hooks/pi-extension.mjs` and the `skills/` directory. So `init --host pi` writes nothing into
+Pi's configuration. It creates the store exactly as the default host does, checks the Node
+version, and ends by naming that `pi install` command, prefixed "in a shell". `--json` puts
+the command in `data.next`.
+
+The extension spawns the same five hook bundles every other harness runs, with `node` from
+`PATH` (see `docs/WORLD_MODEL.md` A29). Skills are invoked as `/skill:<name>`, and every
+line mehmory prints inside a Pi session names them that way. `onboard` does not read Pi
+sessions; a Pi project starts from the hooks capturing forward.
 
 ### `mehmory onboard [--project [<key>]|--global] [--dry-run] [--sessions N] [--max-bytes N] [--projects N] [--resume]`
 

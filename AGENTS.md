@@ -6,7 +6,7 @@
 mehmory/
 ├── src/
 │   ├── core/
-│   │   ├── home.ts            # Store root path, env overrides (A); run-4: codexHome() ($CODEX_HOME, default ~/.codex)
+│   │   ├── home.ts            # Store root path, env overrides (A); run-4: codexHome() ($CODEX_HOME, default ~/.codex); piSessionsDir() (A29)
 │   │   ├── errors.ts          # Typed errors, logging, fail-open (A)
 │   │   ├── fs.ts              # Atomic writes, append (C)
 │   │   ├── lock.ts            # Project-level locking (C)
@@ -37,12 +37,14 @@ mehmory/
 │   │   ├── stop.ts             # run-3: reads stop.capture_threshold from config (L)
 │   │   ├── pre-compact.ts
 │   │   ├── session-end.ts
+│   │   ├── pi-extension.ts    # Pi's hooks.json: in-process runner that spawns the five bundles with host `pi` (A29)
 │   │   └── inbox-tx.ts        # bundled transactional helper for skills; run-3: config-aware redact() call site (L)
 │   ├── schema/
 │   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A); run-3: index-line format constant (L)
 │   ├── transcript/
 │   │   ├── reader.ts          # Claude Code JSONL transcript reader, incremental parsing (D)
 │   │   ├── codex.ts           # Codex rollout reader: event envelope → normalized record
+│   │   ├── pi.ts              # Pi session reader + stripPiSkillEnvelope (A29)
 │   │   └── host.ts            # readSession(path, host) — the only harness branch there is
 │   ├── distill/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
@@ -100,14 +102,19 @@ mehmory/
 │   ├── hooks-host.test.ts     # run-4: hook adapters branch on the resolved host, not env-sniff
 │   ├── hooks-codex.test.ts    # run-4: hook adapters against Codex-shaped payloads
 │   ├── transcript-codex.test.ts # run-4: Codex rollout reader normalization
+│   ├── transcript-pi.test.ts  # Pi session reader normalization, skill-envelope unwrapping
+│   ├── hooks-pi.test.ts       # hook bundles against Pi-shaped payloads and session files
+│   ├── pi-extension.test.ts   # the built Pi extension driven through a fake Pi API
+│   ├── cli-init-pi.test.ts    # `mehmory init --host pi` and its `--uninstall` refusal
 │   ├── cli-init-codex.test.ts # run-4: `mehmory init --host codex` install/uninstall
 │   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
 │   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
 │   ├── agent.test.ts          # run-5: src/core/agent.ts name resolution + validation
-│   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures
+│   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures;
+│                               # pi-*.jsonl, pi-*.distilled.json: synthetic Pi session fixtures
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
-├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L)
+├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L); `pi` package manifest (A29)
 ├── tsconfig.json               # strict: true, no any (A)
 ├── tsup.config.ts              # ESM-only output (A10); run-3: CLI bundle entry, splitting: false (L)
 ├── vitest.config.ts             # Test runner config (A)
@@ -122,7 +129,7 @@ mehmory/
 ├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
     ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
-    │                          # run-4: A22–A26; run-5: A27 (C, X)
+    │                          # run-4: A22–A26; run-5: A27; A28 Codex trust; A29 Pi host (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
