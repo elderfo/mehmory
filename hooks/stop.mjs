@@ -3,12 +3,12 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-IBEFNJ6W.mjs";
+} from "./chunk-2QUQX2NA.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-2REIYSZQ.mjs";
+} from "./chunk-PHZ2VFMC.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";
@@ -28,7 +28,8 @@ JSON
 }
 var STOP_NUDGES = {
   "claude-code": { carriesCommand: false, output: (reason) => ({ context: reason }) },
-  codex: { carriesCommand: true, output: (reason) => ({ json: { decision: "block", reason } }) }
+  codex: { carriesCommand: true, output: (reason) => ({ json: { decision: "block", reason } }) },
+  pi: { carriesCommand: true, output: (reason) => ({ context: reason }) }
 };
 function blockReason(key, sessionId, host) {
   const save = STOP_NUDGES[host].carriesCommand ? `Use ${skillRef(host, "remember")}, or run:

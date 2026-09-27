@@ -37,6 +37,25 @@ describe('hermetic subprocess env', () => {
     expect(isHermeticHome(childHome)).toBe(true);
   });
 
+  it('strips the Pi session variables a Pi-hosted test run would otherwise leak', () => {
+    process.env['PI_SESSION_ID'] = 'outer-pi-session';
+    process.env['PI_CODING_AGENT_SESSION_DIR'] = '/real/pi/sessions';
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          '-e',
+          'process.stdout.write(JSON.stringify([process.env.PI_SESSION_ID ?? null, process.env.PI_CODING_AGENT_SESSION_DIR ?? null]))',
+        ],
+        { env: hermeticEnv(), encoding: 'utf-8' }
+      );
+      expect(JSON.parse(output)).toEqual([null, null]);
+    } finally {
+      Reflect.deleteProperty(process.env, 'PI_SESSION_ID');
+      Reflect.deleteProperty(process.env, 'PI_CODING_AGENT_SESSION_DIR');
+    }
+  });
+
   it('passes extra variables through', () => {
     expect(hermeticEnv({ CLAUDE_PROJECT_DIR: '/tmp/x' })['CLAUDE_PROJECT_DIR']).toBe('/tmp/x');
   });

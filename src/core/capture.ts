@@ -9,7 +9,7 @@
 
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { codexHome, mehmoryHome } from './home.js';
+import { codexHome, mehmoryHome, piSessionsDir } from './home.js';
 import { appendRecord, listDir, lstat, mkdir, pathExists, readFile, realpath, stat } from './fs.js';
 import { withProjectLock, withSessionLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
@@ -187,6 +187,7 @@ export const ROUTING_BLOCK = [
 const SKILL_REFS = {
   'claude-code': skill => `/mehmory:${skill}`,
   codex: skill => `the mehmory-${skill} skill`,
+  pi: skill => `/skill:${skill}`,
 } satisfies Record<InboxHost, (skill: string) => string>;
 
 /**
@@ -195,11 +196,12 @@ const SKILL_REFS = {
  * Slash commands are a Claude Code plugin feature. Codex installs the same six skills as
  * flat, prefix-named directories under `$CODEX_HOME/skills/` and has no slash commands at
  * all, so telling a Codex user to run `/mehmory:integrate` names something that does not
- * exist. The host is already threaded into every hook body (A21/A23) — this is the one
+ * exist. Pi loads the package's `skills/` directory and exposes each skill by its
+ * frontmatter `name`, unprefixed, as `/skill:<name>`. The host is already threaded into every hook body (A21/A23) — this is the one
  * thing the user actually reads, so it is the one thing that has to be shaped by it.
  *
  * The `remember:` prefix deliberately is *not* host-shaped: it is delivered by the
- * UserPromptSubmit hook, which mehmory wires on both harnesses.
+ * UserPromptSubmit hook, which mehmory wires on every harness.
  */
 export function skillRef(host: InboxHost, skill: string): string {
   return SKILL_REFS[host](skill);
@@ -315,6 +317,7 @@ export function distillDelta(
 const TRANSCRIPT_ROOTS = {
   'claude-code': () => join(homedir(), '.claude', 'projects'),
   codex: () => join(codexHome(), 'sessions'),
+  pi: piSessionsDir,
 } satisfies Record<InboxHost, () => string>;
 
 function isApprovedTranscript(path: string, host: InboxHost): boolean {

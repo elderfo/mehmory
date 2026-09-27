@@ -15,6 +15,13 @@ function codexHome() {
   }
   return join(homedir(), ".codex");
 }
+function piSessionsDir() {
+  const envDir = process.env.PI_CODING_AGENT_SESSION_DIR;
+  if (envDir) {
+    return envDir;
+  }
+  return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "sessions");
+}
 function statePath(...segments) {
   return join(mehmoryHome(), ".state", ...segments);
 }
@@ -459,7 +466,7 @@ function parseIndexLine(line) {
   return { slug: m[1], summary: m[2] ?? "" };
 }
 var INBOX_ENTRY_ID_LENGTH = 16;
-var INBOX_HOSTS = ["claude-code", "codex"];
+var INBOX_HOSTS = ["claude-code", "codex", "pi"];
 var DEFAULT_INBOX_HOST = "claude-code";
 var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 function inboxEntryId(seed) {
@@ -538,7 +545,8 @@ var DEFAULTS = {
   },
   hosts: {
     "claude-code": { enabled: true },
-    codex: { enabled: true }
+    codex: { enabled: true },
+    pi: { enabled: true }
   },
   inbox: {
     nudge_entries: 10,
@@ -1531,6 +1539,7 @@ function redact(text, options = {}) {
 export {
   mehmoryHome,
   codexHome,
+  piSessionsDir,
   statePath,
   shellQuote,
   logError,

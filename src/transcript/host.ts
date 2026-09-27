@@ -9,6 +9,7 @@
 
 import { readTranscript, type ReadTranscriptResult } from './reader.js';
 import { readCodexRollout } from './codex.js';
+import { readPiSession } from './pi.js';
 import type { InboxHost } from '../schema/format.js';
 
 /**
@@ -22,6 +23,7 @@ export type Host = InboxHost;
 const READERS = {
   'claude-code': readTranscript,
   codex: readCodexRollout,
+  pi: readPiSession,
 } satisfies Record<Host, (path: string, startOffset?: number) => ReadTranscriptResult>;
 
 /**

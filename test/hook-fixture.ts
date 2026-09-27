@@ -35,11 +35,12 @@ export interface HookRun {
  *
  * `args` are extra command-line arguments, e.g. the host argument `hooks.json` passes
  * on every command (`["claude-code"]`) — omit it to exercise the no-argument fallback.
+ * `env` adds variables on top of the hermetic environment.
  */
 export function runHook(
   hook: HookName,
   input: Record<string, unknown>,
-  options: { cwd?: string; args?: readonly string[] } = {}
+  options: { cwd?: string; args?: readonly string[]; env?: Record<string, string> } = {}
 ): HookRun {
   const script = join(HOOKS_DIR, `${hook}.mjs`);
   if (!existsSync(script)) {
@@ -47,7 +48,7 @@ export function runHook(
   }
   const result = spawnSync(process.execPath, [script, ...(options.args ?? [])], {
     input: JSON.stringify(input),
-    env: hermeticEnv(),
+    env: hermeticEnv(options.env),
     encoding: 'utf-8',
     cwd: options.cwd ?? createTempDir('mehmory-hook-cwd'),
   });
@@ -196,6 +197,48 @@ export function writeCodexRollout(
         payload: { type: 'message', role, content: [{ type: 'input_text', text: message.text }] },
       })
     );
+  });
+
+  writeFileSync(path, `${lines.join('\n')}\n`);
+  return path;
+}
+
+/**
+ * Write a Pi session file where a spawned hook's default Pi session root resolves:
+ * `hermeticEnv` sets the child's HOME to MEHMORY_HOME, so `~/.pi/agent/sessions` is
+ * under the temp store. Mirrors the measured shape: a `session` header, then `message`
+ * entries whose user content is a list of text blocks.
+ */
+export function writePiSession(
+  messages: readonly { text: string; role?: 'user' | 'assistant' }[],
+  sessionId = 'dd000000-0000-4000-8000-00000000pi01'
+): string {
+  const dir = join(mehmoryHome(), '.pi', 'agent', 'sessions', '--tmp-project--');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `2026-09-01T10-00-00-000Z_${sessionId}.jsonl`);
+
+  const lines: string[] = [
+    JSON.stringify({
+      type: 'session',
+      version: 3,
+      id: sessionId,
+      timestamp: '2026-09-01T10:00:00.000Z',
+      cwd: '/tmp/project',
+    }),
+  ];
+  let parentId: string | null = null;
+  messages.forEach((message, i) => {
+    const id = `e${String(i).padStart(7, '0')}`;
+    lines.push(
+      JSON.stringify({
+        type: 'message',
+        id,
+        parentId,
+        timestamp: `2026-09-01T10:00:${String(10 + i).padStart(2, '0')}.000Z`,
+        message: { role: message.role ?? 'user', content: [{ type: 'text', text: message.text }] },
+      })
+    );
+    parentId = id;
   });
 
   writeFileSync(path, `${lines.join('\n')}\n`);

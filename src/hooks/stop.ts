@@ -61,10 +61,14 @@ interface StopNudge {
  * Codex keeps `{decision, reason}`: the `hookSpecificOutput` envelope that is valid on
  * every other event is rejected outright on Codex's Stop (D9), so it is not a portable
  * default — only a Claude Code refinement.
+ *
+ * Pi's model cannot run a slash command either, so it gets the command; its Stop is the
+ * mehmory extension, which turns `additionalContext` into a custom message (A29).
  */
 const STOP_NUDGES = {
   'claude-code': { carriesCommand: false, output: reason => ({ context: reason }) },
   codex: { carriesCommand: true, output: reason => ({ json: { decision: 'block', reason } }) },
+  pi: { carriesCommand: true, output: reason => ({ context: reason }) },
 } satisfies Record<InboxHost, StopNudge>;
 
 /**

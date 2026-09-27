@@ -138,12 +138,12 @@ export function formatIndexLine(slug: string, summary: string): string {
 export const INBOX_ENTRY_ID_LENGTH = 16;
 
 /**
- * The closed set of harnesses that can capture an inbox entry (measured against
- * `.research/codex-spike/VERDICT.md`: mehmory runs under exactly these two). Not a
- * general provenance system — a fixed enum, matching what the rest of the effort
- * threads through hook and CLI arguments.
+ * The closed set of harnesses that can capture an inbox entry (Codex measured against
+ * `.research/codex-spike/VERDICT.md`, Pi against pi-coding-agent 0.87.1). Not a general
+ * provenance system — a fixed enum, matching what the rest of the effort threads
+ * through hook and CLI arguments.
  */
-export const INBOX_HOSTS = ['claude-code', 'codex'] as const;
+export const INBOX_HOSTS = ['claude-code', 'codex', 'pi'] as const;
 export type InboxHost = (typeof INBOX_HOSTS)[number];
 
 /** Host attributed to entries written before the `host=` field existed (FORMAT_VERSION 1). */
@@ -152,7 +152,7 @@ export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
 /**
  * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 3):
  *
- *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex>[ agent=<name>] ts=<iso8601>-->`
+ *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex|pi>[ agent=<name>] ts=<iso8601>-->`
  *
  * The text is human-readable markdown; the trailing HTML comment carries machine
  * identity and is invisible in rendered markdown. Exactly one line per entry, so a

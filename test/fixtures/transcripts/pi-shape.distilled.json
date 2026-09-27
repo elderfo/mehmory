@@ -1,0 +1,35 @@
+[
+  {
+    "id": "992f4546af46ff33c5e0890dcce63b7a8541ed4fe40be11505a11f67eca90b35",
+    "pattern": "user_message",
+    "content": "We decided to keep the release notes in CHANGELOG.md only.",
+    "source": {
+      "sessionId": "dd000000-0000-4000-8000-000000000000",
+      "recordUuid": "a0000004",
+      "recordType": "message",
+      "lineNumber": 0
+    }
+  },
+  {
+    "id": "b73d777cb5008852413a374d465eec1c4083d563da778aea8abeabb044784a67",
+    "pattern": "user_message",
+    "content": "the staging database is read-only on Fridays",
+    "source": {
+      "sessionId": "dd000000-0000-4000-8000-000000000000",
+      "recordUuid": "a0000007",
+      "recordType": "message",
+      "lineNumber": 2
+    }
+  },
+  {
+    "id": "bce49347713305fde0cc1ca527cb7dd1ce33d651b51a32ce35cacd2ca1a3ed93",
+    "pattern": "correction_pattern",
+    "content": "Correction: Actually the deploy script was wrong; use the blue-green target instead.",
+    "source": {
+      "sessionId": "dd000000-0000-4000-8000-000000000000",
+      "recordUuid": "a000000a",
+      "recordType": "message",
+      "lineNumber": 3
+    }
+  }
+]

@@ -28,6 +28,7 @@ import {
   mkdir,
   pathExists,
   pendingWarnings,
+  piSessionsDir,
   readFile,
   readFileFrom,
   readFileFromNoFollow,
@@ -44,7 +45,7 @@ import {
   statePath,
   withProjectLock,
   withSessionLock
-} from "./chunk-2REIYSZQ.mjs";
+} from "./chunk-PHZ2VFMC.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -595,17 +596,75 @@ function asRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
 
+// src/transcript/pi.ts
+import { createHash as createHash2 } from "crypto";
+var SKILL_ENVELOPE = /^<skill name="[^"]+" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/;
+function stripPiSkillEnvelope(text) {
+  const match = SKILL_ENVELOPE.exec(text);
+  if (!match) return text;
+  return match[1]?.trim() ?? "";
+}
+function readPiSession(path, startOffset = 0) {
+  const { records: entries, skipped, endOffset } = readTranscript(path, startOffset);
+  const records = [];
+  let sessionId;
+  for (const entry of entries) {
+    if (entry.type === "session") {
+      const id2 = entry["id"];
+      if (typeof id2 === "string" && id2) sessionId = id2;
+      continue;
+    }
+    if (entry.type !== "message") continue;
+    const message = asRecord2(entry["message"]);
+    const role = message?.["role"];
+    if (role !== "user" && role !== "assistant") continue;
+    const raw = contentText(message?.["content"]);
+    const text = role === "user" ? stripPiSkillEnvelope(raw) : raw;
+    if (!text) continue;
+    const timestamp = typeof entry["timestamp"] === "string" ? entry["timestamp"] : "";
+    const id = entry["id"];
+    records.push({
+      type: "message",
+      role,
+      text,
+      timestamp,
+      uuid: typeof id === "string" && id ? id : syntheticUuid2(timestamp, role, text),
+      ...sessionId === void 0 ? {} : { sessionId }
+    });
+  }
+  return { records, skipped, endOffset };
+}
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts = [];
+  for (const block of content) {
+    const record = asRecord2(block);
+    if (record?.["type"] === "text" && typeof record["text"] === "string" && record["text"]) {
+      parts.push(record["text"]);
+    }
+  }
+  return parts.join("\n");
+}
+function syntheticUuid2(timestamp, role, text) {
+  return createHash2("sha256").update(timestamp).update(role).update(text).digest("hex").slice(0, 32);
+}
+function asRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+
 // src/transcript/host.ts
 var READERS = {
   "claude-code": readTranscript,
-  codex: readCodexRollout
+  codex: readCodexRollout,
+  pi: readPiSession
 };
 function readSession(path, host, startOffset = 0) {
   return READERS[host](path, startOffset);
 }
 
 // src/distill/distill.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 
 // src/distill/patterns.ts
 var DISTILL_PATTERNS = [
@@ -733,7 +792,7 @@ function distill(records, fallbackSessionId = "", secrets) {
       if (pattern.matches(record)) {
         const content = pattern.extract(record);
         if (content) {
-          const hash = createHash2("sha256").update(sessionId).update(record.uuid).digest("hex");
+          const hash = createHash3("sha256").update(sessionId).update(record.uuid).digest("hex");
           entries.push({
             id: hash,
             pattern: pattern.name,
@@ -823,7 +882,8 @@ var ROUTING_BLOCK = [
 ].join("\n");
 var SKILL_REFS = {
   "claude-code": (skill) => `/mehmory:${skill}`,
-  codex: (skill) => `the mehmory-${skill} skill`
+  codex: (skill) => `the mehmory-${skill} skill`,
+  pi: (skill) => `/skill:${skill}`
 };
 function skillRef(host, skill) {
   return SKILL_REFS[host](skill);
@@ -886,7 +946,8 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
 }
 var TRANSCRIPT_ROOTS = {
   "claude-code": () => join2(homedir(), ".claude", "projects"),
-  codex: () => join2(codexHome(), "sessions")
+  codex: () => join2(codexHome(), "sessions"),
+  pi: piSessionsDir
 };
 function isApprovedTranscript(path, host) {
   const candidate = resolve(path);

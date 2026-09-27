@@ -135,6 +135,7 @@ const DEFAULTS: MehmoryConfig = {
   hosts: {
     'claude-code': { enabled: true },
     codex: { enabled: true },
+    pi: { enabled: true },
   },
   inbox: {
     nudge_entries: 10,

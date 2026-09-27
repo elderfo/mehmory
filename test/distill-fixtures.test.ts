@@ -13,9 +13,18 @@ import { readSession, type Host } from '../src/transcript/host.js';
  * shape IS the normalized shape; a Codex rollout's is not, so the fixture would have
  * asserted against a record stream no production path ever produces.
  *
- * A `codex-` filename prefix names the host — the only harness signal in the test, and
- * it stops at `readSession`. Nothing below it knows which harness wrote the fixture.
+ * A filename prefix names the host — the only harness signal in the test, and it stops
+ * at `readSession`. Nothing below it knows which harness wrote the fixture.
  */
+const PREFIX_HOSTS: readonly (readonly [string, Host])[] = [
+  ['codex-', 'codex'],
+  ['pi-', 'pi'],
+];
+
+function fixtureHost(baseName: string): Host {
+  return PREFIX_HOSTS.find(([prefix]) => baseName.startsWith(prefix))?.[1] ?? 'claude-code';
+}
+
 describe('distill fixtures (normative)', () => {
   const fixtureDir = join(__dirname, 'fixtures', 'transcripts');
 
@@ -23,7 +32,7 @@ describe('distill fixtures (normative)', () => {
 
   for (const jsonlFile of jsonlFiles) {
     const baseName = jsonlFile.replace('.jsonl', '');
-    const host: Host = baseName.startsWith('codex-') ? 'codex' : 'claude-code';
+    const host = fixtureHost(baseName);
     const jsonlPath = join(fixtureDir, jsonlFile);
     const expectedPath = join(fixtureDir, `${baseName}.distilled.json`);
 

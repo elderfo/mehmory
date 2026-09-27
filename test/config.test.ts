@@ -52,6 +52,28 @@ describe('loadConfig', () => {
     }
   });
 
+  it('turns a host on by default that a config written before it existed does not list', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({ hosts: { 'claude-code': { enabled: true }, codex: { enabled: false } } })
+    );
+
+    expect(loadConfig().hosts).toEqual({
+      'claude-code': { enabled: true },
+      codex: { enabled: false },
+      pi: { enabled: true },
+    });
+  });
+
+  it('rejects a config whose pi toggle has the wrong type, like any other host', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({ hosts: { codex: { enabled: false }, pi: { enabled: 'no' } } })
+    );
+
+    expect(loadConfig().hosts.codex.enabled).toBe(true);
+  });
+
   it('detects missing config.json and returns full defaults without throwing', () => {
     const configPath = join(tempDir, 'config.json');
 
