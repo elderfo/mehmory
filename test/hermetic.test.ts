@@ -56,6 +56,16 @@ describe('hermetic subprocess env', () => {
     }
   });
 
+  it('strips an inherited MEHMORY_ACTIVE_HOST, which a Pi-hosted run would set to pi', () => {
+    process.env['MEHMORY_ACTIVE_HOST'] = 'pi';
+    try {
+      expect(hermeticEnv()['MEHMORY_ACTIVE_HOST']).toBeUndefined();
+      expect(hermeticEnv({ MEHMORY_ACTIVE_HOST: 'none' })['MEHMORY_ACTIVE_HOST']).toBe('none');
+    } finally {
+      Reflect.deleteProperty(process.env, 'MEHMORY_ACTIVE_HOST');
+    }
+  });
+
   it('passes extra variables through', () => {
     expect(hermeticEnv({ CLAUDE_PROJECT_DIR: '/tmp/x' })['CLAUDE_PROJECT_DIR']).toBe('/tmp/x');
   });

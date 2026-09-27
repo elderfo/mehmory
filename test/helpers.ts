@@ -64,9 +64,11 @@ export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessE
   }
 
   // The suite itself may run inside a Pi session, whose exports would point a spawned
-  // hook at the developer's real Pi session store instead of the temp HOME's default.
+  // hook at the developer's real Pi session store instead of the temp HOME's default,
+  // and whose extension sets MEHMORY_ACTIVE_HOST=pi, which would silence every
+  // claude-code and codex hook the suite spawns.
   const inherited = { ...process.env };
-  for (const key of PI_SESSION_ENV) Reflect.deleteProperty(inherited, key);
+  for (const key of [...PI_SESSION_ENV, 'MEHMORY_ACTIVE_HOST']) Reflect.deleteProperty(inherited, key);
 
   const env = { ...inherited, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
 
