@@ -3,12 +3,14 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-2QUQX2NA.mjs";
+} from "./chunk-STCJQ5IS.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-PHZ2VFMC.mjs";
+} from "./chunk-CU44STGN.mjs";
+import "./chunk-YZTNJJDP.mjs";
+import "./chunk-NTSIN6Z2.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";

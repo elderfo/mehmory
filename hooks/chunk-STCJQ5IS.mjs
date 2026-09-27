@@ -1,29 +1,42 @@
 import {
   INBOX_HOSTS,
-  INDEX_LOCK_RETRY_COUNT,
-  INDEX_LOCK_RETRY_INTERVAL_MS,
   MAX_INJECTION_BUDGET_TOKENS,
-  QUEUE_CLAIM_ATTEMPTS,
-  QUEUE_STALE_MS,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
-  appendRecord,
-  atomicWrite,
-  codexHome,
   currentAgentName,
   deleteSessionState,
-  failOpen,
   inboxEntryId,
   isContainedProjectKey,
   isPaused,
   isSafeAgentName,
   isSessionFinalized,
-  listDir,
   listPendingSessions,
   loadConfig,
+  markSessionFinalized,
+  readSessionState,
+  redact,
+  rememberSessionOrigin,
+  resolveProjectKey,
+  sessionGeneration,
+  withProjectLock,
+  withSessionLock
+} from "./chunk-CU44STGN.mjs";
+import {
+  readPiSession,
+  readTranscript
+} from "./chunk-YZTNJJDP.mjs";
+import {
+  INDEX_LOCK_RETRY_COUNT,
+  INDEX_LOCK_RETRY_INTERVAL_MS,
+  QUEUE_CLAIM_ATTEMPTS,
+  QUEUE_STALE_MS,
+  appendRecord,
+  atomicWrite,
+  codexHome,
+  failOpen,
+  listDir,
   logError,
   lstat,
-  markSessionFinalized,
   mehmoryHome,
   mkdir,
   pathExists,
@@ -31,21 +44,13 @@ import {
   piSessionsDir,
   readFile,
   readFileFrom,
-  readFileFromNoFollow,
-  readSessionState,
   readStdin,
   realpath,
-  redact,
-  rememberSessionOrigin,
   remove,
   rename,
-  resolveProjectKey,
-  sessionGeneration,
   stat,
-  statePath,
-  withProjectLock,
-  withSessionLock
-} from "./chunk-PHZ2VFMC.mjs";
+  statePath
+} from "./chunk-NTSIN6Z2.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -530,34 +535,6 @@ function truncateToTokens(text, targetTokens) {
   return { text: truncated, tokens };
 }
 
-// src/transcript/reader.ts
-function readTranscript(path, startOffset = 0) {
-  const begin = startOffset > 0 ? startOffset : 0;
-  const contents = readFileFromNoFollow(path, begin);
-  const lastNewline = contents.lastIndexOf("\n");
-  const consumable = lastNewline >= 0 ? contents.slice(0, lastNewline + 1) : "";
-  const endOffset = begin + Buffer.byteLength(consumable, "utf-8");
-  const lines = consumable.split("\n");
-  const records = [];
-  let skipped = 0;
-  for (const line of lines) {
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(line);
-      if (typeof parsed !== "object" || parsed === null) {
-        skipped++;
-        continue;
-      }
-      records.push(parsed);
-    } catch {
-      skipped++;
-    }
-  }
-  return { records, skipped, endOffset };
-}
-
 // src/transcript/codex.ts
 import { createHash } from "crypto";
 function readCodexRollout(path, startOffset = 0) {
@@ -596,63 +573,6 @@ function asRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
 
-// src/transcript/pi.ts
-import { createHash as createHash2 } from "crypto";
-var SKILL_ENVELOPE = /^<skill name="[^"]+" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/;
-function stripPiSkillEnvelope(text) {
-  const match = SKILL_ENVELOPE.exec(text);
-  if (!match) return text;
-  return match[1]?.trim() ?? "";
-}
-function readPiSession(path, startOffset = 0) {
-  const { records: entries, skipped, endOffset } = readTranscript(path, startOffset);
-  const records = [];
-  let sessionId;
-  for (const entry of entries) {
-    if (entry.type === "session") {
-      const id2 = entry["id"];
-      if (typeof id2 === "string" && id2) sessionId = id2;
-      continue;
-    }
-    if (entry.type !== "message") continue;
-    const message = asRecord2(entry["message"]);
-    const role = message?.["role"];
-    if (role !== "user" && role !== "assistant") continue;
-    const raw = contentText(message?.["content"]);
-    const text = role === "user" ? stripPiSkillEnvelope(raw) : raw;
-    if (!text) continue;
-    const timestamp = typeof entry["timestamp"] === "string" ? entry["timestamp"] : "";
-    const id = entry["id"];
-    records.push({
-      type: "message",
-      role,
-      text,
-      timestamp,
-      uuid: typeof id === "string" && id ? id : syntheticUuid2(timestamp, role, text),
-      ...sessionId === void 0 ? {} : { sessionId }
-    });
-  }
-  return { records, skipped, endOffset };
-}
-function contentText(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts = [];
-  for (const block of content) {
-    const record = asRecord2(block);
-    if (record?.["type"] === "text" && typeof record["text"] === "string" && record["text"]) {
-      parts.push(record["text"]);
-    }
-  }
-  return parts.join("\n");
-}
-function syntheticUuid2(timestamp, role, text) {
-  return createHash2("sha256").update(timestamp).update(role).update(text).digest("hex").slice(0, 32);
-}
-function asRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
-}
-
 // src/transcript/host.ts
 var READERS = {
   "claude-code": readTranscript,
@@ -664,7 +584,7 @@ function readSession(path, host, startOffset = 0) {
 }
 
 // src/distill/distill.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 
 // src/distill/patterns.ts
 var DISTILL_PATTERNS = [
@@ -792,7 +712,7 @@ function distill(records, fallbackSessionId = "", secrets) {
       if (pattern.matches(record)) {
         const content = pattern.extract(record);
         if (content) {
-          const hash = createHash3("sha256").update(sessionId).update(record.uuid).digest("hex");
+          const hash = createHash2("sha256").update(sessionId).update(record.uuid).digest("hex");
           entries.push({
             id: hash,
             pattern: pattern.name,
