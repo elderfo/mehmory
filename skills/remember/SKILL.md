@@ -45,10 +45,10 @@ printf '%s\n' "$FACT" \
   | mehmory inbox-tx append
 ```
 
-`host` is which harness you are running under — `claude-code` or `codex` — and it is what
-the entry is attributed to. Take it from the state file rather than guessing; omit the
+`host` is which harness you are running under — `claude-code`, `codex` or `pi` — and it is
+what the entry is attributed to. Take it from the state file rather than guessing; omit the
 field entirely if the file has no `host`, and the helper derives it from `src` instead.
-Never send a value that is not one of those two: the helper rejects it, which is the
+Never send a value that is not one of those three: the helper rejects it, which is the
 point — a wrong host is a silently mis-attributed memory.
 
 Stdout is `{"appended":n,"skipped":m}`; `skipped` means that exact text was already in
