@@ -115,6 +115,11 @@ function resolveHost(arg) {
   if (trimmed && isKnownHost(trimmed)) return trimmed;
   return detectHostFromEnvironment();
 }
+function resolveActiveHost(raw) {
+  const trimmed = raw?.trim();
+  if (trimmed === "none") return "none";
+  return trimmed && isKnownHost(trimmed) ? trimmed : void 0;
+}
 function detectHostFromEnvironment() {
   if (process.env.CLAUDE_PLUGIN_ROOT) return "claude-code";
   return DEFAULT_HOST;
@@ -147,14 +152,20 @@ function renderHookOutput(event, result) {
     hookSpecificOutput: { hookEventName: event, additionalContext: result.context }
   });
 }
+function suppression(host, config, activeHost) {
+  if (!config.hosts[host].enabled) return "host_disabled";
+  if (activeHost !== void 0 && activeHost !== host) return "active_host";
+  return void 0;
+}
 function runHook(event, body) {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
+  const suppressed = suppression(host, config, resolveActiveHost(process.env["MEHMORY_ACTIVE_HOST"]));
   let result = {};
   let project = "unknown";
   try {
-    if (config.hosts[host].enabled) {
+    if (suppressed === void 0) {
       const input = parseHookInput(readStdin());
       project = resolveProjectKey(input.cwd ?? process.cwd());
       if (input.session_id.trim() === "") {
@@ -182,7 +193,14 @@ function runHook(event, body) {
     result = {};
   }
   try {
-    recordStat({ project, hook: event, host, ms: Date.now() - started, ...result.stats });
+    recordStat({
+      project,
+      hook: event,
+      host,
+      ms: Date.now() - started,
+      ...suppressed === void 0 ? {} : { suppressed },
+      ...result.stats
+    });
   } catch {
   }
   const out = renderHookOutput(event, result);
