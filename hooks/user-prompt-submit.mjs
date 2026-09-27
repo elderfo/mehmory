@@ -3,7 +3,7 @@ import {
   runHook,
   scopePaths,
   staleSessionStartWarning
-} from "./chunk-STCJQ5IS.mjs";
+} from "./chunk-5FHE47P3.mjs";
 import {
   appendInboxEntries,
   isPaused,
