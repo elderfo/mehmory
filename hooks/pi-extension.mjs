@@ -94,6 +94,7 @@ function runHook(hook, session, fields = {}) {
 function mehmory(pi) {
   const api = asRecord(pi);
   if (typeof api?.["on"] !== "function") return;
+  if (!process.env["MEHMORY_ACTIVE_HOST"]?.trim()) process.env["MEHMORY_ACTIVE_HOST"] = "pi";
   const on = (event, handler) => {
     try {
       api.on(event, async (raw, ctx) => {

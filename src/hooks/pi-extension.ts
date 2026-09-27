@@ -169,10 +169,15 @@ function runHook(hook: PiHook, session: PiSession, fields: Readonly<Record<strin
  *
  * Injection rides `before_agent_start`, not `session_start`: Pi creates the session file
  * lazily and has no prompt to attach a message to until the first one arrives.
+ *
+ * Claiming `MEHMORY_ACTIVE_HOST` reaches every process Pi starts, including a Claude Code
+ * nested under a provider such as claude-bridge, whose mehmory plugin would otherwise
+ * capture this conversation a second time (A30). A value the user exported is kept.
  */
 export default function mehmory(pi: unknown): void {
   const api = asRecord(pi);
   if (typeof api?.['on'] !== 'function') return;
+  if (!process.env['MEHMORY_ACTIVE_HOST']?.trim()) process.env['MEHMORY_ACTIVE_HOST'] = 'pi';
   const on = (event: string, handler: (event: Record<string, unknown>, session: PiSession) => Promise<unknown>): void => {
     try {
       (api as unknown as PiApi).on(event, async (raw, ctx) => {

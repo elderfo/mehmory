@@ -78,9 +78,9 @@ describe('Pi extension', () => {
   beforeEach(() => {
     // The extension spawns hooks with this process's env, so make it the hermetic one:
     // the temp store as HOME, and no Pi variables inherited from a Pi-hosted test run.
-    for (const name of ['HOME', 'PATH', ...PI_SESSION_ENV]) saved.set(name, process.env[name]);
+    for (const name of ['HOME', 'PATH', 'MEHMORY_ACTIVE_HOST', ...PI_SESSION_ENV]) saved.set(name, process.env[name]);
     process.env['HOME'] = process.env['MEHMORY_HOME'];
-    for (const name of PI_SESSION_ENV) Reflect.deleteProperty(process.env, name);
+    for (const name of ['MEHMORY_ACTIVE_HOST', ...PI_SESSION_ENV]) Reflect.deleteProperty(process.env, name);
 
     cwd = createTempDir('mehmory-project');
     key = keyFor(cwd);
@@ -101,6 +101,25 @@ describe('Pi extension', () => {
       if (value === undefined) Reflect.deleteProperty(process.env, name);
       else process.env[name] = value;
     }
+  });
+
+  it('claims MEHMORY_ACTIVE_HOST for pi when it is unset or empty', async () => {
+    await register();
+    expect(process.env['MEHMORY_ACTIVE_HOST']).toBe('pi');
+
+    process.env['MEHMORY_ACTIVE_HOST'] = '';
+    await register();
+    expect(process.env['MEHMORY_ACTIVE_HOST']).toBe('pi');
+  });
+
+  it('keeps an exported MEHMORY_ACTIVE_HOST, and its hooks honor it', async () => {
+    process.env['MEHMORY_ACTIVE_HOST'] = 'claude-code';
+    const handlers = await register();
+    expect(process.env['MEHMORY_ACTIVE_HOST']).toBe('claude-code');
+
+    expect(await fire(handlers, 'before_agent_start', { prompt: 'remember: staging needs the VPN' }, ctx)).toBeUndefined();
+    expect(readIfPresent(paths(key).inbox)).toBe('');
+    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'pi', suppressed: 'active_host' });
   });
 
   it('delivers the SessionStart frame on the first prompt only', async () => {
