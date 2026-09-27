@@ -26,7 +26,7 @@ mehmory/
 │   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
 │   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
-│   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
+│   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23); MEHMORY_ACTIVE_HOST resolution (A30)
 │   │   ├── agent.ts           # run-5: which agent is running — name resolution, MEHMORY_AGENT before config.identity.agent (A21, A27)
 │   │   ├── agent-name.ts      # run-5: the single-segment agent-name rule, import-free so schema/format.ts can share it without pulling in errors.ts
 │   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
@@ -100,6 +100,7 @@ mehmory/
 │   ├── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
 │   ├── host.test.ts           # run-4: src/core/host.ts resolution
 │   ├── hooks-host.test.ts     # run-4: hook adapters branch on the resolved host, not env-sniff
+│   ├── hooks-active-host.test.ts # MEHMORY_ACTIVE_HOST gates every host but the one it names (A30)
 │   ├── hooks-codex.test.ts    # run-4: hook adapters against Codex-shaped payloads
 │   ├── transcript-codex.test.ts # run-4: Codex rollout reader normalization
 │   ├── transcript-pi.test.ts  # Pi session reader normalization, skill-envelope unwrapping
@@ -129,7 +130,8 @@ mehmory/
 ├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
     ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
-    │                          # run-4: A22–A26; run-5: A27; A28 Codex trust; A29 Pi host (C, X)
+    │                          # run-4: A22–A26; run-5: A27; A28 Codex trust; A29 Pi host;
+    │                          # A30 MEHMORY_ACTIVE_HOST (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)

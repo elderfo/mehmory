@@ -68,6 +68,8 @@ pi install git:github.com/elderfo/mehmory
 
 `pi remove git:github.com/elderfo/mehmory` takes it out again. The hooks run with `node` from
 your `PATH`, so Node 22+ has to be on it even if Pi itself runs on another runtime.
+Pi claims mehmory for its whole process tree (`MEHMORY_ACTIVE_HOST=pi`), so a Claude Code it runs
+underneath does not capture the same conversation twice.
 
 ### 2. Initialize the store
 

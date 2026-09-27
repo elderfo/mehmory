@@ -17,6 +17,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and Stop capture read Pi's session files, and the Stop nudge arrives as a Pi message.
   `mehmory init --host pi` creates the store and names the install; `hosts.pi.enabled` turns
   it off. Existing `config.json` files load unchanged and get `pi` enabled.
+- **`MEHMORY_ACTIVE_HOST` names the one harness that runs mehmory.** Set to `claude-code`,
+  `codex`, `pi`, or `none`, every other harness's hooks skip capture and injection. The Pi
+  extension sets it to `pi` unless you exported a value, so a Claude Code that a Pi provider
+  runs nested no longer captures the same conversation as `host=claude-code`. Unset, empty, or
+  unrecognized means no restriction. `/mehmory:remember` and `mehmory inbox-tx` are not gated.
+- **`mehmory stats` counts suppressed hooks.** Each harness line shows invocations skipped by
+  `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST`, and `--json` carries them as
+  `hosts[].suppressed`.
 
 ### Fixed
 

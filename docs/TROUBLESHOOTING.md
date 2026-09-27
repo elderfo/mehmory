@@ -307,14 +307,17 @@ started with, or is older than 22, every hook fails and nothing is injected or c
 no message. Run `node --version` in the same shell you start `pi` from. `mehmory stats` shows
 no `host: pi` invocations when this is the cause.
 
-## Not an error: Pi and a Claude Code-backed provider both capture
+## Not an error: Claude Code captures nothing when started from Pi
 
-If Pi's model provider runs Claude Code underneath it, and the mehmory Claude Code plugin is
-also installed, one Pi turn fires two sets of hooks: the Pi extension's (`host=pi`) and the
-nested Claude Code session's (`host=claude-code`). Measured with such a provider: the nested
-session saw mehmory's injected context as part of its user message and filed it into the
-inbox. Turn one side off with `hosts.claude-code.enabled: false` or `hosts.pi.enabled: false`
-in `config.json` (`docs/CONFIG.md`), or uninstall the Claude Code plugin on that machine.
+The Pi extension sets `MEHMORY_ACTIVE_HOST=pi` for Pi and every process it starts, so a Claude
+Code session that Pi's provider runs underneath it (claude-bridge, for example) stays quiet
+and one Pi conversation is captured once, as `host=pi`. Before this, the nested session also
+captured it as `host=claude-code` and filed mehmory's own injected frame into the inbox.
+
+The same variable silences a `claude` you start from Pi's bash tool. `mehmory stats --all`
+shows those invocations as `suppressed (active_host)`. To capture in the nested Claude Code
+instead of Pi, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`. If you exported another
+value yourself, the extension keeps it. See `MEHMORY_ACTIVE_HOST` in `docs/CONFIG.md`.
 
 ## Not an error: a session is finalized by the *next* session when its end hook never runs
 

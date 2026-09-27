@@ -318,6 +318,26 @@ platforms shares one memory when both sessions declare the same name.
 An unusable name is refused rather than repaired, and the agent runs unnamed — see
 `E_AGENT_NAME_INVALID` in `docs/TROUBLESHOOTING.md`.
 
+## `MEHMORY_ACTIVE_HOST`
+
+Not a `config.json` key. The environment variable that names the one harness allowed to run
+mehmory in this process and everything it starts: `claude-code`, `codex`, `pi`, or `none`.
+Every other harness's hooks skip capture, injection and pointers exactly as if
+`hosts.<host>.enabled` were `false`, and record `suppressed: active_host` on their stats line
+(`mehmory stats --all` counts them). `none` turns mehmory off on every harness for one launch.
+
+Unset or empty means no restriction. So does a value that is not one of those four: a typo
+never silently disables capture.
+
+The Pi extension sets it to `pi` when it is unset or empty, so a Claude Code session that a Pi
+provider runs nested inherits it and does not capture the same conversation a second time. It
+reaches every other process Pi starts too, including a `claude` run from Pi's bash tool. To
+prefer the nested capture, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`.
+
+It only gates. Which harness a hook runs under is still the host argument on its command
+(`docs/WORLD_MODEL.md` A23, A30). `/mehmory:remember` and `mehmory inbox-tx` are not gated:
+an explicit request to remember something is filed under any value.
+
 ## `CODEX_HOME`
 
 Also not a `config.json` key — the environment variable Codex itself uses for its
