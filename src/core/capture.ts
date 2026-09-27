@@ -184,6 +184,11 @@ export const ROUTING_BLOCK = [
   '</mehmory-routing>',
 ].join('\n');
 
+const SKILL_REFS = {
+  'claude-code': skill => `/mehmory:${skill}`,
+  codex: skill => `the mehmory-${skill} skill`,
+} satisfies Record<InboxHost, (skill: string) => string>;
+
 /**
  * How a user invokes one of mehmory's skills under `host`.
  *
@@ -197,7 +202,7 @@ export const ROUTING_BLOCK = [
  * UserPromptSubmit hook, which mehmory wires on both harnesses.
  */
 export function skillRef(host: InboxHost, skill: string): string {
-  return host === 'codex' ? `the mehmory-${skill} skill` : `/mehmory:${skill}`;
+  return SKILL_REFS[host](skill);
 }
 
 /**
@@ -306,10 +311,16 @@ export function distillDelta(
   ) ?? [];
 }
 
+/** Where each harness writes its own transcripts — the only place capture reads from. */
+const TRANSCRIPT_ROOTS = {
+  'claude-code': () => join(homedir(), '.claude', 'projects'),
+  codex: () => join(codexHome(), 'sessions'),
+} satisfies Record<InboxHost, () => string>;
+
 function isApprovedTranscript(path: string, host: InboxHost): boolean {
   const candidate = resolve(path);
   const roots = [
-    host === 'codex' ? join(codexHome(), 'sessions') : join(homedir(), '.claude', 'projects'),
+    TRANSCRIPT_ROOTS[host](),
     join(mehmoryHome(), '.state', 'transcripts'),
   ];
   try {

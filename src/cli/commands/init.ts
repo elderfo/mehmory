@@ -48,21 +48,33 @@ export const command: Command = {
     }
     const uninstall = parsed.flags.get('uninstall') === true;
 
-    if (requested === 'codex') {
-      return hostResult(uninstall ? uninstallCodex() : installCodex(requested), requested, uninstall);
-    }
-    if (uninstall) {
-      // Claude Code owns its own install, so there is nothing here to reverse. Say so
-      // rather than exiting 0 on a no-op the user will read as "done".
-      return usageError(
-        '`--uninstall` has no meaning for the default host — Claude Code installs and removes mehmory through its plugin system',
-        'in a Claude Code session, run `/plugin uninstall mehmory@mehmory`'
-      );
-    }
-
-    return initDefaultHost();
+    const init = HOST_INIT[requested];
+    return uninstall ? init.uninstall() : init.install();
   },
 };
+
+/** What `init` and `init --uninstall` do for one harness. */
+interface HostInit {
+  readonly install: () => CommandResult;
+  readonly uninstall: () => CommandResult;
+}
+
+const HOST_INIT = {
+  'claude-code': {
+    install: initDefaultHost,
+    // Claude Code owns its own install, so there is nothing here to reverse. Say so
+    // rather than exiting 0 on a no-op the user will read as "done".
+    uninstall: () =>
+      usageError(
+        '`--uninstall` has no meaning for the default host — Claude Code installs and removes mehmory through its plugin system',
+        'in a Claude Code session, run `/plugin uninstall mehmory@mehmory`'
+      ),
+  },
+  codex: {
+    install: () => hostResult(installCodex('codex'), 'codex', false),
+    uninstall: () => hostResult(uninstallCodex(), 'codex', true),
+  },
+} satisfies Record<InboxHost, HostInit>;
 
 function isKnownHost(value: string): value is InboxHost {
   return (INBOX_HOSTS as readonly string[]).includes(value);

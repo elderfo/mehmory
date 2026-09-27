@@ -3,12 +3,12 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-JHPESCDX.mjs";
+} from "./chunk-IBEFNJ6W.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-L6YLRONZ.mjs";
+} from "./chunk-2REIYSZQ.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";
@@ -26,8 +26,12 @@ ${payload}
 JSON
 `;
 }
+var STOP_NUDGES = {
+  "claude-code": { carriesCommand: false, output: (reason) => ({ context: reason }) },
+  codex: { carriesCommand: true, output: (reason) => ({ json: { decision: "block", reason } }) }
+};
 function blockReason(key, sessionId, host) {
-  const save = host === "codex" ? `Use ${skillRef(host, "remember")}, or run:
+  const save = STOP_NUDGES[host].carriesCommand ? `Use ${skillRef(host, "remember")}, or run:
 ${appendCommand(key, sessionId)}` : `${skillRef(host, "remember")} saves them.`;
   return [
     "mehmory: before stopping, append anything durable from this stretch \u2014",
@@ -37,9 +41,6 @@ ${appendCommand(key, sessionId)}` : `${skillRef(host, "remember")} saves them.`;
     "then stop. Nothing durable? Say so and stop. Fires once per threshold."
   ].join(" ");
 }
-function blockOutput(reason, host) {
-  return host === "codex" ? { json: { decision: "block", reason } } : { context: reason };
-}
 runHook("Stop", (input, project, host, config) => {
   if (input.stop_hook_active === true) return {};
   if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
@@ -48,7 +49,7 @@ runHook("Stop", (input, project, host, config) => {
   const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
   resetStopCount(input.session_id);
   return {
-    ...blockOutput(blockReason(project, input.session_id, host), host),
+    ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
     stats: { stop_count: count, captured_entries: captured.appended }
   };
 });

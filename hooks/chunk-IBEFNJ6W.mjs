@@ -44,7 +44,7 @@ import {
   statePath,
   withProjectLock,
   withSessionLock
-} from "./chunk-L6YLRONZ.mjs";
+} from "./chunk-2REIYSZQ.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -596,8 +596,12 @@ function asRecord(value) {
 }
 
 // src/transcript/host.ts
+var READERS = {
+  "claude-code": readTranscript,
+  codex: readCodexRollout
+};
 function readSession(path, host, startOffset = 0) {
-  return host === "codex" ? readCodexRollout(path, startOffset) : readTranscript(path, startOffset);
+  return READERS[host](path, startOffset);
 }
 
 // src/distill/distill.ts
@@ -817,8 +821,12 @@ var ROUTING_BLOCK = [
   '- "remember this" \u2192 prefix a prompt with `remember:`. Never hand-edit inbox.md.',
   "</mehmory-routing>"
 ].join("\n");
+var SKILL_REFS = {
+  "claude-code": (skill) => `/mehmory:${skill}`,
+  codex: (skill) => `the mehmory-${skill} skill`
+};
 function skillRef(host, skill) {
-  return host === "codex" ? `the mehmory-${skill} skill` : `/mehmory:${skill}`;
+  return SKILL_REFS[host](skill);
 }
 function buildScopeInjection(key, config = loadConfig()) {
   return failOpen(
@@ -876,10 +884,14 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
     () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
   ) ?? [];
 }
+var TRANSCRIPT_ROOTS = {
+  "claude-code": () => join2(homedir(), ".claude", "projects"),
+  codex: () => join2(codexHome(), "sessions")
+};
 function isApprovedTranscript(path, host) {
   const candidate = resolve(path);
   const roots = [
-    host === "codex" ? join2(codexHome(), "sessions") : join2(homedir(), ".claude", "projects"),
+    TRANSCRIPT_ROOTS[host](),
     join2(mehmoryHome(), ".state", "transcripts")
   ];
   try {

@@ -409,6 +409,98 @@ function appendRecord(path, record, key, lockPath) {
 
 // src/core/config.ts
 import { join as join2 } from "path";
+
+// src/schema/format.ts
+import { createHash as createHash2 } from "crypto";
+
+// src/core/agent-name.ts
+var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
+var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
+var MAX_AGENT_NAME_LENGTH = 64;
+function isSafeAgentName(name) {
+  if (name.length === 0 || name.length > MAX_AGENT_NAME_LENGTH) return false;
+  if (!SAFE_AGENT_NAME.test(name)) return false;
+  if (name.startsWith(".")) return false;
+  return !RESERVED_AGENT_NAMES.includes(name);
+}
+
+// src/schema/format.ts
+var FRONTMATTER_DIVIDER = "---";
+function readFrontmatter(contents) {
+  const lines = contents.split("\n");
+  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
+  const fields = {};
+  for (const line of lines.slice(1)) {
+    if (line.trim() === FRONTMATTER_DIVIDER) break;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return fields;
+}
+var MS_PER_DAY = 24 * 60 * 60 * 1e3;
+function pageAgeDays(contents, now) {
+  const updated = readFrontmatter(contents)["updated"];
+  if (!updated) return null;
+  const parsed = Date.parse(updated);
+  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
+}
+var ARCHIVE_DIVIDER = "## Archive";
+var ARCHIVE_DIR = "archive";
+var STALE_SCORE_MULTIPLIER = 0.7;
+function isStalePage(contents, now, staleAfterDays) {
+  const age = pageAgeDays(contents, now);
+  return age !== null && age > staleAfterDays;
+}
+var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
+function parseIndexLine(line) {
+  const m = INDEX_LINE_PATTERN.exec(line.trimEnd());
+  if (!m?.[1]) return void 0;
+  return { slug: m[1], summary: m[2] ?? "" };
+}
+var INBOX_ENTRY_ID_LENGTH = 16;
+var INBOX_HOSTS = ["claude-code", "codex"];
+var DEFAULT_INBOX_HOST = "claude-code";
+var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
+function inboxEntryId(seed) {
+  return createHash2("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
+}
+function serializeInboxEntry(entry) {
+  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
+  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
+    throw new Error("inbox entry source contains unsafe metadata characters");
+  }
+  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
+    throw new Error("inbox entry metadata is malformed");
+  }
+  const host = entry.host ?? DEFAULT_INBOX_HOST;
+  const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
+}
+function parseInboxEntries(content) {
+  const entries = [];
+  for (const line of content.split("\n")) {
+    const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
+    if (!m) continue;
+    const [, text, id, src, rawHost, rawAgent, ts] = m;
+    if (text === void 0 || id === void 0 || src === void 0 || ts === void 0) {
+      continue;
+    }
+    const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
+    const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
+    entries.push({
+      id,
+      text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
+      src,
+      host,
+      ...agent !== void 0 ? { agent } : {},
+      ts
+    });
+  }
+  return entries;
+}
+
+// src/core/config.ts
 var MAX_INJECTION_BUDGET_TOKENS = 8e3;
 var DEFAULTS = {
   injection: {
@@ -554,7 +646,7 @@ function isValidConfigShape(config) {
   const distill = group("distill");
   const log = group("log");
   const warning = group("warning");
-  return injection !== void 0 && Number.isInteger(injection["budget_tokens"]) && injection["budget_tokens"] >= 1 && injection["budget_tokens"] <= MAX_INJECTION_BUDGET_TOKENS && decay !== void 0 && typeof decay["enabled"] === "boolean" && finite(decay["archive_days"]) && finite(decay["purge_days"]) && secrets !== void 0 && strings(secrets["patterns"]) && strings(secrets["whitelist"]) && stop !== void 0 && finite(stop["capture_threshold"]) && hooks !== void 0 && ["session_start", "user_prompt_submit", "stop", "pre_compact", "session_end"].every((key) => toggle(hooks[key])) && hosts !== void 0 && toggle(hosts["claude-code"]) && toggle(hosts["codex"]) && inbox !== void 0 && finite(inbox["nudge_entries"]) && finite(inbox["nudge_bytes"]) && sessionState !== void 0 && finite(sessionState["max_age_days"]) && match !== void 0 && finite(match["jaccard"]) && finite(match["cache_ttl_ms"]) && identity !== void 0 && aliases(identity["aliases"]) && typeof identity["agent"] === "string" && lock !== void 0 && finite(lock["retry_count"]) && finite(lock["retry_delay_ms"]) && finite(lock["stale_ms"]) && queue !== void 0 && finite(queue["max_claims"]) && finite(queue["stale_ms"]) && finite(queue["claims_per_start"]) && distill !== void 0 && finite(distill["max_loss_percent"]) && log !== void 0 && finite(log["rotation_size_mb"]) && warning !== void 0 && finite(warning["rate_limit_ms"]);
+  return injection !== void 0 && Number.isInteger(injection["budget_tokens"]) && injection["budget_tokens"] >= 1 && injection["budget_tokens"] <= MAX_INJECTION_BUDGET_TOKENS && decay !== void 0 && typeof decay["enabled"] === "boolean" && finite(decay["archive_days"]) && finite(decay["purge_days"]) && secrets !== void 0 && strings(secrets["patterns"]) && strings(secrets["whitelist"]) && stop !== void 0 && finite(stop["capture_threshold"]) && hooks !== void 0 && ["session_start", "user_prompt_submit", "stop", "pre_compact", "session_end"].every((key) => toggle(hooks[key])) && hosts !== void 0 && INBOX_HOSTS.every((host) => toggle(hosts[host])) && inbox !== void 0 && finite(inbox["nudge_entries"]) && finite(inbox["nudge_bytes"]) && sessionState !== void 0 && finite(sessionState["max_age_days"]) && match !== void 0 && finite(match["jaccard"]) && finite(match["cache_ttl_ms"]) && identity !== void 0 && aliases(identity["aliases"]) && typeof identity["agent"] === "string" && lock !== void 0 && finite(lock["retry_count"]) && finite(lock["retry_delay_ms"]) && finite(lock["stale_ms"]) && queue !== void 0 && finite(queue["max_claims"]) && finite(queue["stale_ms"]) && finite(queue["claims_per_start"]) && distill !== void 0 && finite(distill["max_loss_percent"]) && log !== void 0 && finite(log["rotation_size_mb"]) && warning !== void 0 && finite(warning["rate_limit_ms"]);
 }
 function deepMerge(target, source) {
   for (const key in source) {
@@ -595,12 +687,12 @@ function deepClone(obj) {
 }
 
 // src/core/lock.ts
-import { createHash as createHash3, randomBytes } from "crypto";
+import { createHash as createHash4, randomBytes } from "crypto";
 import { join as join3 } from "path";
 
 // src/core/identity.ts
 import { execFileSync } from "child_process";
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 var projectKeyCache = /* @__PURE__ */ new Map();
 function configuredAlias(config, key) {
   const identity = config.identity;
@@ -621,7 +713,7 @@ function isSafeProjectKey(key) {
 }
 function safeRemoteKey(normalizedRemote) {
   if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
-  const hash = createHash2("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
+  const hash = createHash3("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
   return `remote/${hash}`;
 }
 function resolveProjectKey(cwd = process.cwd()) {
@@ -645,7 +737,7 @@ function resolveProjectKey(cwd = process.cwd()) {
   }
   const base = tryGetGitToplevel(cwd) ?? cwd;
   const resolvedPath = realpath(base);
-  const hash = createHash2("sha256").update(resolvedPath).digest("hex").slice(0, 12);
+  const hash = createHash3("sha256").update(resolvedPath).digest("hex").slice(0, 12);
   const pathKey = `local/${hash}`;
   const config = loadConfig();
   const aliasKey = configuredAlias(config, pathKey);
@@ -714,7 +806,7 @@ function normalizeRemoteUrl(url) {
 var SESSION_LOCK_RETRY_COUNT = 10;
 var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
-  const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
+  const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash4("sha256").update(key).digest("hex");
   return join3(statePath("locks"), name + ".lock");
 }
 function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
@@ -820,98 +912,6 @@ function withSessionLock(sessionId, fn) {
 
 // src/core/inbox.ts
 import { dirname as dirname3, relative, resolve, sep } from "path";
-
-// src/schema/format.ts
-import { createHash as createHash4 } from "crypto";
-
-// src/core/agent-name.ts
-var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
-var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
-var MAX_AGENT_NAME_LENGTH = 64;
-function isSafeAgentName(name) {
-  if (name.length === 0 || name.length > MAX_AGENT_NAME_LENGTH) return false;
-  if (!SAFE_AGENT_NAME.test(name)) return false;
-  if (name.startsWith(".")) return false;
-  return !RESERVED_AGENT_NAMES.includes(name);
-}
-
-// src/schema/format.ts
-var FRONTMATTER_DIVIDER = "---";
-function readFrontmatter(contents) {
-  const lines = contents.split("\n");
-  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
-  const fields = {};
-  for (const line of lines.slice(1)) {
-    if (line.trim() === FRONTMATTER_DIVIDER) break;
-    const separator = line.indexOf(":");
-    if (separator < 0) continue;
-    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-  return fields;
-}
-var MS_PER_DAY = 24 * 60 * 60 * 1e3;
-function pageAgeDays(contents, now) {
-  const updated = readFrontmatter(contents)["updated"];
-  if (!updated) return null;
-  const parsed = Date.parse(updated);
-  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
-}
-var ARCHIVE_DIVIDER = "## Archive";
-var ARCHIVE_DIR = "archive";
-var STALE_SCORE_MULTIPLIER = 0.7;
-function isStalePage(contents, now, staleAfterDays) {
-  const age = pageAgeDays(contents, now);
-  return age !== null && age > staleAfterDays;
-}
-var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
-function parseIndexLine(line) {
-  const m = INDEX_LINE_PATTERN.exec(line.trimEnd());
-  if (!m?.[1]) return void 0;
-  return { slug: m[1], summary: m[2] ?? "" };
-}
-var INBOX_ENTRY_ID_LENGTH = 16;
-var INBOX_HOSTS = ["claude-code", "codex"];
-var DEFAULT_INBOX_HOST = "claude-code";
-var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
-function inboxEntryId(seed) {
-  return createHash4("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
-}
-function serializeInboxEntry(entry) {
-  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
-  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
-    throw new Error("inbox entry source contains unsafe metadata characters");
-  }
-  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
-    throw new Error("inbox entry metadata is malformed");
-  }
-  const host = entry.host ?? DEFAULT_INBOX_HOST;
-  const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
-}
-function parseInboxEntries(content) {
-  const entries = [];
-  for (const line of content.split("\n")) {
-    const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
-    if (!m) continue;
-    const [, text, id, src, rawHost, rawAgent, ts] = m;
-    if (text === void 0 || id === void 0 || src === void 0 || ts === void 0) {
-      continue;
-    }
-    const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
-    const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
-    entries.push({
-      id,
-      text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
-      src,
-      host,
-      ...agent !== void 0 ? { agent } : {},
-      ts
-    });
-  }
-  return entries;
-}
-
-// src/core/inbox.ts
 function readInboxEntries(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? parseInboxEntries(readFile(inboxFile)) : [],
@@ -1554,15 +1554,7 @@ export {
   listDir,
   atomicWrite,
   appendRecord,
-  MAX_INJECTION_BUDGET_TOKENS,
-  loadConfig,
   isSafeAgentName,
-  currentAgentName,
-  isContainedProjectKey,
-  resolveProjectKey,
-  withProjectLock,
-  tryProjectLock,
-  withSessionLock,
   readFrontmatter,
   pageAgeDays,
   ARCHIVE_DIVIDER,
@@ -1570,6 +1562,14 @@ export {
   parseIndexLine,
   INBOX_HOSTS,
   inboxEntryId,
+  MAX_INJECTION_BUDGET_TOKENS,
+  loadConfig,
+  currentAgentName,
+  isContainedProjectKey,
+  resolveProjectKey,
+  withProjectLock,
+  tryProjectLock,
+  withSessionLock,
   readInboxEntries,
   appendInboxEntries,
   clearInboxEntries,
