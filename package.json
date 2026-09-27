@@ -2,7 +2,13 @@
   "name": "mehmory",
   "version": "0.4.0",
   "type": "module",
-  "description": "Memory abstraction layer for Claude Code and Codex CLI",
+  "description": "Memory abstraction layer for Claude Code, Codex CLI and Pi",
+  "keywords": [
+    "memory",
+    "claude-code",
+    "codex",
+    "pi-package"
+  ],
   "license": "MIT",
   "publishConfig": {
     "registry": "https://registry.npmjs.org"
@@ -13,6 +19,14 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "pi": {
+    "extensions": [
+      "./hooks/pi-extension.mjs"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "bin": {
     "mehmory": "./dist/cli.mjs"
@@ -60,7 +74,7 @@
     "docs:dev": "vitepress dev site",
     "docs:build": "vitepress build site",
     "docs:preview": "vitepress preview site",
-    "prepare": "husky install"
+    "prepare": "husky || true"
   },
   "devDependencies": {
     "@eslint/js": "^9.11.1",

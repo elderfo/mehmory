@@ -5,6 +5,7 @@
  * The handlers spawn the real hook bundles, so every assertion is end to end.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -281,5 +282,24 @@ describe('Pi extension mapping', () => {
       cwd: '/w',
       hook_event_name: 'SessionStart',
     });
+  });
+});
+
+describe('Pi package manifest', () => {
+  it('names the built extension and a skills directory that Pi can load', async () => {
+    const manifest = JSON.parse(readFileSync('package.json', 'utf-8')) as {
+      keywords: string[];
+      pi: { extensions: string[]; skills: string[] };
+    };
+
+    expect(manifest.keywords).toContain('pi-package');
+    expect(manifest.pi.extensions).toEqual(['./hooks/pi-extension.mjs']);
+    const extension = (await import(pathToFileURL(join(process.cwd(), manifest.pi.extensions[0] ?? '')).href)) as {
+      default: unknown;
+    };
+    expect(typeof extension.default).toBe('function');
+    for (const dir of manifest.pi.skills) {
+      expect(existsSync(join(dir, 'remember', 'SKILL.md')), dir).toBe(true);
+    }
   });
 });
