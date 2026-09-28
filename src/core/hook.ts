@@ -11,7 +11,7 @@ import { readStdin } from './fs.js';
 import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
-import { resolveHost, type Host } from './host.js';
+import { resolveActiveHost, resolveHost, type Host } from './host.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { rememberSessionOrigin } from './session.js';
 
@@ -80,6 +80,23 @@ export function renderHookOutput(event: string, result: HookResult): string {
   });
 }
 
+/** Why a hook skipped its body, recorded on the stats line so an empty inbox is explicable. */
+type Suppression = 'host_disabled' | 'active_host';
+
+/**
+ * Whether `host` may run mehmory at all: its `config.hosts` toggle, then
+ * `MEHMORY_ACTIVE_HOST` (A30), which names the one harness allowed in this process tree.
+ */
+function suppression(
+  host: Host,
+  config: MehmoryConfig,
+  activeHost: Host | 'none' | undefined
+): Suppression | undefined {
+  if (!config.hosts[host].enabled) return 'host_disabled';
+  if (activeHost !== undefined && activeHost !== host) return 'active_host';
+  return undefined;
+}
+
 /**
  * Run one hook body under the fail-open contract.
  *
@@ -99,7 +116,10 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * stdin is read, so there is no capture, no injection and no pointer — `renderHookOutput`
  * still emits its normal no-op for the event (`''` for most events, `{}` for `Stop`),
  * persistent and scoped to one harness via config, unlike the single-session promise of
- * `/mehmory:pause`.
+ * `/mehmory:pause`. `MEHMORY_ACTIVE_HOST`, read once here and resolved like the host
+ * argument, skips `body` the same way for every harness but the one it names (A30), so a
+ * harness nested inside another does not capture the same conversation twice. Either
+ * skip is recorded on the stats line as `suppressed`.
  *
  * @param event - Hook event name, e.g. `SessionStart`
  * @param body - The hook itself; receives parsed stdin, the project key, the host, and
@@ -112,11 +132,12 @@ export function runHook(
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
+  const suppressed = suppression(host, config, resolveActiveHost(process.env['MEHMORY_ACTIVE_HOST']));
   let result: HookResult = {};
   let project = 'unknown';
 
   try {
-    if (config.hosts[host].enabled) {
+    if (suppressed === undefined) {
       const input = parseHookInput(readStdin());
       project = resolveProjectKey(input.cwd ?? process.cwd());
       // Every hook body reaches for session state, and `.state/<id>.json` with an empty
@@ -154,7 +175,14 @@ export function runHook(
   }
 
   try {
-    recordStat({ project, hook: event, host, ms: Date.now() - started, ...result.stats });
+    recordStat({
+      project,
+      hook: event,
+      host,
+      ms: Date.now() - started,
+      ...(suppressed === undefined ? {} : { suppressed }),
+      ...result.stats,
+    });
   } catch {
     // Instrumentation must never be the thing that breaks a hook.
   }

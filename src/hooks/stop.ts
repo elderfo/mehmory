@@ -35,34 +35,22 @@ function appendCommand(key: string, sessionId: string): string {
   return `node '${helper}' append <<'JSON'\n${payload}\nJSON\n`;
 }
 
-/**
- * The block reason (U6): fixed template naming what to save and one way to save it.
- *
- * Every host renders this text verbatim into the session transcript, so it stays as
- * short as the instruction allows. Claude Code gets the skill reference alone —
- * `/mehmory:remember` ships in the same plugin as the hook that is running, so a hook
- * invocation is proof the skill is installed. Codex additionally gets the literal
- * `inbox-tx` command: skill invocation there is not a first-class slash command, and
- * the reason is the model's only guaranteed executable path to the inbox.
- */
-function blockReason(key: string, sessionId: string, host: InboxHost): string {
-  const save =
-    host === 'codex'
-      ? `Use ${skillRef(host, 'remember')}, or run:\n${appendCommand(key, sessionId)}`
-      : `${skillRef(host, 'remember')} saves them.`;
-  return [
-    'mehmory: before stopping, append anything durable from this stretch —',
-    'decisions, corrections, gotchas — as one short line each.',
-    save,
-    'Save silently: one short sentence, no recap of what you saved or where things stand,',
-    'then stop. Nothing durable? Say so and stop. Fires once per threshold.',
-  ].join(' ');
+/** How one host's Stop nudge is worded and delivered. */
+interface StopNudge {
+  /** Whether the reason embeds the literal `inbox-tx` command next to the skill reference. */
+  readonly carriesCommand: boolean;
+  /** The output shape that blocks this host's Stop most quietly. */
+  readonly output: (reason: string) => HookResult;
 }
 
 /**
- * Wrap the reason in the output shape that blocks this host's Stop most quietly.
+ * Claude Code gets the skill reference alone — `/mehmory:remember` ships in the same
+ * plugin as the hook that is running, so a hook invocation is proof the skill is
+ * installed. Codex additionally gets the literal `inbox-tx` command: skill invocation
+ * there is not a first-class slash command, and the reason is the model's only
+ * guaranteed executable path to the inbox.
  *
- * Both shapes block. Claude Code funnels a hook's `additionalContext` into the same
+ * Both output shapes block. Claude Code funnels a hook's `additionalContext` into the same
  * `blockingErrors` array as a `decision: block` — the model is re-invoked and the next
  * Stop still carries `stop_hook_active`, so the loop guard is unaffected (verified
  * against 2.1.241). What differs is the transcript line: a block renders as
@@ -73,11 +61,33 @@ function blockReason(key: string, sessionId: string, host: InboxHost): string {
  * Codex keeps `{decision, reason}`: the `hookSpecificOutput` envelope that is valid on
  * every other event is rejected outright on Codex's Stop (D9), so it is not a portable
  * default — only a Claude Code refinement.
+ *
+ * Pi's model cannot run a slash command either, so it gets the command; its Stop is the
+ * mehmory extension, which turns `additionalContext` into a custom message (A29).
  */
-function blockOutput(reason: string, host: InboxHost): HookResult {
-  return host === 'codex'
-    ? { json: { decision: 'block', reason } }
-    : { context: reason };
+const STOP_NUDGES = {
+  'claude-code': { carriesCommand: false, output: reason => ({ context: reason }) },
+  codex: { carriesCommand: true, output: reason => ({ json: { decision: 'block', reason } }) },
+  pi: { carriesCommand: true, output: reason => ({ context: reason }) },
+} satisfies Record<InboxHost, StopNudge>;
+
+/**
+ * The block reason (U6): fixed template naming what to save and one way to save it.
+ *
+ * Every host renders this text verbatim into the session transcript, so it stays as
+ * short as the instruction allows.
+ */
+function blockReason(key: string, sessionId: string, host: InboxHost): string {
+  const save = STOP_NUDGES[host].carriesCommand
+    ? `Use ${skillRef(host, 'remember')}, or run:\n${appendCommand(key, sessionId)}`
+    : `${skillRef(host, 'remember')} saves them.`;
+  return [
+    'mehmory: before stopping, append anything durable from this stretch —',
+    'decisions, corrections, gotchas — as one short line each.',
+    save,
+    'Save silently: one short sentence, no recap of what you saved or where things stand,',
+    'then stop. Nothing durable? Say so and stop. Fires once per threshold.',
+  ].join(' ');
 }
 
 runHook('Stop', (input, project, host, config) => {
@@ -92,7 +102,7 @@ runHook('Stop', (input, project, host, config) => {
   resetStopCount(input.session_id);
 
   return {
-    ...blockOutput(blockReason(project, input.session_id, host), host),
+    ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });

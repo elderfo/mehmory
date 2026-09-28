@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { estimateTokens, INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 
 const SKILLS = ['integrate', 'lint', 'onboard-session', 'remember', 'pause', 'resume'];
@@ -19,23 +20,17 @@ const SKILL_DESCRIPTION_BUDGET_TOKENS = INJECTION_BUDGET_TOKENS;
 /** Ceiling for any single description, so one skill cannot eat the shared budget. */
 const SKILL_DESCRIPTION_TOKENS = 160;
 
-/** Minimal YAML-ish frontmatter reader — the frontmatter is flat `key: value` only. */
+/**
+ * Frontmatter parsed as strict YAML. Pi and other Agent Skills hosts silently drop a skill
+ * whose frontmatter does not parse, and a lenient reader here once passed an unquoted
+ * `remember: …` inside a description that Pi rejected.
+ */
 function frontmatter(body: string): Record<string, string> {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(body);
   if (!match?.[1]) throw new Error('no frontmatter block');
-  const fields: Record<string, string> = {};
-  let key: string | undefined;
-  for (const line of match[1].split('\n')) {
-    const kv = /^([a-z-]+):\s*(.*)$/.exec(line);
-    if (kv?.[1]) {
-      key = kv[1];
-      fields[key] = kv[2] ?? '';
-    } else if (key) {
-      // Folded continuation line.
-      fields[key] = `${fields[key] ?? ''} ${line.trim()}`;
-    }
-  }
-  return fields;
+  const parsed: unknown = parseYaml(match[1], { strict: true, uniqueKeys: true });
+  if (typeof parsed !== 'object' || parsed === null) throw new Error('frontmatter is not a mapping');
+  return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value)]));
 }
 
 const bodies = new Map(

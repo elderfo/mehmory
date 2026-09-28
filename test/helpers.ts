@@ -28,6 +28,14 @@ export function isHermeticHome(dir: string | undefined, realDirName = '.mehmory'
   return resolved.startsWith(resolve(tmpdir()));
 }
 
+/** Variables Pi exports to its child processes, stripped from every spawned test child. */
+export const PI_SESSION_ENV = [
+  'PI_CODING_AGENT_DIR',
+  'PI_CODING_AGENT_SESSION_DIR',
+  'PI_SESSION_ID',
+  'PI_SESSION_FILE',
+] as const;
+
 /**
  * Environment for a spawned subprocess (a built `hooks/*.mjs` fixture test).
  *
@@ -55,7 +63,14 @@ export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessE
     );
   }
 
-  const env = { ...process.env, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
+  // The suite itself may run inside a Pi session, whose exports would point a spawned
+  // hook at the developer's real Pi session store instead of the temp HOME's default,
+  // and whose extension sets MEHMORY_ACTIVE_HOST=pi, which would silence every
+  // claude-code and codex hook the suite spawns.
+  const inherited = { ...process.env };
+  for (const key of [...PI_SESSION_ENV, 'MEHMORY_ACTIVE_HOST']) Reflect.deleteProperty(inherited, key);
+
+  const env = { ...inherited, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
 
   // `extra` is applied last so a test can point HOME at a fake ~/.claude (see
   // createFakeClaudeHome) — which also means `extra` can punch straight through the

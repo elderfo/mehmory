@@ -43,6 +43,20 @@ export function resolveHost(arg: string | undefined): Host {
 }
 
 /**
+ * Resolve `MEHMORY_ACTIVE_HOST`, the single harness allowed to run mehmory in this process
+ * tree (A30). `none` allows no harness. Unset, empty, or unrecognized means no
+ * restriction: like `resolveHost`, a typo degrades to today's behavior rather than
+ * silently disabling capture.
+ *
+ * This only gates. Which host an invocation IS stays declared by its hook argument (A23).
+ */
+export function resolveActiveHost(raw: string | undefined): Host | 'none' | undefined {
+  const trimmed = raw?.trim();
+  if (trimmed === 'none') return 'none';
+  return trimmed && isKnownHost(trimmed) ? trimmed : undefined;
+}
+
+/**
  * Best-effort environment probe, used only when no host argument was passed.
  *
  * `CLAUDE_PLUGIN_ROOT` is the one signal Claude Code puts around every hook command

@@ -199,7 +199,11 @@ describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
     expect(run.status).toBe(0);
     expect(run.stdout.trim()).toBe('');
     expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
-    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+    expect(statsLines().at(-1)).toMatchObject({
+      hook: 'UserPromptSubmit',
+      host: 'codex',
+      suppressed: 'host_disabled',
+    });
   });
 
   it('leaves the other harness capturing normally', () => {

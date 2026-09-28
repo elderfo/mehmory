@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { logError, type MehmoryError } from './errors.js';
 import { readFile, pathExists } from './fs.js';
-import type { InboxHost } from '../schema/format.js';
+import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
 /** Maximum SessionStart memory budget, keeping configuration from disabling the cap. */
 export const MAX_INJECTION_BUDGET_TOKENS = 8_000;
@@ -135,6 +135,7 @@ const DEFAULTS: MehmoryConfig = {
   hosts: {
     'claude-code': { enabled: true },
     codex: { enabled: true },
+    pi: { enabled: true },
   },
   inbox: {
     nudge_entries: 10,
@@ -284,7 +285,7 @@ function isValidConfigShape(config: Record<string, unknown>): boolean {
     secrets !== undefined && strings(secrets['patterns']) && strings(secrets['whitelist']) &&
     stop !== undefined && finite(stop['capture_threshold']) &&
     hooks !== undefined && ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end'].every(key => toggle(hooks[key])) &&
-    hosts !== undefined && toggle(hosts['claude-code']) && toggle(hosts['codex']) &&
+    hosts !== undefined && INBOX_HOSTS.every(host => toggle(hosts[host])) &&
     inbox !== undefined && finite(inbox['nudge_entries']) && finite(inbox['nudge_bytes']) &&
     sessionState !== undefined && finite(sessionState['max_age_days']) &&
     match !== undefined && finite(match['jaccard']) && finite(match['cache_ttl_ms']) &&

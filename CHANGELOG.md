@@ -9,7 +9,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Pi is a third host.** `pi install git:github.com/elderfo/mehmory` installs the repository as
+  a Pi package: an extension that runs the same five hook bundles with `pi` as the host, plus
+  the six skills as `/skill:<name>`. The frame is injected with the first prompt, `remember:`
+  and Stop capture read Pi's session files, and the Stop nudge arrives as a Pi message.
+  `mehmory init --host pi` creates the store and names the install; `hosts.pi.enabled` turns
+  it off. Existing `config.json` files load unchanged and get `pi` enabled.
+- **`MEHMORY_ACTIVE_HOST` names the one harness that runs mehmory.** Set to `claude-code`,
+  `codex`, `pi`, or `none`, every other harness's hooks skip capture and injection. The Pi
+  extension sets it to `pi` unless you exported a value, so a Claude Code that a Pi provider
+  runs nested no longer captures the same conversation as `host=claude-code`. Unset, empty, or
+  unrecognized means no restriction. `/mehmory:remember` and `mehmory inbox-tx` are not gated.
+- **`mehmory stats` counts suppressed hooks.** Each harness line shows invocations skipped by
+  `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST`, and `--json` carries them as
+  `hosts[].suppressed`.
+
 ### Fixed
+
+- **A git install no longer fails without dev dependencies.** `prepare` ran `husky install`,
+  which exited 127 under `npm install --omit=dev` (how Pi installs a git package). It now
+  tolerates husky being absent, and a dev checkout still installs the git hooks.
 
 - **Purge and inbox transactions stay inside the memory store.** Page selectors, inbox paths, and snapshot tokens are validated before destructive or rewriting operations, and purge commits only its requested paths.
 - **Interrupted capture jobs are recoverable.** Stale queue claims are returned to the pending queue instead of being discarded, while malformed secret settings continue to use built-in redaction.

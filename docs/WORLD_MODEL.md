@@ -523,3 +523,91 @@ approved the hooks months ago, which is how a real warning gets ignored.
 **WORLD_MODEL check.** Upholds A2 (the probe never throws; an unreadable `config.toml`
 reads as unknown) and A21 (the trust state arrives through the existing `CodexProbe`
 parameter rather than being read ambiently at the check site).
+
+### A29. Pi is a host through a Pi package whose extension is the hook runner
+
+Pi (`@earendil-works/pi-coding-agent`, measured against 0.87.1) has no command-hook
+configuration to write into. It loads extensions in-process and installs packages from git.
+So the repository is also a Pi package: `package.json`'s `pi` manifest names
+`hooks/pi-extension.mjs` and `skills/`, and `pi install git:github.com/elderfo/mehmory`
+brings both. `init --host pi` writes nothing into Pi; the package manager owns the install.
+
+The extension is Pi's `hooks.json`, not a second implementation. It maps Pi lifecycle events
+onto the same five bundles, spawned with `node` and `pi` as the host argument (A12, A23),
+and maps their stdout back into Pi results. Everything host-specific below it is one row in
+a per-host table: the reader (`readPiSession`), the approved transcript root
+(`PI_CODING_AGENT_SESSION_DIR`, else `sessions/` under `PI_CODING_AGENT_DIR`, default
+`~/.pi/agent`), the skill wording (`/skill:<name>`), and the Stop nudge shape.
+
+Three event choices are forced by measurement, not taste:
+
+- **Injection rides `before_agent_start`, not `session_start`.** Pi creates the session file
+  lazily and has no prompt at `session_start`, so there is nothing to attach a message to.
+  SessionStart output is held and joined to the first prompt's UserPromptSubmit output as
+  one hidden `custom_message`, which Pi persists and the model sees that turn. `session_compact`
+  re-queues it, because compaction dropped the earlier one. A `reload` runs nothing: the
+  session and its injection are already there.
+- **`agent_before_settle` is the Stop block.** Returning a `custom_message` entry with
+  `continue: true` re-invokes the model once, and the next settle carries the extension's
+  own loop guard as `stop_hook_active`. Only a `completed` outcome counts. The nudge carries
+  the literal `inbox-tx` command as Codex's does, since Pi's model cannot type a slash
+  command either, but in the `additionalContext` shape the extension turns into a message.
+- **The session file is complete by the time settle and shutdown fire**, so Stop and
+  SessionEnd read the same file Pi is writing, from the same cursor, like every other host.
+
+Pi's session file is a tree (`parentId`), and the reader reads every branch, abandoned ones
+included. Mehmory's own `custom_message` entries are never records, and a `/skill:` expansion
+is reduced to what the user typed after it, so a SKILL.md body is never filed as a user
+decision.
+
+**Rejected:** *Running the hook bodies in-process inside the extension* — a second
+implementation of every hook, and it would inherit Pi's runtime (possibly bun) instead of the
+Node the bundles are built for. *Injecting from `session_start`* — measured: the file does
+not exist yet and there is no turn to carry a message. *Walking `parentId` to read only the
+live branch* — correct but not yet worth it; an abandoned branch's decisions were still said.
+
+**WORLD_MODEL check.** Upholds A2 (every extension failure, including a missing `node`, is
+silence), A7 (one normalized record type; the tree is a parse detail below `readSession`),
+A12 and A23 (thin adapters, host declared as an argument), and A25 (the extension is a
+committed bundle under `hooks/`, covered by the same drift gate).
+
+### A30. `MEHMORY_ACTIVE_HOST` names the one harness that runs mehmory in a process tree
+
+A harness can run inside another. Pi's claude-bridge provider launches a nested Claude Code
+session with Pi's environment, so with the Pi extension and the Claude Code plugin both
+installed, one conversation was captured twice: by Pi as `host=pi`, and by the nested session
+as `host=claude-code`, which also filed Pi's injected `<mehmory-memory>` frame because it
+arrives inside the prompt. `hosts.<host>.enabled` could not fix that. It is store-wide, so
+turning `claude-code` off there silences a standalone Claude Code too.
+
+The environment is the channel that follows the nesting. `MEHMORY_ACTIVE_HOST` holds a member
+of `INBOX_HOSTS`, or `none`. `runHook` reads it once, resolves it with `resolveActiveHost` in
+`src/core/host.ts`, and skips the body for any other host exactly as it skips a disabled one:
+no stdin read, no capture, no injection, the normal no-op output. The stats line records
+`suppressed: 'active_host'` (a disabled host records `host_disabled`), so `mehmory stats --all`
+can explain an empty inbox.
+
+Unset or empty means no restriction. So does an unrecognized value, the typo tolerance
+`resolveHost` already gives the host argument: a misspelling must never silently disable
+capture. `none` disables mehmory on every host, for one launch.
+
+The Pi extension sets `MEHMORY_ACTIVE_HOST=pi` in its factory when the variable is unset or
+empty, and keeps any value the user exported. Its own hook spawns inherit `pi` and pass. So
+does every other descendant of that Pi process: a `claude` started from Pi's bash tool is
+silenced too. `MEHMORY_ACTIVE_HOST=claude-code pi …` prefers the nested capture instead.
+
+This gates and nothing else. Which host an invocation *is* stays declared by its hook argument
+(A23); the variable only decides whether that host may run. Explicit skill-driven writes
+(`hooks/inbox-tx.mjs`, `mehmory inbox-tx`) are not gated. They are user intent, not ambient
+capture, and a user who asks to remember something in a nested session gets it filed.
+
+**Rejected:** *Detecting nesting* (a parent-process probe, or a provider-specific variable) —
+it would recognize one bridge and miss the next, where a declared variable covers any launcher
+that passes its environment on. *Turning `hosts.claude-code.enabled` off from the extension* —
+the config is store-wide and persistent, and would outlive the Pi session. *Gating
+`inbox-tx`* — it would throw away a write the user asked for.
+
+**WORLD_MODEL check.** Upholds A2 (an unusable value degrades to no restriction), A21 (the
+environment is read once at the `runHook` boundary and the resolved value is threaded to the
+gate), and A23 (the host is still declared, never inferred from this variable). Mirrors A27
+in reading a launch-time fact from the environment, because only the launcher knows it.

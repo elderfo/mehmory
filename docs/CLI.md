@@ -57,10 +57,11 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
 
 ### `mehmory init [--host <name>] [--uninstall]`
 
-`--host` selects the harness to wire mehmory into: `claude-code` (the default) or `codex`.
-`--uninstall` reverses the wiring, and requires a non-default `--host` — Claude Code installs
-and removes mehmory through its own plugin system, so there is nothing there for `init` to
-undo.
+`--host` selects the harness to wire mehmory into: `claude-code` (the default), `codex` or
+`pi`. `--uninstall` reverses the wiring, and only `--host codex` has any — Claude Code and Pi
+install and remove mehmory through their own plugin and package systems, so there is nothing
+there for `init` to undo. On either of those, `--uninstall` exits 1 with `E_USAGE` and names
+the harness's own removal command as the fix.
 
 #### Default host
 
@@ -132,6 +133,20 @@ result, and **never turns the hooks feature back off** — the flag is Codex's, 
 tools' hooks depend on it.
 
 Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
+
+#### Pi host
+
+Pi installs mehmory as a Pi package (`pi install git:github.com/elderfo/mehmory`), and the
+package manifest in `package.json` gives Pi both halves: the extension
+`hooks/pi-extension.mjs` and the `skills/` directory. So `init --host pi` writes nothing into
+Pi's configuration. It creates the store exactly as the default host does, checks the Node
+version, and ends by naming that `pi install` command, prefixed "in a shell". `--json` puts
+the command in `data.next`.
+
+The extension spawns the same five hook bundles every other harness runs, with `node` from
+`PATH` (see `docs/WORLD_MODEL.md` A29). Skills are invoked as `/skill:<name>`, and every
+line mehmory prints inside a Pi session names them that way. `onboard` does not read Pi
+sessions; a Pi project starts from the hooks capturing forward.
 
 ### `mehmory onboard [--project [<key>]|--global] [--dry-run] [--sessions N] [--max-bytes N] [--projects N] [--resume]`
 
@@ -243,7 +258,12 @@ Also broken down **per harness** (issue #14 story 39): every `stats.jsonl` recor
 `host`, so the report includes an invocation count and a captured-entry count for each
 harness seen — `claude-code`, `codex`, or both, whichever actually wrote records in the
 selected scope. Text output adds one indented line per harness under `captured`; `--json`
-carries the same data as `data.hosts: [{host, count, capturedEntries}]`.
+carries the same data as `data.hosts: [{host, count, capturedEntries, suppressed}]`.
+
+`suppressed` counts invocations that skipped their body, by reason: `host_disabled`
+(`hosts.<host>.enabled` is `false`) or `active_host` (`MEHMORY_ACTIVE_HOST` names another
+harness, or `none`). A skipped hook reads no stdin, so its record carries the project key
+`unknown` and shows up only under `--all`. The text line appends `N suppressed (<reason>)`.
 
 ### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
 

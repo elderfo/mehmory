@@ -59,7 +59,7 @@ you get; treat it as a nudge to go read the diff, not as an error that needs sup
   nothing is left un-integrated in an inbox. This applies to a store shared across machines
   or synced by git, where one side can lag the other.
 - **2** (issue #20) — inbox entries carry a `host=` field recording which harness
-  captured them (`claude-code` or `codex`), between `src=` and `ts=` in the trailing
+  captured them (`claude-code`, `codex`, or, since the Pi host, `pi`), between `src=` and `ts=` in the trailing
   comment. Entries already in your store from before this change have no `host=`
   field; they are **not** rewritten, and the parser still reads them, attributing them
   to `claude-code`. No action needed.

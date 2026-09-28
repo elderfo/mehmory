@@ -61,8 +61,38 @@ describe('percentile arithmetic', () => {
     const report = summarize(records);
 
     expect(report.hosts).toEqual([
-      { host: 'claude-code', count: 2, capturedEntries: 5 },
-      { host: 'codex', count: 1, capturedEntries: 5 },
+      { host: 'claude-code', count: 2, capturedEntries: 5, suppressed: {} },
+      { host: 'codex', count: 1, capturedEntries: 5, suppressed: {} },
+    ]);
+  });
+
+  it('counts suppressed invocations per harness and reason', () => {
+    const ts = '2026-07-01T00:00:00.000Z';
+    const records: StatRecord[] = [
+      {
+        ts,
+        project: 'unknown',
+        hook: 'SessionStart',
+        ms: 1,
+        host: 'claude-code',
+        suppressed: 'active_host',
+      },
+      {
+        ts,
+        project: 'unknown',
+        hook: 'Stop',
+        ms: 1,
+        host: 'claude-code',
+        suppressed: 'active_host',
+      },
+      { ts, project: 'unknown', hook: 'Stop', ms: 1, host: 'codex', suppressed: 'host_disabled' },
+      { ts, project: 'p', hook: 'Stop', ms: 1, host: 'pi', captured_entries: 2 },
+    ];
+
+    expect(summarize(records).hosts).toEqual([
+      { host: 'claude-code', count: 2, capturedEntries: 0, suppressed: { active_host: 2 } },
+      { host: 'codex', count: 1, capturedEntries: 0, suppressed: { host_disabled: 1 } },
+      { host: 'pi', count: 1, capturedEntries: 2, suppressed: {} },
     ]);
   });
 });
@@ -116,8 +146,8 @@ describe('mehmory stats', () => {
       unknown
     >;
     expect(data['hosts']).toEqual([
-      { host: 'claude-code', count: 1, capturedEntries: 2 },
-      { host: 'codex', count: 1, capturedEntries: 5 },
+      { host: 'claude-code', count: 1, capturedEntries: 2, suppressed: {} },
+      { host: 'codex', count: 1, capturedEntries: 5, suppressed: {} },
     ]);
   });
 
@@ -136,6 +166,20 @@ describe('mehmory stats', () => {
     expect(data['scope']).toBe('all');
     expect(data['records']).toBe(2);
     expect(data['capturedEntries']).toBe(12);
+  });
+
+  it('shows suppressed hooks under `--all`, where their unknown project is visible', () => {
+    const cwd = createTempDir('mehmory-cli-cwd');
+    expect(runCli(['init'], { cwd }).status).toBe(0);
+    writeStats([
+      stat('unknown', 'SessionStart', 1, { host: 'claude-code', suppressed: 'active_host' }),
+      stat('unknown', 'Stop', 1, { host: 'claude-code', suppressed: 'active_host' }),
+    ]);
+
+    const run = runCli(['stats', '--all'], { cwd });
+    expect(run.stdout).toMatch(
+      /claude-code\s+2 calls {3}0 captured {3}2 suppressed \(active_host\)/
+    );
   });
 
   it('`--since` drops older records', () => {

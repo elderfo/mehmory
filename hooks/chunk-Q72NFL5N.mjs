@@ -1,50 +1,56 @@
 import {
   INBOX_HOSTS,
-  INDEX_LOCK_RETRY_COUNT,
-  INDEX_LOCK_RETRY_INTERVAL_MS,
   MAX_INJECTION_BUDGET_TOKENS,
-  QUEUE_CLAIM_ATTEMPTS,
-  QUEUE_STALE_MS,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
-  appendRecord,
-  atomicWrite,
-  codexHome,
   currentAgentName,
   deleteSessionState,
-  failOpen,
   inboxEntryId,
   isContainedProjectKey,
   isPaused,
   isSafeAgentName,
   isSessionFinalized,
-  listDir,
   listPendingSessions,
   loadConfig,
+  markSessionFinalized,
+  readSessionState,
+  redact,
+  rememberSessionOrigin,
+  resolveProjectKey,
+  sessionGeneration,
+  withProjectLock,
+  withSessionLock
+} from "./chunk-CU44STGN.mjs";
+import {
+  readPiSession,
+  readTranscript
+} from "./chunk-YZTNJJDP.mjs";
+import {
+  INDEX_LOCK_RETRY_COUNT,
+  INDEX_LOCK_RETRY_INTERVAL_MS,
+  QUEUE_CLAIM_ATTEMPTS,
+  QUEUE_STALE_MS,
+  appendRecord,
+  atomicWrite,
+  codexHome,
+  failOpen,
+  listDir,
   logError,
   lstat,
-  markSessionFinalized,
   mehmoryHome,
   mkdir,
   pathExists,
   pendingWarnings,
+  piSessionsDir,
   readFile,
   readFileFrom,
-  readFileFromNoFollow,
-  readSessionState,
   readStdin,
   realpath,
-  redact,
-  rememberSessionOrigin,
   remove,
   rename,
-  resolveProjectKey,
-  sessionGeneration,
   stat,
-  statePath,
-  withProjectLock,
-  withSessionLock
-} from "./chunk-L6YLRONZ.mjs";
+  statePath
+} from "./chunk-NTSIN6Z2.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -109,6 +115,11 @@ function resolveHost(arg) {
   if (trimmed && isKnownHost(trimmed)) return trimmed;
   return detectHostFromEnvironment();
 }
+function resolveActiveHost(raw) {
+  const trimmed = raw?.trim();
+  if (trimmed === "none") return "none";
+  return trimmed && isKnownHost(trimmed) ? trimmed : void 0;
+}
 function detectHostFromEnvironment() {
   if (process.env.CLAUDE_PLUGIN_ROOT) return "claude-code";
   return DEFAULT_HOST;
@@ -141,14 +152,20 @@ function renderHookOutput(event, result) {
     hookSpecificOutput: { hookEventName: event, additionalContext: result.context }
   });
 }
+function suppression(host, config, activeHost) {
+  if (!config.hosts[host].enabled) return "host_disabled";
+  if (activeHost !== void 0 && activeHost !== host) return "active_host";
+  return void 0;
+}
 function runHook(event, body) {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
+  const suppressed = suppression(host, config, resolveActiveHost(process.env["MEHMORY_ACTIVE_HOST"]));
   let result = {};
   let project = "unknown";
   try {
-    if (config.hosts[host].enabled) {
+    if (suppressed === void 0) {
       const input = parseHookInput(readStdin());
       project = resolveProjectKey(input.cwd ?? process.cwd());
       if (input.session_id.trim() === "") {
@@ -176,7 +193,14 @@ function runHook(event, body) {
     result = {};
   }
   try {
-    recordStat({ project, hook: event, host, ms: Date.now() - started, ...result.stats });
+    recordStat({
+      project,
+      hook: event,
+      host,
+      ms: Date.now() - started,
+      ...suppressed === void 0 ? {} : { suppressed },
+      ...result.stats
+    });
   } catch {
   }
   const out = renderHookOutput(event, result);
@@ -529,34 +553,6 @@ function truncateToTokens(text, targetTokens) {
   return { text: truncated, tokens };
 }
 
-// src/transcript/reader.ts
-function readTranscript(path, startOffset = 0) {
-  const begin = startOffset > 0 ? startOffset : 0;
-  const contents = readFileFromNoFollow(path, begin);
-  const lastNewline = contents.lastIndexOf("\n");
-  const consumable = lastNewline >= 0 ? contents.slice(0, lastNewline + 1) : "";
-  const endOffset = begin + Buffer.byteLength(consumable, "utf-8");
-  const lines = consumable.split("\n");
-  const records = [];
-  let skipped = 0;
-  for (const line of lines) {
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(line);
-      if (typeof parsed !== "object" || parsed === null) {
-        skipped++;
-        continue;
-      }
-      records.push(parsed);
-    } catch {
-      skipped++;
-    }
-  }
-  return { records, skipped, endOffset };
-}
-
 // src/transcript/codex.ts
 import { createHash } from "crypto";
 function readCodexRollout(path, startOffset = 0) {
@@ -596,8 +592,13 @@ function asRecord(value) {
 }
 
 // src/transcript/host.ts
+var READERS = {
+  "claude-code": readTranscript,
+  codex: readCodexRollout,
+  pi: readPiSession
+};
 function readSession(path, host, startOffset = 0) {
-  return host === "codex" ? readCodexRollout(path, startOffset) : readTranscript(path, startOffset);
+  return READERS[host](path, startOffset);
 }
 
 // src/distill/distill.ts
@@ -817,8 +818,13 @@ var ROUTING_BLOCK = [
   '- "remember this" \u2192 prefix a prompt with `remember:`. Never hand-edit inbox.md.',
   "</mehmory-routing>"
 ].join("\n");
+var SKILL_REFS = {
+  "claude-code": (skill) => `/mehmory:${skill}`,
+  codex: (skill) => `the mehmory-${skill} skill`,
+  pi: (skill) => `/skill:${skill}`
+};
 function skillRef(host, skill) {
-  return host === "codex" ? `the mehmory-${skill} skill` : `/mehmory:${skill}`;
+  return SKILL_REFS[host](skill);
 }
 function buildScopeInjection(key, config = loadConfig()) {
   return failOpen(
@@ -876,10 +882,15 @@ function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
     () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
   ) ?? [];
 }
+var TRANSCRIPT_ROOTS = {
+  "claude-code": () => join2(homedir(), ".claude", "projects"),
+  codex: () => join2(codexHome(), "sessions"),
+  pi: piSessionsDir
+};
 function isApprovedTranscript(path, host) {
   const candidate = resolve(path);
   const roots = [
-    host === "codex" ? join2(codexHome(), "sessions") : join2(homedir(), ".claude", "projects"),
+    TRANSCRIPT_ROOTS[host](),
     join2(mehmoryHome(), ".state", "transcripts")
   ];
   try {

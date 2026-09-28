@@ -299,6 +299,26 @@ the alternatives (writing the nudge to stderr, blocking a run that cannot answer
 be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
 for it in the prompt — `remember:` works there like anywhere else.
 
+## Pi: mehmory does nothing, and says nothing
+
+The Pi extension runs the hook bundles with `node` from `PATH`, and treats every failure as
+silence so it can never break a Pi session (A2). If `node` is missing from the `PATH` Pi was
+started with, or is older than 22, every hook fails and nothing is injected or captured, with
+no message. Run `node --version` in the same shell you start `pi` from. `mehmory stats` shows
+no `host: pi` invocations when this is the cause.
+
+## Not an error: Claude Code captures nothing when started from Pi
+
+The Pi extension sets `MEHMORY_ACTIVE_HOST=pi` for Pi and every process it starts, so a Claude
+Code session that Pi's provider runs underneath it (claude-bridge, for example) stays quiet
+and one Pi conversation is captured once, as `host=pi`. Before this, the nested session also
+captured it as `host=claude-code` and filed mehmory's own injected frame into the inbox.
+
+The same variable silences a `claude` you start from Pi's bash tool. `mehmory stats --all`
+shows those invocations as `suppressed (active_host)`. To capture in the nested Claude Code
+instead of Pi, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`. If you exported another
+value yourself, the extension keeps it. See `MEHMORY_ACTIVE_HOST` in `docs/CONFIG.md`.
+
 ## Not an error: a session is finalized by the *next* session when its end hook never runs
 
 This is the fallback for any session whose `SessionEnd` mehmory never sees, on either

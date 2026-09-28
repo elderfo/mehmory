@@ -9,6 +9,7 @@
 
 import { readTranscript, type ReadTranscriptResult } from './reader.js';
 import { readCodexRollout } from './codex.js';
+import { readPiSession } from './pi.js';
 import type { InboxHost } from '../schema/format.js';
 
 /**
@@ -19,10 +20,16 @@ import type { InboxHost } from '../schema/format.js';
  */
 export type Host = InboxHost;
 
+const READERS = {
+  'claude-code': readTranscript,
+  codex: readCodexRollout,
+  pi: readPiSession,
+} satisfies Record<Host, (path: string, startOffset?: number) => ReadTranscriptResult>;
+
 /**
  * Read a session transcript into normalized records, picking the reader by host.
  *
- * Both readers share the same signature and the same tolerance and cursor semantics,
+ * Every reader shares the same signature and the same tolerance and cursor semantics,
  * so callers thread `startOffset` and persist `endOffset` identically either way.
  *
  * @param path - Path to the transcript or rollout .jsonl file
@@ -30,7 +37,5 @@ export type Host = InboxHost;
  * @param startOffset - Byte offset to resume from (default 0 = whole file)
  */
 export function readSession(path: string, host: Host, startOffset = 0): ReadTranscriptResult {
-  return host === 'codex'
-    ? readCodexRollout(path, startOffset)
-    : readTranscript(path, startOffset);
+  return READERS[host](path, startOffset);
 }

@@ -27,7 +27,7 @@ Change these deliberately, and prefer to note *why* somewhere your future self w
 | Key | What a change actually does |
 |---|---|
 | `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never *destroys* material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how any session whose end-hook never ran — killed, or skipped by Codex for want of a trust decision — captures its tail. |
-| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
+| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` (or `hosts.pi.enabled`) mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
 | `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
 | `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
 | `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
@@ -152,17 +152,20 @@ a hook is found disabled.
 {
   "hosts": {
     "claude-code": { "enabled": true },
-    "codex": { "enabled": true }
+    "codex": { "enabled": true },
+    "pi": { "enabled": true }
   }
 }
 ```
 
-Per-harness on/off switch, so you can adopt the Codex side gradually — turn capture on for one
-harness while leaving the other exactly as it is. Off for a harness means **every** hook that
+Per-harness on/off switch, so you can adopt a new harness gradually — turn capture on for one
+harness while leaving the others exactly as they are. A `config.json` written before a harness
+existed does not list it, and that harness defaults to on: the merge fills the missing key in
+before validation. Off for a harness means **every** hook that
 harness invokes skips capture, injection and pointers entirely: no inbox writes, no context
 injection, nothing recorded beyond the stats line that a hook fired at all. Unlike `hooks.*`,
 which is per lifecycle event, this key is per harness — the two combine, so `hooks.stop.enabled:
-false` still turns Stop off everywhere even if both harnesses are individually on.
+false` still turns Stop off everywhere even if every harness is individually on.
 
 **Honored** (`src/core/hook.ts`) — `runHook()` resolves the invoking harness and checks
 `hosts.<host>.enabled` before reading stdin or calling into the hook body, the same choke point
@@ -314,6 +317,26 @@ platforms shares one memory when both sessions declare the same name.
 
 An unusable name is refused rather than repaired, and the agent runs unnamed — see
 `E_AGENT_NAME_INVALID` in `docs/TROUBLESHOOTING.md`.
+
+## `MEHMORY_ACTIVE_HOST`
+
+Not a `config.json` key. The environment variable that names the one harness allowed to run
+mehmory in this process and everything it starts: `claude-code`, `codex`, `pi`, or `none`.
+Every other harness's hooks skip capture, injection and pointers exactly as if
+`hosts.<host>.enabled` were `false`, and record `suppressed: active_host` on their stats line
+(`mehmory stats --all` counts them). `none` turns mehmory off on every harness for one launch.
+
+Unset or empty means no restriction. So does a value that is not one of those four: a typo
+never silently disables capture.
+
+The Pi extension sets it to `pi` when it is unset or empty, so a Claude Code session that a Pi
+provider runs nested inherits it and does not capture the same conversation a second time. It
+reaches every other process Pi starts too, including a `claude` run from Pi's bash tool. To
+prefer the nested capture, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`.
+
+It only gates. Which harness a hook runs under is still the host argument on its command
+(`docs/WORLD_MODEL.md` A23, A30). `/mehmory:remember` and `mehmory inbox-tx` are not gated:
+an explicit request to remember something is filed under any value.
 
 ## `CODEX_HOME`
 

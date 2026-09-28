@@ -12,7 +12,12 @@
  */
 
 import { initStore } from '../../core/store.js';
-import { PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } from '../../core/environment.js';
+import {
+  PI_PACKAGE_SOURCE,
+  PLUGIN_INSTALL_COMMANDS,
+  checkNodeVersion,
+  probePlugin,
+} from '../../core/environment.js';
 import { installCodex, probeCodexInstall, uninstallCodex, type CodexResult } from '../../core/codex-install.js';
 import { DEFAULT_INBOX_HOST, INBOX_HOSTS, type InboxHost } from '../../schema/format.js';
 import { flagString, parseFlags } from '../args.js';
@@ -25,7 +30,7 @@ export const command: Command = {
   usage: 'mehmory init [--host <name>] [--uninstall] [--json]',
   help: [
     `  --host <name>     harness to wire up: ${INBOX_HOSTS.join(' | ')} (default ${DEFAULT_INBOX_HOST})`,
-    '  --uninstall       remove the harness wiring again; requires a non-default --host',
+    '  --uninstall       remove the harness wiring again; only `--host codex` has any',
     '  --json            emit the single-line JSON envelope instead of text',
   ],
 
@@ -48,21 +53,42 @@ export const command: Command = {
     }
     const uninstall = parsed.flags.get('uninstall') === true;
 
-    if (requested === 'codex') {
-      return hostResult(uninstall ? uninstallCodex() : installCodex(requested), requested, uninstall);
-    }
-    if (uninstall) {
-      // Claude Code owns its own install, so there is nothing here to reverse. Say so
-      // rather than exiting 0 on a no-op the user will read as "done".
-      return usageError(
-        '`--uninstall` has no meaning for the default host — Claude Code installs and removes mehmory through its plugin system',
-        'in a Claude Code session, run `/plugin uninstall mehmory@mehmory`'
-      );
-    }
-
-    return initDefaultHost();
+    const init = HOST_INIT[requested];
+    return uninstall ? init.uninstall() : init.install();
   },
 };
+
+/** What `init` and `init --uninstall` do for one harness. */
+interface HostInit {
+  readonly install: () => CommandResult;
+  readonly uninstall: () => CommandResult;
+}
+
+const HOST_INIT = {
+  'claude-code': {
+    install: initDefaultHost,
+    // Claude Code owns its own install, so there is nothing here to reverse. Say so
+    // rather than exiting 0 on a no-op the user will read as "done".
+    uninstall: () =>
+      usageError(
+        '`--uninstall` has no meaning for the default host — Claude Code installs and removes mehmory through its plugin system',
+        'in a Claude Code session, run `/plugin uninstall mehmory@mehmory`'
+      ),
+  },
+  codex: {
+    install: () => hostResult(installCodex('codex'), 'codex', false),
+    uninstall: () => hostResult(uninstallCodex(), 'codex', true),
+  },
+  pi: {
+    install: initPiHost,
+    // Same reason as Claude Code: Pi's package manager owns the install.
+    uninstall: () =>
+      usageError(
+        '`--uninstall` has no meaning for Pi — Pi installs and removes mehmory through its package manager',
+        `pi remove ${PI_PACKAGE_SOURCE}`
+      ),
+  },
+} satisfies Record<InboxHost, HostInit>;
 
 function isKnownHost(value: string): value is InboxHost {
   return (INBOX_HOSTS as readonly string[]).includes(value);
@@ -116,6 +142,38 @@ function initDefaultHost(): CommandResult {
         ...(plugin.installPath !== undefined ? { installPath: plugin.installPath } : {}),
       },
       next: ['mehmory onboard', '/mehmory:integrate'],
+    },
+  };
+}
+
+/**
+ * `init --host pi`: create the store, then name the Pi install. Nothing is written into
+ * Pi's configuration — `pi install` owns that, and the package it installs carries both
+ * the extension and the skills.
+ */
+function initPiHost(): CommandResult {
+  const created = initStore();
+  if (!created.ok) return operationFailed(created.error);
+
+  const node = checkNodeVersion(REQUIRED_NODE);
+  const install = `pi install ${PI_PACKAGE_SOURCE}`;
+  const warnings = node.ok
+    ? []
+    : [`node ${node.current} is below the required ${node.required}; the hooks may not run`];
+
+  return {
+    exit: EXIT.OK,
+    lines: [
+      `store ready at ${created.home}`,
+      `node ${node.current} (requires ${node.required})`,
+      `next: in a shell, run \`${install}\``,
+    ],
+    warnings,
+    data: {
+      host: 'pi',
+      home: created.home,
+      node: { current: node.current, required: node.required, ok: node.ok },
+      next: [install],
     },
   };
 }

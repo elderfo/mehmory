@@ -1,7 +1,7 @@
 /** Host resolution (issue #18): declared argument wins, environment is the fallback. */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { DEFAULT_HOST, resolveHost } from '../src/core/host.js';
+import { DEFAULT_HOST, resolveActiveHost, resolveHost } from '../src/core/host.js';
 
 describe('resolveHost', () => {
   const originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
@@ -43,5 +43,32 @@ describe('resolveHost', () => {
     expect(resolveHost(undefined)).toBe(DEFAULT_HOST);
     expect(resolveHost('')).toBe(DEFAULT_HOST);
     expect(resolveHost('   ')).toBe(DEFAULT_HOST);
+  });
+});
+
+describe('resolveActiveHost', () => {
+  it('means no restriction when unset or empty', () => {
+    expect(resolveActiveHost(undefined)).toBeUndefined();
+    expect(resolveActiveHost('')).toBeUndefined();
+    expect(resolveActiveHost('   ')).toBeUndefined();
+  });
+
+  it('names each known host', () => {
+    expect(resolveActiveHost('claude-code')).toBe('claude-code');
+    expect(resolveActiveHost('codex')).toBe('codex');
+    expect(resolveActiveHost('pi')).toBe('pi');
+  });
+
+  it('accepts none, which allows no harness', () => {
+    expect(resolveActiveHost('none')).toBe('none');
+  });
+
+  it('trims whitespace', () => {
+    expect(resolveActiveHost(' pi ')).toBe('pi');
+  });
+
+  it('ignores a typo rather than disabling capture', () => {
+    expect(resolveActiveHost('claude')).toBeUndefined();
+    expect(resolveActiveHost('Pi')).toBeUndefined();
   });
 });

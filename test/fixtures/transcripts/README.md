@@ -9,13 +9,19 @@ The test asserts **exact equality** between the actual distill output and the ex
 ## Hosts
 
 A `codex-` filename prefix marks a **Codex rollout**, read through `readCodexRollout`;
-everything else is a **Claude Code transcript**, read through `readTranscript`. The contract
+a `pi-` prefix marks a **Pi session file**, read through `readPiSession`; everything else is
+a **Claude Code transcript**, read through `readTranscript`. The contract
 test routes every fixture through `readSession(path, host)`, so the fixtures assert against
 the record stream production actually produces rather than a hand-parsed approximation.
 
 Codex fixtures carry the event envelope (`{timestamp, type, payload}`) verbatim, including
 the lines the reader is expected to drop — `token_count`, `function_call`, and the
 `response_item` echo of a user turn that would otherwise be filed twice.
+
+Pi fixtures are synthetic (no real user content) and carry the session tree verbatim,
+including the entries the reader is expected to drop — the system prompt, thinking and
+tool-call blocks, the tool result, `model_change`, and mehmory's own `custom_message`
+injection, which uses words the distiller would otherwise file.
 
 ## Redaction
 
