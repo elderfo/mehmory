@@ -112,9 +112,10 @@ function suppression(
  * nothing below has to read it ambiently (A21). The config loaded to evaluate that
  * toggle is the same object handed to `body` — an adapter reading `loadConfig()` again
  * would not only cost a second disk read on every invocation, it could disagree with
- * the toggle this function just checked. A disabled harness skips `body` entirely — no
- * stdin is read, so there is no capture, no injection and no pointer — `renderHookOutput`
- * still emits its normal no-op for the event (`''` for most events, `{}` for `Stop`),
+ * the toggle this function just checked. A disabled harness skips `body` entirely — stdin
+ * is read only to resolve the project for the stats line, so there is no capture, no
+ * injection and no pointer — and `renderHookOutput` still emits its normal no-op for the
+ * event (`''` for most events, `{}` for `Stop`),
  * persistent and scoped to one harness via config, unlike the single-session promise of
  * `/mehmory:pause`. `MEHMORY_ACTIVE_HOST`, read once here and resolved like the host
  * argument, skips `body` the same way for every harness but the one it names (A30), so a
@@ -137,9 +138,9 @@ export function runHook(
   let project = 'unknown';
 
   try {
+    const input = parseHookInput(readStdin());
+    project = resolveProjectKey(input.cwd ?? process.cwd());
     if (suppressed === undefined) {
-      const input = parseHookInput(readStdin());
-      project = resolveProjectKey(input.cwd ?? process.cwd());
       // Every hook body reaches for session state, and `.state/<id>.json` with an empty
       // id is `.state/.json` — one shared file every malformed invocation would pollute.
       // No session id, no session: log it and stay silent (A2).

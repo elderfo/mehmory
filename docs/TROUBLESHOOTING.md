@@ -314,7 +314,7 @@ Code session that Pi's provider runs underneath it (claude-bridge, for example) 
 and one Pi conversation is captured once, as `host=pi`. Before this, the nested session also
 captured it as `host=claude-code` and filed mehmory's own injected frame into the inbox.
 
-The same variable silences a `claude` you start from Pi's bash tool. `mehmory stats --all`
+The same variable silences a `claude` you start from Pi's bash tool. `mehmory stats`
 shows those invocations as `suppressed (active_host)`. To capture in the nested Claude Code
 instead of Pi, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`. If you exported another
 value yourself, the extension keeps it. See `MEHMORY_ACTIVE_HOST` in `docs/CONFIG.md`.

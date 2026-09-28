@@ -7,13 +7,14 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
 import { redact } from '../src/core/redact.js';
 import { buildInjection } from '../src/core/injection.js';
 import { buildScopeInjection } from '../src/core/capture.js';
+import { sessionStatePath } from '../src/core/session.js';
 import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
@@ -199,7 +200,9 @@ describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
     expect(run.status).toBe(0);
     expect(run.stdout.trim()).toBe('');
     expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
+    expect(existsSync(sessionStatePath('s1'))).toBe(false);
     expect(statsLines().at(-1)).toMatchObject({
+      project: key,
       hook: 'UserPromptSubmit',
       host: 'codex',
       suppressed: 'host_disabled',
