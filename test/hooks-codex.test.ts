@@ -24,6 +24,7 @@ import {
   statsLines,
   writeCodexRollout,
   writeTranscript,
+  TODAY,
 } from './hook-fixture.js';
 import { setPaused, updateSessionState } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
@@ -39,7 +40,7 @@ const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
 const CODEX_TURN = '019fbf44-51af-7693-a39d-3b7b66c5c195';
 
 const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
