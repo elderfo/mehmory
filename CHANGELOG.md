@@ -102,6 +102,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sweep and `listPendingSessions`, so pinning a marker behind it would strand both files
   rather than protect anything.
 
+### Changed
+
+- **Releases are cut by merging a VERSION bump.** GitHub Actions creates the `vX.Y.Z` tag,
+  the GitHub Release (notes taken from the version's CHANGELOG section) and the npm publish
+  once CI passes on `main`. Tags are no longer pushed by hand, and a hand-pushed tag
+  publishes nothing.
+
 ### Removed
 
 - **`setCachedProjectKey` is gone from `@elderfo/mehmory/core/session`.** It was the dead

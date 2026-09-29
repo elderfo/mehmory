@@ -1,16 +1,24 @@
 /**
- * The publish job targets **npmjs.org**. Three things have to agree for a `v*` tag to
- * publish, and nothing in the workflow fails loudly if they drift apart — the publish
- * just lands in the wrong registry or 401s — so they are pinned here:
+ * Releases are cut by merging a VERSION bump to `main`. The workflow runs after a green
+ * `CI` run of a push to `main`: `tag-release` creates the tag and the GitHub Release, and
+ * `publish-npm` publishes the tagged tree to **npmjs.org**. Two contracts are pinned here.
+ *
+ * Release ownership. Only a green CI run can release, so the trigger is `workflow_run` on
+ * `CI` for `main` and no `push: tags` trigger remains: a hand-pushed tag must not publish
+ * on its own. `contents: write` exists on `tag-release` alone, with nothing granted at the
+ * top level. Tags are never moved, so no force flag appears anywhere.
+ *
+ * The npm publish. Three things have to agree, and nothing in the workflow fails loudly
+ * if they drift apart — the publish just lands in the wrong registry or 401s:
  *
  *   1. `package.json` is unscoped. The install path a public reader follows is
  *      `npm install -g mehmory` with no registry configuration and no token; a scope
  *      reintroduced here would silently change that contract.
  *   2. `publishConfig.registry` and the workflow's `registry-url` name the same host,
- *      so a local `pnpm publish` and a tagged CI publish land in the same place.
- *   3. The publish step authenticates with the `NPM_TOKEN` secret. The job-level `if:`
- *      names only the tag ref — `secrets` is not an allowed context there, and a
- *      previous version of this workflow regressed on exactly that.
+ *      so a local `pnpm publish` and a CI publish land in the same place.
+ *   3. The publish step authenticates with the `NPM_TOKEN` secret. `publish-npm`'s `if:`
+ *      never references `secrets` — it is not an allowed context there, and a previous
+ *      version of this workflow regressed on exactly that.
  *
  * The GitHub Packages assertions this file used to carry are inverted rather than
  * deleted: `@elderfo/mehmory` on `npm.pkg.github.com` needed a `read:packages` token
@@ -65,6 +73,11 @@ function jobBlock(source: string, jobName: string): string {
   return block.join('\n');
 }
 
+/** The job-level `if:` line of a job block, if it has one. */
+function jobIf(block: string): string | undefined {
+  return block.split('\n').find(line => /^\s{4}if:/.test(line));
+}
+
 describe('release workflow — publish-npm targets npmjs', () => {
   const source = loadWorkflow();
 
@@ -79,18 +92,41 @@ describe('release workflow — publish-npm targets npmjs', () => {
     expect(source).not.toContain('build-tag');
   });
 
-  it('needs no contents: write anywhere — nothing pushes back to the repo', () => {
-    expect(source).not.toMatch(/contents:\s*write/);
+  it('releases only after CI on main, never from a hand-pushed tag', () => {
+    // jobBlock isolates any key's block by indentation, top-level `on:` included.
+    const on = jobBlock(source, 'on');
+    expect(on).toMatch(/workflow_run:\s*\n\s*workflows:\s*\[CI\]/);
+    expect(on).toMatch(/types:\s*\[completed\]/);
+    expect(on).toMatch(/branches:\s*\[main\]/);
+    expect(source).not.toMatch(/^\s*push:/m);
+    expect(source).not.toMatch(/^\s*tags:/m);
   });
 
-  it("publish-npm's job-level if: names the tag ref and never references secrets", () => {
+  it('grants nothing at the top level and contents: write to tag-release alone', () => {
+    expect(source).toMatch(/^permissions: \{\}$/m);
+    expect(source.match(/contents:\s*write/g)).toHaveLength(1);
+    expect(jobBlock(source, 'tag-release')).toMatch(/permissions:\s*\n\s*contents:\s*write/);
+    expect(jobBlock(source, 'publish-npm')).not.toMatch(/contents:\s*write/);
+  });
+
+  it("tag-release's job-level if: requires a successful CI run", () => {
+    const jobIfLine = jobIf(jobBlock(source, 'tag-release'));
+    expect(jobIfLine, 'tag-release must declare a job-level if:').toBeDefined();
+    expect(jobIfLine).toMatch(/github\.event\.workflow_run\.conclusion == 'success'/);
+  });
+
+  it('publish-npm needs tag-release, and its if: (if any) never references secrets', () => {
     const block = jobBlock(source, 'publish-npm');
-    const jobIfLine = block.split('\n').find(line => /^\s{4}if:/.test(line));
-    expect(jobIfLine, 'publish-npm must declare a job-level if:').toBeDefined();
-    expect(jobIfLine).toMatch(/startsWith\(github\.ref,\s*'refs\/tags\/v'\)/);
+    expect(block).toMatch(/^\s{4}needs:\s*tag-release\s*$/m);
     // The one line the previous regression got wrong: `secrets` is not in the
     // context list GitHub allows inside jobs.<job_id>.if.
-    expect(jobIfLine).not.toMatch(/secrets\./);
+    expect(jobIf(block) ?? '').not.toMatch(/secrets\./);
+  });
+
+  it('never moves a tag: no force flag anywhere', () => {
+    // `--force` is already asserted absent by the hook-bundle test above.
+    expect(source).not.toMatch(/git push\b.*\s-f\b/);
+    expect(source).not.toMatch(/git tag\b.*\s-f\b/);
   });
 
   it('publish-npm needs no packages: write — nothing is published to GitHub Packages', () => {

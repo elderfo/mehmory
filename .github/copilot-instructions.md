@@ -110,6 +110,6 @@ What else needs to change when you touch these files:
 ## Commits and PRs
 
 Conventional commits (`<type>(<scope>): <subject>`; types: `feat`, `fix`, `docs`, `chore`,
-`refactor`, `test`). One logical unit of work per PR, branched off `main`. No AI/bot
+`refactor`, `test`, `ci`). One logical unit of work per PR, branched off `main`. No AI/bot
 attribution in commit messages, trailers, or PR bodies. Run `pnpm lint && pnpm test &&
 pnpm typecheck && pnpm build` before pushing — the pre-commit hook already runs lint and test.
