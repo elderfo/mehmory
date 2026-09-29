@@ -33,7 +33,7 @@ pnpm build      # tsup → dist/ and hooks/*.mjs
 ## Conventions
 
 - **Commits** — conventional commits, `<type>(<scope>): <subject>`. Types: `feat`, `fix`,
-  `docs`, `chore`, `refactor`, `test`.
+  `docs`, `chore`, `refactor`, `test`, `ci`.
 - **Branches** — branch off `main`, one logical unit of work per pull request. Never commit
   directly to `main`.
 - **TypeScript** — strict mode, no `any` in `src/` (enforced by a local ESLint rule).

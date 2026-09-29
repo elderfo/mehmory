@@ -234,12 +234,57 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 - `pnpm docs:build` — Build the site (→ site/.vitepress/dist)
 - `pnpm docs:preview` — Serve the built site
 
+## Agent Workflow
+
+This repo is set up for agent-assisted development by a solo maintainer.
+
+- **Instructions.** This file is canonical. `.github/copilot-instructions.md` adds Copilot
+  conventions and a maintenance matrix (which files move together) and defers to this file.
+  Read both before a non-trivial change; `CONTRIBUTING.md` is the human-facing summary.
+- **Work items.** GitHub Issues on `elderfo/mehmory` are the only tracker (see Agent skills
+  below). Acceptance criteria live in the issue body, or in the PR's "What and why" when there
+  is no issue. Link an issue from the PR with `Closes #N` as the PR template asks. Never close,
+  relabel or comment on an issue unless the user asks.
+- **Checks.** `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. The pre-commit hook
+  runs lint, test and typecheck but not build, so run `pnpm build` yourself whenever `src/`
+  changes and commit the rebuilt `hooks/*.mjs` (A25). CI's `build-test` job runs all four plus
+  actionlint and a `hooks/` drift check.
+- **Docs move with the code.** A change to behavior, commands, config keys or error codes
+  updates the matching `docs/*.md` and adds a `CHANGELOG.md` line under `## [Unreleased]` in
+  the same PR.
+
+### Branch protection
+
+`main` is guarded by two repository rulesets:
+
+- **`main: integrity`** binds everyone, admins included: no deletion, no force push, linear
+  history.
+- **`main: pull requests`** (repo admins may bypass): changes land through a PR, squash merge
+  only, `build-test` must pass on a branch up to date with `main`, and every review thread must
+  be resolved. No approval is required. Copilot reviews each PR once when it opens; new pushes
+  are not re-reviewed, so request a fresh review after a substantive change.
+
+Do not use the admin bypass unless the user says to for that change.
+
+### Releases
+
+`VERSION` is the canonical version. GitHub Actions owns the tag, the GitHub Release and the npm
+publish; nobody pushes tags by hand.
+
+1. In a PR, bump `VERSION` and mirror it in `package.json`, `plugin.json` and
+   `.claude-plugin/plugin.json` (tests enforce the match).
+2. In the same PR, move `## [Unreleased]` entries under `## [X.Y.Z] - YYYY-MM-DD` and update
+   the compare links at the bottom of `CHANGELOG.md`.
+3. Merge. When CI passes on `main`, `.github/workflows/release.yml` creates tag `vX.Y.Z`, a
+   GitHub Release from that CHANGELOG section, and publishes `mehmory` to npm. Each step skips
+   when its result already exists, and an existing tag is never moved.
+
 ## Conventions
 
 ### Commit Messages
 
 - Conventional commits: `<type>(<scope>): <subject>`
-- Types: feat, fix, docs, chore, refactor, test
+- Types: feat, fix, docs, chore, refactor, test, ci
 - No AI/bot attribution in messages, trailers, or PR bodies
 - Sign all commits
 
