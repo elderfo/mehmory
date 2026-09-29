@@ -22,6 +22,7 @@ import {
   seedStore,
   statsLines,
   writePiSession,
+  TODAY,
 } from './hook-fixture.js';
 import { setPaused, updateSessionState } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
@@ -32,7 +33,7 @@ const PI_ARGS = ['pi'] as const;
 const PI_SESSION = 'dd000000-0000-4000-8000-00000000pi01';
 
 const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 

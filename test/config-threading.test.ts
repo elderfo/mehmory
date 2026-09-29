@@ -27,6 +27,7 @@ import {
   seedStore,
   statsLines,
   writeCodexRollout,
+  TODAY,
 } from './hook-fixture.js';
 
 /** Overwrite the store's config.json (initStore writes an empty one). */
@@ -227,7 +228,7 @@ describe('hosts.<host>.enabled reaches injection too, not only capture (D10)', (
   // its own proof that a disabled harness gets neither.
   const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
   const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
