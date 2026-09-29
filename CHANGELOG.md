@@ -108,6 +108,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the GitHub Release (notes taken from the version's CHANGELOG section) and the npm publish
   once CI passes on `main`. Tags are no longer pushed by hand, and a hand-pushed tag
   publishes nothing.
+- **The release workflow no longer fails when there is nothing to publish.** `publish-npm`
+  asked setup-node to cache the pnpm store, which does not exist when the publish is skipped,
+  so every green push to `main` ended with a failed release run.
 
 ### Removed
 

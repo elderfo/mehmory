@@ -147,6 +147,12 @@ describe('release workflow — publish-npm targets npmjs', () => {
     expect(stepBlock).not.toMatch(/secrets\.GITHUB_TOKEN/);
   });
 
+  it('publish-npm caches nothing, so a skipped install cannot fail the cache save', () => {
+    // The first run on main skipped the publish (0.4.0 was already on npm), so pnpm never
+    // created its store, and setup-node's post step failed the job saving a missing path.
+    expect(jobBlock(source, 'publish-npm')).not.toMatch(/^\s*cache:/m);
+  });
+
   it("setup-node's registry-url matches package.json's publishConfig.registry", () => {
     const block = jobBlock(source, 'publish-npm');
     expect(block).toContain(`registry-url: '${REGISTRY}'`);
