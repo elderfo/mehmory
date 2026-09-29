@@ -10,13 +10,14 @@ import {
   runHook,
   seedStore,
   statsLines,
+  TODAY,
 } from './hook-fixture.js';
 import { recordWarning } from '../src/core/errors.js';
 import { recordStat } from '../src/core/stats.js';
 import { setPaused } from '../src/core/session.js';
 
 const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
