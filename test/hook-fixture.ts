@@ -24,6 +24,13 @@ export type HookName =
 /** Directory the build writes bundles to (repo root is vitest's cwd). */
 export const HOOKS_DIR = join(process.cwd(), 'hooks');
 
+/**
+ * Today's date as a page `updated:` value. Hooks run decay, which archives pages older than
+ * `decay.purge_days`, so a page fixture with a fixed date starts vanishing from pointers once
+ * the calendar passes it. Tests about a page's age pass their own date instead.
+ */
+export const TODAY = new Date().toISOString().slice(0, 10);
+
 /** Result of one hook invocation. */
 export interface HookRun {
   readonly status: number | null;
