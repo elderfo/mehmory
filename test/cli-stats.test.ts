@@ -168,7 +168,7 @@ describe('mehmory stats', () => {
     expect(data['capturedEntries']).toBe(12);
   });
 
-  it('shows suppressed hooks under `--all`, where their unknown project is visible', () => {
+  it('shows suppressed records filed under `unknown` (written before they carried a project) under `--all`', () => {
     const cwd = createTempDir('mehmory-cli-cwd');
     expect(runCli(['init'], { cwd }).status).toBe(0);
     writeStats([

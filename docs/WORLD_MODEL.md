@@ -583,9 +583,9 @@ turning `claude-code` off there silences a standalone Claude Code too.
 The environment is the channel that follows the nesting. `MEHMORY_ACTIVE_HOST` holds a member
 of `INBOX_HOSTS`, or `none`. `runHook` reads it once, resolves it with `resolveActiveHost` in
 `src/core/host.ts`, and skips the body for any other host exactly as it skips a disabled one:
-no stdin read, no capture, no injection, the normal no-op output. The stats line records
-`suppressed: 'active_host'` (a disabled host records `host_disabled`), so `mehmory stats --all`
-can explain an empty inbox.
+stdin is read only to resolve the project for the stats line, then no capture, no injection,
+the normal no-op output. The stats line records `suppressed: 'active_host'` (a disabled host
+records `host_disabled`) under that project, so `mehmory stats` can explain an empty inbox.
 
 Unset or empty means no restriction. So does an unrecognized value, the typo tolerance
 `resolveHost` already gives the host argument: a misspelling must never silently disable

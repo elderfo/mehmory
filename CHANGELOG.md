@@ -28,6 +28,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Suppressed hook calls record their real project.** A hook skipped by
+  `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
+  plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the
+  project, still without capture or injection.
 - **A git install no longer fails without dev dependencies.** `prepare` ran `husky install`,
   which exited 127 under `npm install --omit=dev` (how Pi installs a git package). It now
   tolerates husky being absent, and a dev checkout still installs the git hooks.

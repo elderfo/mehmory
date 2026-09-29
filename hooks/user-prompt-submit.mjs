@@ -3,7 +3,7 @@ import {
   runHook,
   scopePaths,
   staleSessionStartWarning
-} from "./chunk-Q72NFL5N.mjs";
+} from "./chunk-KDPDRDAW.mjs";
 import {
   appendInboxEntries,
   isPaused,
