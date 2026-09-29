@@ -88,7 +88,7 @@ mehmory/
 │   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
 │   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR,
 │                               # plus a hooks/ bundle-drift gate — A25);
-│                               # release.yml (v* tag → build → npm publish) (X);
+│                               # release.yml (green CI on main → tag + GitHub Release → npm publish) (X);
 │                               # pages.yml (site/** on main → vitepress build → Pages deploy)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)

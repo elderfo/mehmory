@@ -1,39 +1,142 @@
 name: Release
 
+# A release is cut by merging a VERSION bump to `main`. Nobody pushes tags by hand: this
+# workflow creates the `vX.Y.Z` tag, the GitHub Release and the npm publish.
+#
+# Why `workflow_run` and not `push: tags`: it fires only after the `CI` workflow finishes
+# for a push to `main`, and `tag-release` runs only when that run succeeded. A release is
+# therefore never ahead of the checks, and a hand-pushed tag publishes nothing on its own.
+# The workflow file that runs is always the one on the default branch.
+#
+# Why the write permission lives on one job: creating a tag and a GitHub Release needs
+# it, and nothing else here does. The top level grants nothing, `tag-release` gets
+# write, and `publish-npm` reads the tagged tree only.
+#
+# Idempotency: every green push to `main` runs this, not just version bumps, so each step
+# converges instead of assuming it is the first. An existing tag is never moved or
+# recreated, an existing Release is left alone, and a version already on npm is not
+# republished. Re-running a failed run picks up where the last one stopped.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  # No bundle-attaching job here any more. It used to build `hooks/*.mjs` and force-push
-  # them onto the tag, because the bundles were gitignored on `main`. That never reached
-  # the installed plugin: the marketplace clones the **default branch**, not the tag, so
-  # every marketplace install shipped a `hooks.json` pointing at five files that did not
-  # exist. The bundles are now committed on `main` (A25 in docs/WORLD_MODEL.md) and the
-  # tag inherits them, which also lets this workflow drop its repo-write scope entirely.
-  # (Spelling that permission out here would trip the test that asserts it is gone.)
+  tag-release:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Read VERSION
+        id: version
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION is '$V', expected X.Y.Z."
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Check manifests match VERSION
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          for f in package.json plugin.json .claude-plugin/plugin.json; do
+            got=$(node -p "require('./$f').version")
+            if [ "$got" != "$V" ]; then
+              echo "::error file=$f::version is '$got', VERSION is '$V'."
+              exit 1
+            fi
+          done
+
+      - name: Extract release notes
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          # The `## [V]` section body, up to the next `## [` heading or the link refs at
+          # the bottom. `[Unreleased]` never matches a bare X.Y.Z, so it cannot be
+          # released by accident.
+          awk -v heading="## [$V]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^(## )?\[[^]]*\]/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error file=CHANGELOG.md::No '## [$V]' section, or it is empty."
+            exit 1
+          fi
+
+      - name: Create tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # --exit-code returns 2 when the ref is absent. Any other failure is not proof
+          # the tag is missing, so it stops the job rather than creating one.
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "$TAG already exists on origin; leaving it where it is."
+            exit 0
+          elif [ "$status" -ne 2 ]; then
+            echo "::error::git ls-remote failed with exit $status."
+            exit "$status"
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$TAG" "$HEAD_SHA"
+          git push origin "refs/tags/$TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            exit 0
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md
 
   # Publishes the unscoped `mehmory` package to npmjs.org. GitHub Packages was the
   # registry while the repo was private; it has no anonymous read, so every installer
-  # needed a token of their own — untenable once the repo went public.
+  # needed a token of their own, untenable once the repo went public.
   #
   # `publishConfig.registry` in package.json pins the same URL as `registry-url` below,
   # so a local `pnpm publish` lands where this job lands. No `scope` is set: the package
   # is unscoped, and the bare `registry=` line setup-node writes points at npmjs, which
-  # is already the default resolution target — so unlike the GitHub Packages setup, it
+  # is already the default resolution target, so unlike the GitHub Packages setup it
   # cannot misdirect the dependency install in this job.
   #
-  # NPM_TOKEN is an automation token on the npmjs account. The job-level `if:` names only
-  # the tag ref — `secrets` is not an allowed context there — so a missing token fails the
-  # publish step loudly rather than skipping the job silently.
+  # NPM_TOKEN is an automation token on the npmjs account. There is no job-level `if:`
+  # (`secrets` is not an allowed context there), so a missing token fails the publish
+  # step loudly rather than skipping the job silently.
   publish-npm:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: tag-release
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag-release.outputs.tag }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -45,13 +148,29 @@ jobs:
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Check whether this version is already on npm
+        id: published
+        env:
+          V: ${{ needs.tag-release.outputs.version }}
+        run: |
+          # `npm view` exits non-zero with E404 for a version that was never published.
+          if [ "$(npm view "mehmory@$V" version 2> /dev/null)" = "$V" ]; then
+            echo "mehmory@$V is already on npm; skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dependencies
+        if: steps.published.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        if: steps.published.outputs.skip != 'true'
         run: pnpm build
 
       - name: Publish to npmjs
+        if: steps.published.outputs.skip != 'true'
         run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
