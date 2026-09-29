@@ -262,8 +262,8 @@ carries the same data as `data.hosts: [{host, count, capturedEntries, suppressed
 
 `suppressed` counts invocations that skipped their body, by reason: `host_disabled`
 (`hosts.<host>.enabled` is `false`) or `active_host` (`MEHMORY_ACTIVE_HOST` names another
-harness, or `none`). A skipped hook reads no stdin, so its record carries the project key
-`unknown` and shows up only under `--all`. The text line appends `N suppressed (<reason>)`.
+harness, or `none`). A skipped hook still reads stdin to resolve the session's project key, so
+plain `mehmory stats` in that project counts it. The text line appends `N suppressed (<reason>)`.
 
 ### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
 

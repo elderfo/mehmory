@@ -324,7 +324,8 @@ Not a `config.json` key. The environment variable that names the one harness all
 mehmory in this process and everything it starts: `claude-code`, `codex`, `pi`, or `none`.
 Every other harness's hooks skip capture, injection and pointers exactly as if
 `hosts.<host>.enabled` were `false`, and record `suppressed: active_host` on their stats line
-(`mehmory stats --all` counts them). `none` turns mehmory off on every harness for one launch.
+(`mehmory stats` in that project counts them). `none` turns mehmory off on every harness for
+one launch.
 
 Unset or empty means no restriction. So does a value that is not one of those four: a typo
 never silently disables capture.

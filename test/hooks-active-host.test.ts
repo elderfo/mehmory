@@ -2,6 +2,7 @@
  * built bundles like every other hook suite. */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { existsSync } from 'node:fs';
 import { createTempDir } from './helpers.js';
 import {
   additionalContext,
@@ -14,7 +15,7 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { loadConfig } from '../src/core/config.js';
-import { readSessionState, updateSessionState } from '../src/core/session.js';
+import { readSessionState, sessionStatePath, updateSessionState } from '../src/core/session.js';
 
 const REMEMBER = 'remember: staging needs the VPN';
 
@@ -46,13 +47,14 @@ describe('MEHMORY_ACTIVE_HOST', () => {
   describe('naming another host silences claude-code', () => {
     const env = { MEHMORY_ACTIVE_HOST: 'pi' };
 
-    it('injects nothing at SessionStart and says why on the stats line', () => {
+    it('injects nothing at SessionStart and says why on the stats line, under its project', () => {
       const run = sessionStart('claude-code', env);
 
       expect(run.status).toBe(0);
       expect(run.stdout).toBe('');
+      expect(existsSync(sessionStatePath('s1'))).toBe(false);
       expect(statsLines().at(-1)).toMatchObject({
-        project: 'unknown',
+        project: key,
         hook: 'SessionStart',
         host: 'claude-code',
         suppressed: 'active_host',

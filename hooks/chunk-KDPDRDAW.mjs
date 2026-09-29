@@ -165,9 +165,9 @@ function runHook(event, body) {
   let result = {};
   let project = "unknown";
   try {
+    const input = parseHookInput(readStdin());
+    project = resolveProjectKey(input.cwd ?? process.cwd());
     if (suppressed === void 0) {
-      const input = parseHookInput(readStdin());
-      project = resolveProjectKey(input.cwd ?? process.cwd());
       if (input.session_id.trim() === "") {
         logError({
           code: "E_SESSION_STATE",
