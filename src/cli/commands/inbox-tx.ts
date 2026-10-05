@@ -17,8 +17,8 @@ import { EXIT, usageError, type Command, type CommandResult } from '../command.j
 
 export const command: Command = {
   name: 'inbox-tx',
-  summary: 'append, snapshot, or clear inbox entries transactionally (skills call this)',
-  usage: 'mehmory inbox-tx <append|snapshot|clear> [--json]',
+  summary: 'transactional inbox entries and session pause/resume (skills call this)',
+  usage: 'mehmory inbox-tx <append|snapshot|clear|pause|resume> [--json]',
   help: [
     '  Reads a JSON object from stdin and writes the result as one line of JSON on',
     '  stdout — the same input/output contract as the bundled `hooks/inbox-tx.mjs`',
@@ -27,9 +27,11 @@ export const command: Command = {
     '  append   {inbox, key, host?, entries:[{text, src}]}  -> {appended, skipped}',
     '  snapshot {inbox, key}                                -> {snapshotId, entries}',
     '  clear    {inbox, key, snapshotId}                    -> {removed}',
+    '  pause    {session_id}                                -> {session_id, paused:true}',
+    '  resume   {session_id}                                -> {session_id, paused:false}',
     '',
     '  `host` is the harness to attribute the entries to (claude-code|codex). Omit it',
-    '  and the host recorded for each entry\'s `src` session is used instead.',
+    "  and the host recorded for each entry's `src` session is used instead.",
   ],
 
   run(ctx): CommandResult {
@@ -39,7 +41,7 @@ export const command: Command = {
     const [subcommand, extra] = parsed.positional;
     if (subcommand === undefined) {
       return usageError(
-        'missing subcommand (expected append|snapshot|clear)',
+        'missing subcommand (expected append|snapshot|clear|pause|resume)',
         'mehmory inbox-tx --help'
       );
     }
