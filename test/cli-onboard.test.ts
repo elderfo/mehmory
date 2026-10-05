@@ -1,7 +1,7 @@
 /** `mehmory onboard` — criterion 5, plus criterion 20's onboard half. */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFakeClaudeHome, createTempDir, encodeClaudeProjectDir } from './helpers.js';
 import { envelopeOf, runCli, treeDigest } from './cli-fixture.js';
@@ -174,6 +174,38 @@ describe('mehmory onboard', () => {
     expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(false);
   });
 
+  it('keeps byte-capped progress so --resume processes older sessions', () => {
+    const project = fakeProject();
+    const claudeHome = createFakeClaudeHome({
+      [project]: {
+        newest: transcript('newest', ['the newest deployment decision']),
+        older: transcript('older', ['the older deployment decision']),
+      },
+    });
+    const encoded = join(claudeHome, '.claude', 'projects', encodeClaudeProjectDir(project));
+    utimesSync(join(encoded, 'newest.jsonl'), 2000, 2000);
+    utimesSync(join(encoded, 'older.jsonl'), 1000, 1000);
+    expect(runCli(['init'], { cwd: project, claudeHome }).status).toBe(0);
+    const capped = runCli(['onboard', '--max-bytes', '1'], { cwd: project, claudeHome });
+    expect(capped.status).toBe(0);
+    expect(capped.stdout).toContain(
+      'stopped at the `--max-bytes` cap; re-run with `--resume` to continue'
+    );
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(true);
+
+    const resumed = runCli(['onboard', '--resume', '--max-bytes', '1', '--json'], {
+      cwd: project,
+      claudeHome,
+    });
+    expect(resumed.status).toBe(0);
+    const data = envelopeOf(resumed)['data'] as Record<string, unknown>;
+    expect(data['alreadyDone']).toBe(1);
+    expect(data['distilled']).toBe(1);
+    expect(inboxOf(keyFromEnvelope(resumed))).toContain('the older deployment decision');
+    expect(inboxOf(keyFromEnvelope(resumed))).toContain('the newest deployment decision');
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(false);
+  });
+
   it('--resume finishes an interrupted run to the same inbox as an uninterrupted one', () => {
     const project = fakeProject();
     const sessions = {
@@ -267,7 +299,7 @@ describe('mehmory onboard', () => {
     expect(inboxOf(keyFromEnvelope(run))).toContain('readable');
   });
 
-  it('survives a corrupt store: an inbox that is a directory costs entries, not a throw', () => {
+  it('returns exit 3 on append failure and preserves progress for a repaired --resume', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
       [project]: { s: transcript('s', ['a corrupt store note']) },
@@ -279,9 +311,22 @@ describe('mehmory onboard', () => {
     mkdirSync(join(home(), 'projects', key, 'inbox.md'), { recursive: true });
 
     const run = runCli(['onboard', '--json'], { cwd: project, claudeHome });
-    expect(run.status).toBe(0);
+    expect(run.status).toBe(3);
     expect(run.stderr).not.toContain('at Object.');
-    const data = envelopeOf(run)['data'] as Record<string, unknown>;
+    const envelope = envelopeOf(run);
+    expect(envelope['ok']).toBe(false);
+    expect((envelope['errors'] as Record<string, unknown>[])[0]?.['code']).toBe('E_APPEND_FAILED');
+    expect((envelope['errors'] as Record<string, unknown>[])[0]?.['fix']).toBe(
+      `mehmory onboard --resume --project '${key}'`
+    );
+    const data = envelope['data'] as Record<string, unknown>;
     expect(data['appended']).toBe(0);
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(true);
+    rmSync(join(home(), 'projects', key, 'inbox.md'), { recursive: true });
+    writeFileSync(join(home(), 'projects', key, 'inbox.md'), '');
+    const resumed = runCli(['onboard', '--resume', '--json'], { cwd: project, claudeHome });
+    expect(resumed.status).toBe(0);
+    expect(inboxOf(key)).toContain('a corrupt store note');
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(false);
   });
 });

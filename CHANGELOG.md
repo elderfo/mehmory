@@ -28,6 +28,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Page purges remove and preview matching index summaries, preventing deleted content from remaining in SessionStart's catalog.
+- Page purges discover archived and agent-scope pages and remove live/archive copies together within the selected scope.
+- `purge --global` removes the entire global scope, including its index, inbox, log and archive, without rewriting git history.
+- `purge --session` rejects ids shorter than eight characters or containing whitespace before confirmation (exit 2).
+- Partial inbox purge failures report deleted and remaining entry counts, disclose that no purge commit was made, and suggest inspecting the store's git status.
+- Byte-capped and append-failed onboard runs retain progress for `--resume`; append failures return exit 3 instead of success.
+- Unexpected CLI exceptions use `E_INTERNAL` rather than incorrectly reporting an append failure.
+
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

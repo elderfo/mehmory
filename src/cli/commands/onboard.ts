@@ -15,7 +15,14 @@ import {
   runOnboard,
 } from '../../core/onboard.js';
 import { flagInteger, parseFlags } from '../args.js';
-import { EXIT, storeMissing, usageError, type Command, type CommandResult } from '../command.js';
+import {
+  EXIT,
+  operationFailed,
+  storeMissing,
+  usageError,
+  type Command,
+  type CommandResult,
+} from '../command.js';
 import { scopeLabel, selectScope, SCOPE_FLAGS } from '../scope.js';
 
 export const command: Command = {
@@ -143,9 +150,14 @@ export const command: Command = {
       );
     }
     if (result.cappedByBytes) {
-      lines.push('stopped at the `--max-bytes` cap; re-run to continue');
+      lines.push(
+        dryRun
+          ? 'dry run stopped at the `--max-bytes` cap; raise the cap to preview more'
+          : 'stopped at the `--max-bytes` cap; re-run with `--resume` to continue'
+      );
     }
     if (result.stub !== undefined) lines.push(`wrote    ${result.stub}`);
+    if (outcome.kind === 'failed') return { ...operationFailed(outcome.error), lines, data };
     if (!dryRun) lines.push('next: in a Claude Code session, run `/mehmory:integrate`');
 
     return { exit: EXIT.OK, lines, data };

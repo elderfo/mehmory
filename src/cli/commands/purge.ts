@@ -61,11 +61,12 @@ export const command: Command = {
   usage:
     'mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all [--dry-run] [--export <path>] [--yes]',
   help: [
-    '  <page-slug>       one page; ambiguous across scopes exits 1 listing candidates,',
+    '  <page-slug>       live and archived copies in one scope, plus matching index lines;',
+    '                    includes agent scopes; ambiguous across scopes lists candidates,',
     '                    which `--project <key>` or `--global` beside the slug resolves',
-    '  --session <id>    un-integrated inbox entries captured by that session',
+    '  --session <id>    un-integrated inbox entries; at least 8 characters, no whitespace',
     '  --project [<key>] one project; bare means the current directory',
-    '  --global          identity.md and global/pages/',
+    '  --global          the entire global/ directory (including index, inbox, log, archive)',
     '  --all             everything in the store',
     '  --dry-run         preview the targets; deletes nothing',
     '  --export <path>   copy the targets there first; aborts if the copy fails',
@@ -120,6 +121,16 @@ export const command: Command = {
         'mehmory purge --help'
       );
     }
+    const session = flagString(parsed.flags, 'session');
+    if (session !== undefined && (session.length < 8 || /\s/u.test(session))) {
+      return {
+        ...usageError(
+          '`--session` requires at least 8 characters with no whitespace',
+          'mehmory purge --help'
+        ),
+        exit: 2,
+      };
+    }
     if (!storeExists()) return storeMissing('purge');
 
     const planned = buildPlan(slug, parsed.flags, ctx);
@@ -133,8 +144,19 @@ export const command: Command = {
     const preview = [
       `purge    ${plan.label}`,
       ...targets.map(path => `  delete ${path}`),
+      ...plan.indexEdits.flatMap(edit => [
+        `  clear  ${String(edit.lines.length)} index lines in ${relative(home, edit.indexFile)}`,
+        ...edit.lines.map(line => `    ${line}`),
+      ]),
       ...(entries > 0
-        ? [`  clear  ${String(entries)} inbox entries in ${String(plan.inboxEdits.length)} scope(s)`]
+        ? [
+            `  clear  ${String(entries)} inbox entries in ${String(plan.inboxEdits.length)} scope(s)`,
+          ]
+        : []),
+      ...(plan.form === 'global'
+        ? [
+            '  note   no global skeleton survives; a later init or SessionStart may recreate empty templates',
+          ]
         : []),
     ];
     const data = {
@@ -142,6 +164,10 @@ export const command: Command = {
       scope: plan.label,
       targets,
       entries,
+      indexEdits: plan.indexEdits.map(edit => ({
+        file: relative(home, edit.indexFile),
+        lines: edit.lines,
+      })),
       token: plan.token,
       dryRun,
       ...(plan.form === 'session' ? { reach: SESSION_REACH } : {}),
@@ -151,7 +177,10 @@ export const command: Command = {
       return { exit: EXIT.OK, lines: [`nothing to delete for ${plan.label}`], data };
     }
 
-    const notice = [...historyNotice(plan), ...(plan.form === 'session' ? [`note: ${SESSION_REACH}`] : [])];
+    const notice = [
+      ...historyNotice(plan),
+      ...(plan.form === 'session' ? [`note: ${SESSION_REACH}`] : []),
+    ];
 
     if (dryRun) {
       return {
@@ -178,7 +207,10 @@ export const command: Command = {
                   ? `confirmation required: this deletes ${String(targets.length + entries)} target(s)`
                   : `\`${typed}\` is not the confirmation token for ${plan.label}`,
               consequence: 'Nothing was deleted',
-              fix: `printf '%s\\n' ${shellQuote(plan.token)} | mehmory ${['purge', ...ctx.argv].filter(a => a !== '--json').map(shellQuote).join(' ')}`,
+              fix: `printf '%s\\n' ${shellQuote(plan.token)} | mehmory ${['purge', ...ctx.argv]
+                .filter(a => a !== '--json')
+                .map(shellQuote)
+                .join(' ')}`,
             },
           ],
         };
@@ -200,10 +232,16 @@ export const command: Command = {
       lines: [
         ...preview,
         '',
-        `deleted  ${String(outcome.removed)} path(s)${outcome.entries > 0 ? `, ${String(outcome.entries)} inbox entries` : ''} and committed the removal`,
+        `deleted  ${String(outcome.removed)} path(s)${outcome.entries > 0 ? `, ${String(outcome.entries)} inbox entries` : ''}${outcome.indexLines > 0 ? `, ${String(outcome.indexLines)} index lines` : ''} and committed the removal`,
         ...notice,
       ],
-      data: { ...data, deleted: true, removed: outcome.removed, clearedEntries: outcome.entries },
+      data: {
+        ...data,
+        deleted: true,
+        removed: outcome.removed,
+        clearedEntries: outcome.entries,
+        clearedIndexLines: outcome.indexLines,
+      },
     };
   },
 };
@@ -236,12 +274,13 @@ function buildPlan(
         ),
       };
     }
-    if (pages.length > 1) {
+    const scopes = [...new Set(pages.map(p => p.scope))];
+    if (scopes.length > 1) {
       // Never both. The user names the scope and runs it again.
       const other = pages.find(p => p.scope !== 'global');
       return {
         result: usageError(
-          `\`${slug}\` exists in ${String(pages.length)} scopes: ${pages.map(p => p.scope).join(', ')}`,
+          `\`${slug}\` exists in ${String(scopes.length)} scopes: ${scopes.join(', ')}`,
           other === undefined
             ? `mehmory purge ${slug} --global`
             : `mehmory purge ${slug} --project ${other.scope}`

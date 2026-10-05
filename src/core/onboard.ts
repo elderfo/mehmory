@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { statePath } from './home.js';
-import { failOpen, logError } from './errors.js';
+import { failOpen, logError, shellQuote, type MehmoryError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { appendInboxEntries } from './inbox.js';
 import { atomicWrite, remove } from './fs.js';
@@ -223,6 +223,7 @@ export interface OnboardResult {
 
 export type OnboardOutcome =
   | { readonly kind: 'ok'; readonly result: OnboardResult }
+  | { readonly kind: 'failed'; readonly result: OnboardResult; readonly error: MehmoryError }
   /** `--resume` with nothing to resume. */
   | { readonly kind: 'no-state' }
   /** `--resume` under different scope flags than the interrupted run used. */
@@ -357,6 +358,7 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
   let skipped = 0;
   let bytes = 0;
   let cappedByBytes = false;
+  let failed = 0;
 
   for (const session of candidates) {
     if (done.has(session.file)) {
@@ -377,7 +379,8 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
       const written = appendInboxEntries(inboxFile, produced, options.scopeLabel);
       appended += written.appended;
       skipped += written.skipped;
-      if (written.failed !== undefined && written.failed > 0) break;
+      failed = written.failed ?? 0;
+      if (failed > 0) break;
     }
     done.add(session.file);
     if (!options.dryRun) writeState({ scope: options.scopeLabel, done: [...done] });
@@ -399,21 +402,32 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
     if (pathExists(stubFile)) stub = stubFile;
   }
 
-  if (!options.dryRun) clearState();
+  if (!options.dryRun && !cappedByBytes && failed === 0) clearState();
 
-  return {
-    kind: 'ok',
-    result: {
-      scan,
-      candidates: candidates.length,
-      distilled,
-      alreadyDone,
-      entries,
-      appended,
-      skipped,
-      bytes,
-      cappedByBytes,
-      stub,
-    },
+  const result: OnboardResult = {
+    scan,
+    candidates: candidates.length,
+    distilled,
+    alreadyDone,
+    entries,
+    appended,
+    skipped,
+    bytes,
+    cappedByBytes,
+    stub,
   };
+  if (failed > 0) {
+    return {
+      kind: 'failed',
+      result,
+      error: {
+        code: 'E_APPEND_FAILED',
+        kind: 'actionable',
+        what: `could not append ${String(failed)} entries to ${inboxFile}; check the inbox path, permissions and disk space`,
+        consequence: `${String(appended)} entries were appended; progress was saved in ${onboardStateFile()}; repair the inbox and resume`,
+        fix: `mehmory onboard --resume ${options.isGlobal ? '--global' : `--project ${shellQuote(options.scopeLabel)}`}`,
+      },
+    };
+  }
+  return { kind: 'ok', result };
 }

@@ -92,7 +92,9 @@ describe('mehmory purge', () => {
     const run = runCliTyped(['purge', '--all'], 'DELETE ALL');
     expect(run.stdout).toContain('never');
     expect(run.stdout).toContain('rewrites your git history');
-    expect(run.stdout).toContain(`git -C '${home()}' filter-repo --path 'global' --path 'projects' --invert-paths`);
+    expect(run.stdout).toContain(
+      `git -C '${home()}' filter-repo --path 'global' --path 'projects' --invert-paths`
+    );
   });
 
   it('pins the project token to the resolved key, not the substring typed', () => {
@@ -158,6 +160,125 @@ describe('mehmory purge', () => {
     seedStore();
     expect(runCliTyped(['purge', 'deploy'], 'deploy').status).toBe(0);
     expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(false);
+  });
+
+  it('previews and removes every matching catalog line with the page, preserving other lines', () => {
+    seedStore();
+    const index = write(
+      `projects/${KEY}/index.md`,
+      '# Index\n- [[deploy]] — deleted summary\n  - [[deploy]]\n- [[shared]] — keep summary\n'
+    );
+    const preview = runCli(['purge', 'deploy', '--dry-run']);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain(`  clear  2 index lines in projects/${KEY}/index.md`);
+    expect(preview.stdout).toContain('- [[deploy]] — deleted summary');
+    expect(readFileSync(index, 'utf-8')).toContain('deleted summary');
+
+    const dest = createTempDir('mehmory-page-export');
+    expect(runCli(['purge', 'deploy', '--yes', '--export', dest]).status).toBe(0);
+    expect(readFileSync(index, 'utf-8')).toBe('# Index\n- [[shared]] — keep summary\n');
+    expect(readFileSync(join(dest, 'projects', KEY, 'index.md'), 'utf-8')).toBe(
+      '- [[deploy]] — deleted summary\n  - [[deploy]]\n'
+    );
+    expect(
+      spawnSync('git', ['status', '--porcelain'], { cwd: home(), encoding: 'utf-8' }).stdout
+    ).toBe('');
+  });
+
+  it('purges an archived page returned by search', () => {
+    seedStore();
+    const archived = write(
+      `projects/${KEY}/archive/old-deploy.md`,
+      '# old-deploy\narchived deployment recipe\n'
+    );
+    expect(runCli(['search', 'old-deploy', '--all']).stdout).toContain('archive/old-deploy.md');
+    expect(runCli(['purge', 'old-deploy', '--dry-run']).stdout).toContain(
+      `  delete projects/${KEY}/archive/old-deploy.md`
+    );
+    expect(runCli(['purge', 'old-deploy', '--yes']).status).toBe(0);
+    expect(existsSync(archived)).toBe(false);
+  });
+
+  it('purges live and archived copies in the same scope without false ambiguity', () => {
+    seedStore();
+    const archived = write(`projects/${KEY}/archive/deploy.md`, '# older deployment recipe\n');
+    const preview = runCli(['purge', 'deploy', '--dry-run', '--json']);
+    expect(preview.status).toBe(0);
+    expect((envelopeOf(preview)['data'] as Record<string, unknown>)['targets']).toEqual([
+      `projects/${KEY}/pages/deploy.md`,
+      `projects/${KEY}/archive/deploy.md`,
+    ]);
+    expect(runCli(['purge', 'deploy', '--yes']).status).toBe(0);
+    expect(existsSync(archived)).toBe(false);
+    expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(false);
+  });
+
+  it('purges agent pages and archive copies with their catalog lines', () => {
+    seedStore();
+    const page = write('agents/helper/pages/self-style.md', '# self-style\n');
+    const archived = write('agents/helper/archive/self-style.md', '# old self-style\n');
+    const index = write('agents/helper/index.md', '- [[self-style]] — private style\n');
+    expect(runCli(['purge', 'self-style', '--dry-run']).stdout).toContain('agent/helper');
+    expect(runCli(['purge', 'self-style', '--yes']).status).toBe(0);
+    expect(existsSync(page)).toBe(false);
+    expect(existsSync(archived)).toBe(false);
+    expect(readFileSync(index, 'utf-8')).toBe('');
+  });
+
+  it('--global previews and removes the whole global directory without rewriting history', () => {
+    seedStore();
+    write('global/index.md', '- [[shared]] — private summary\n');
+    write('global/inbox.md', 'private inbox\n');
+    write('global/log.md', 'private log\n');
+    write('global/archive/old.md', 'private archive\n');
+    const preview = runCli(['purge', '--global', '--dry-run', '--json']);
+    expect((envelopeOf(preview)['data'] as Record<string, unknown>)['targets']).toEqual(['global']);
+    expect(runCliTyped(['purge', '--global'], 'global').status).toBe(0);
+    expect(existsSync(join(home(), 'global'))).toBe(false);
+    expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(true);
+    expect(
+      spawnSync('git', ['show', 'HEAD^:global/log.md'], { cwd: home(), encoding: 'utf-8' }).stdout
+    ).toBe('private log\n');
+  });
+
+  it.each(['', 'short', '1234567'])('rejects session id %j with exit 2 before confirmation', id => {
+    seedStore();
+    write(
+      'global/inbox.md',
+      `- empty source <!--mehmory id=00000000000000a3 src=${id} ts=2026-07-30T10:00:00Z-->\n`
+    );
+    const before = treeDigest(home());
+    const run = runCliTyped(['purge', `--session=${id}`, '--json'], '');
+    expect(run.status).toBe(2);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['code']).toBe('E_USAGE');
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it('reports partial inbox clears and uncommitted deletions precisely', () => {
+    seedStore();
+    const id = '8f4c2b91-dead-beef-0000-1234abcd5678';
+    write(
+      'global/inbox.md',
+      `- global secret <!--mehmory id=00000000000000a3 src=${id} ts=2026-07-30T10:00:00Z-->\n`
+    );
+    write(`.state/locks/${KEY.replace(/\//g, '_')}.lock`, String(process.pid));
+    const run = runCli(['purge', '--session', id, '--yes', '--json']);
+    expect(run.status).toBe(3);
+    const error = (envelopeOf(run)['errors'] as Record<string, unknown>[])[0];
+    expect(error?.['consequence']).toBe(
+      '0 of 0 paths and 1 of 2 selected inbox entries were deleted; 1 selected inbox entries remain; no purge commit was made'
+    );
+    expect(error?.['fix']).toBe(`git -C '${home()}' status`);
+    expect(readFileSync(join(home(), 'global', 'inbox.md'), 'utf-8')).toBe('');
+    expect(readFileSync(join(home(), 'projects', KEY, 'inbox.md'), 'utf-8')).toContain(
+      'purge this one'
+    );
+    expect(
+      spawnSync('git', ['log', '-1', '--format=%s'], {
+        cwd: home(),
+        encoding: 'utf-8',
+      }).stdout.trim()
+    ).toBe('init: store');
   });
 
   it('--yes skips the prompt', () => {

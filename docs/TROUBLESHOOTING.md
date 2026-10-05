@@ -55,7 +55,7 @@ Two consequences, same code:
   No `Fix:` — there's no single runnable command that's right for every cause; check the
   `<what>` text this once, since there's no other lead.
 
-## E_APPEND_FAILED (informational)
+## E_APPEND_FAILED (informational or actionable)
 
 A single-line append to the store (inbox, log, or stats) failed — usually permissions or
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
@@ -65,6 +65,21 @@ The same code is also raised through `failOpen` by read-shaped operations that f
 rather than append (the store summary behind `status` and `doctor`, for one). Those print
 the generic *Operation failed; using fallback* consequence instead, so match on the
 `MEHMORY E_APPEND_FAILED` prefix rather than on the sentence after it.
+
+During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
+count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
+repair the named inbox (it must be a writable file, not a directory or symlink) or disk-space
+problem before resuming. A byte-capped run also retains progress and names `--resume`, but
+is not an error. Completed sessions are skipped; a partially appended session is retried
+with entry-id deduplication.
+
+## E_INTERNAL (informational)
+
+An unexpected exception escaped to the CLI's catch-all. Consequence: _The command stopped
+before it finished._ Exit 3, with no stack trace. This indicates a bug, not necessarily an
+append failure. The message does not promise rollback: inspect the affected store before
+retrying and report the command and error text. No `Fix:` clause — no single command can
+repair an unknown internal failure.
 
 ## E_ATOMIC_WRITE (informational in practice)
 
@@ -135,11 +150,19 @@ never guessed. No `Fix:`; there's no correct guess to offer.
 
 ## E_PURGE_FAILED (actionable)
 
-`mehmory purge` deleted the target files from the working tree but the commit failed — the
-store is left dirty, with the files already gone. Consequence: *the store is left in a dirty,
-uncommitted state.* Fix: `git -C <resolved store home> commit -a`. This is the one purge
-failure mode with a real remedy: the delete already happened, so re-running `purge` is not
-the fix — committing the pending removal is.
+`mehmory purge` could not export, delete, clear an inbox, or commit its removal. An export
+or baseline failure reports _Nothing was deleted_. A deletion or index rewrite failure
+reports the number of paths and catalog lines deleted before it stopped.
+
+If clearing an inbox fails, earlier inbox clears may already have succeeded. The consequence
+reports the exact deleted/remaining selected-entry counts and _no purge commit was made_.
+Fix: `git -C <resolved store home> status`. Inspect those changes, repair the named inbox or
+wait for its lock to be released, then retry the remaining purge; do not assume the earlier
+clears were rolled back.
+
+If the commit fails after deletion, consequence: _The content is deleted but the store is
+left dirty_. Fix: `git -C <resolved store home> commit -a -m purge`. The files are already
+gone — committing the pending removal, not rerunning the delete, finishes this case.
 
 ## E_CODEX_INSTALL (actionable)
 
@@ -236,7 +259,8 @@ The command didn't run: an unknown command or flag, wrong arity, a flag missing 
 mutually exclusive forms at once, or a scope selector that matched more than one project.
 Consequence: *The command did not run.* Fix: always a runnable command — usually
 `mehmory <command> --help`, and for an ambiguous purge slug the disambiguated command itself
-(`mehmory purge <slug> --project <key>`). Exit code **1**. This is the code you will see most
+(`mehmory purge <slug> --project <key>`). Exit code **1**, except that `purge --session`
+rejects ids shorter than 8 characters or containing whitespace with **2**. This is the code you will see most
 often, and it is the one a script should treat as "I called it wrong", never as "the store is
 broken".
 
