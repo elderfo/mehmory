@@ -18,7 +18,12 @@ import {
   checkNodeVersion,
   probePlugin,
 } from '../../core/environment.js';
-import { installCodex, probeCodexInstall, uninstallCodex, type CodexResult } from '../../core/codex-install.js';
+import {
+  installCodex,
+  probeCodexInstall,
+  uninstallCodex,
+  type CodexResult,
+} from '../../core/codex-install.js';
 import { DEFAULT_INBOX_HOST, INBOX_HOSTS, type InboxHost } from '../../schema/format.js';
 import { flagString, parseFlags } from '../args.js';
 import { EXIT, operationFailed, usageError, type Command, type CommandResult } from '../command.js';
@@ -76,7 +81,18 @@ const HOST_INIT = {
       ),
   },
   codex: {
-    install: () => hostResult(installCodex('codex'), 'codex', false),
+    install: () => {
+      const installed = installCodex('codex');
+      if (!installed.ok) return operationFailed(installed.error);
+      const created = initStore();
+      if (!created.ok) return operationFailed(created.error);
+      const result = hostResult(installed, 'codex', false);
+      return {
+        ...result,
+        lines: [`store ready at ${created.home}`, ...(result.lines ?? [])],
+        data: { ...result.data, home: created.home },
+      };
+    },
     uninstall: () => hostResult(uninstallCodex(), 'codex', true),
   },
   pi: {
@@ -201,15 +217,19 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
           ? 'Codex `[features] hooks` already on'
           : 'Codex `[features] hooks` enabled',
         `skills: ${report.skills.join(', ')}`,
-        // Codex skips a hook it has no trust decision for, and says nothing when it does
-        // (issue #39). Conditional on the probe rather than unconditional: telling a user
-        // who approved these months ago to go approve them is how a real warning gets
-        // trained away. Rewriting the entries can still stale an existing `trusted_hash`,
-        // which mehmory cannot compute, so the trusted branch says "may" and means it.
-        probeCodexInstall().untrustedEvents.length > 0
-          ? 'action required: run `codex` and approve the mehmory hooks when it asks you to review them'
-          : 'Codex has already approved these hooks; it may ask you to re-approve them now that the entries changed',
       ];
+
+  if (!uninstall) {
+    if (probeCodexInstall().untrustedEvents.length > 0) {
+      lines.push(
+        'action required: run `codex` and approve the mehmory hooks when it asks you to review them'
+      );
+    } else if (report.changed.includes(report.hooksFile)) {
+      lines.push(
+        'Codex has already approved these hooks; it may ask you to re-approve them now that the entries changed'
+      );
+    }
+  }
 
   for (const path of report.backups) lines.push(`backed up to ${path}`);
   lines.push('next: mehmory doctor');

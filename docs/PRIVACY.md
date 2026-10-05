@@ -141,8 +141,10 @@ These are two separate operations, on both Claude Code and Codex CLI:
 - **Uninstalling** — removing the Claude Code plugin from your marketplace installation, or
   running `mehmory init --host codex --uninstall` — stops the hooks and skills from running.
   It does **not** touch `~/.mehmory` (or `$MEHMORY_HOME`) — your wiki, inbox, and log stay
-  exactly where they are, untouched and readable, because neither harness's install mechanism
-  ever owned that directory in the first place.
+  exactly where they are, untouched and readable. Codex uninstall's temporary lock and skill
+  staging directories live under `$CODEX_HOME`, not in the store; it does not even create an
+  absent store. Installing with `init --host codex` does initialize the store, as the other
+  `init` variants do.
 - **Deleting your data** is `mehmory purge --all` (or a narrower purge scope), and it's the
   only thing that removes content from the store, regardless of which harness it came from.
 
@@ -153,11 +155,18 @@ nothing was removed. This is worth stating plainly, because a user's first assum
 
 **Codex uninstall may reformat a hand-edited `hooks.json`.** Content correctness is
 unconditional: `--uninstall` never removes an entry it did not write, and the file is backed
-up (`<file>.mehmory.bak`) before any change. But if `$CODEX_HOME/hooks.json` was not already in
+up (`<file>.mehmory.bak`, mode `0600`) before any change. Each modification replaces that
+backup with the immediately preceding contents, not the state before the first installation.
+But if `$CODEX_HOME/hooks.json` was not already in
 the canonical 2-space JSON Codex itself writes — hand-edited with different spacing, for
 example — uninstall's rewrite renders the whole file back out in that canonical form. Nothing
 is added, removed, or reordered in the data; the bytes around it can still change. See
 `docs/CLI.md` for the byte-identity guarantee and the assumption it depends on.
+
+Uninstall stages skill directories before removing hooks. A staging or hook-edit failure
+restores the skills. If deletion of staged directories then fails, hooks and discoverable
+skills remain removed together; the error names the leftover directory under `$CODEX_HOME`
+for cleanup. The store is still untouched.
 
 ## Restoring from `purge --export`
 

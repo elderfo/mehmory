@@ -21,11 +21,12 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempDir } from './helpers.js';
-import { envelopeOf, runCli } from './cli-fixture.js';
+import { envelopeOf, runCli, treeDigest } from './cli-fixture.js';
 
 /** A `hooks.json` owned entirely by another tool, formatted the way Codex writes it. */
 const FOREIGN_HOOKS = `${JSON.stringify(
@@ -80,6 +81,164 @@ const mehmoryCommands = (fixture: Fixture): string[] =>
   commands(fixture).filter(c => c.split(/\s+/).includes('--mehmory'));
 
 describe('mehmory init --host codex', () => {
+  it.each([
+    [
+      'commented header',
+      '[features] # note\nweb_search = true\n',
+      '[features] # note\nhooks = true\nweb_search = true\n',
+    ],
+    [
+      'commented CRLF header',
+      '[features] # note\r\nweb_search = true\r\n',
+      '[features] # note\r\nhooks = true\r\nweb_search = true\r\n',
+    ],
+    [
+      'spaced header',
+      '[ features ]\nweb_search = true\n',
+      '[ features ]\nhooks = true\nweb_search = true\n',
+    ],
+    [
+      'commented boolean',
+      '[features]\n  hooks = false # note\n',
+      '[features]\n  hooks = true # note\n',
+    ],
+    [
+      'dotted keys',
+      'features.web_search = true\n',
+      'features.web_search = true\nfeatures.hooks = true\n',
+    ],
+    [
+      'dotted boolean',
+      'features.hooks = false # note\nfeatures.web_search = true\n',
+      'features.hooks = true # note\nfeatures.web_search = true\n',
+    ],
+    ['empty inline table', 'features = {}\n', 'features = { hooks = true }\n'],
+    [
+      'inline table',
+      'features = { web_search = true } # note\n',
+      'features = { web_search = true, hooks = true } # note\n',
+    ],
+    [
+      'inline boolean',
+      'features = { hooks = false, web_search = true } # note\n',
+      'features = { hooks = true, web_search = true } # note\n',
+    ],
+  ])('edits %s without changing unrelated TOML bytes', (_shape, before, after) => {
+    const fixture = codexFixture({ config: before });
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(after);
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(after);
+  });
+
+  it.each([
+    'features = { web_search = "# literal", nested = { enabled = true } }\n',
+    'features = {\n  web_search = true\n}\n',
+    'features.hooks.enabled = false\n',
+    '[ features ] # note\nhooks.enabled = false\n',
+  ])('refuses unsupported feature syntax before writing any Codex file: %s', config => {
+    const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config });
+    const before = treeDigest(fixture.codexHome);
+    const run = init(fixture, '--json');
+    expect(run.status).toBe(3);
+    expect((envelopeOf(run)['errors'] as { code: string }[])[0]?.code).toBe('E_CODEX_INSTALL');
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(config);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(FOREIGN_HOOKS);
+  });
+
+  it('creates a store that a Codex-only user can onboard into', () => {
+    const fixture = codexFixture();
+    const mehmoryHome = join(createTempDir('mehmory-store-parent'), 'store');
+    const options = { codexHome: fixture.codexHome, mehmoryHome };
+    expect(runCli(['init', '--host', 'codex'], options).status).toBe(0);
+    expect(existsSync(join(mehmoryHome, '.git'))).toBe(true);
+    expect(readFileSync(join(mehmoryHome, 'config.json'), 'utf-8')).toBe('{}\n');
+    expect(runCli(['onboard', '--json'], options).status).toBe(0);
+  });
+
+  it('uninstalls without creating or modifying the memory store', () => {
+    const fixture = codexFixture();
+    const mehmoryHome = join(createTempDir('mehmory-store-parent'), 'store');
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], {
+        codexHome: fixture.codexHome,
+        mehmoryHome,
+      }).status
+    ).toBe(0);
+    expect(existsSync(mehmoryHome)).toBe(false);
+    expect(
+      runCli(['init', '--host', 'codex'], { codexHome: fixture.codexHome, mehmoryHome }).status
+    ).toBe(0);
+    const before = treeDigest(mehmoryHome);
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], {
+        codexHome: fixture.codexHome,
+        mehmoryHome,
+      }).status
+    ).toBe(0);
+    expect(treeDigest(mehmoryHome)).toBe(before);
+  });
+
+  it('allows a symlinked Codex home and a symlinked ancestor', () => {
+    const fixture = codexFixture();
+    const parent = createTempDir('mehmory-codex-links');
+    const homeLink = join(parent, 'codex');
+    symlinkSync(fixture.codexHome, homeLink);
+    expect(runCli(['init', '--host', 'codex'], { codexHome: homeLink }).status).toBe(0);
+    expect(
+      readFileSync(join(fixture.codexHome, 'skills', 'mehmory-remember', 'SKILL.md'), 'utf-8')
+    ).toBe(readFileSync(resolve('skills/remember/SKILL.md'), 'utf-8'));
+    const ancestorLink = join(createTempDir('mehmory-codex-ancestor'), 'parent');
+    symlinkSync(parent, ancestorLink);
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], { codexHome: join(ancestorLink, 'codex') })
+        .status
+    ).toBe(0);
+    expect(readdirSync(join(fixture.codexHome, 'skills'))).toEqual([]);
+  });
+
+  it('recognizes stale Pi hook entries on reinstall and uninstall', () => {
+    const hooks =
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                hooks: [{ type: 'command', command: 'node /gone/session-start.mjs pi --mehmory' }],
+              },
+            ],
+          },
+        },
+        null,
+        2
+      ) + '\n';
+    const fixture = codexFixture({ hooks });
+    expect(init(fixture).status).toBe(0);
+    expect(mehmoryCommands(fixture)).toHaveLength(5);
+    expect(commands(fixture).some(command => command.includes('/gone/'))).toBe(false);
+    writeFileSync(fixture.hooksFile, hooks);
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe('{\n  "hooks": {}\n}\n');
+  });
+
+  it('does not claim trusted entries changed on an unchanged install', () => {
+    const fixture = codexFixture();
+    expect(init(fixture).status).toBe(0);
+    const approved = ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end']
+      .map(
+        event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`
+      )
+      .join('\n');
+    writeFileSync(fixture.configFile, readFileSync(fixture.configFile, 'utf-8') + '\n' + approved);
+    const run = init(fixture);
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain('now that the entries changed');
+    expect(run.stdout).not.toContain('re-approve');
+    writeFileSync(join(fixture.codexHome, 'skills', 'mehmory-remember', 'SKILL.md'), 'stale skill\n');
+    expect(init(fixture).stdout).not.toContain('re-approve');
+  });
+
   it('writes the five Codex hooks and turns the hooks feature on', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     const run = init(fixture);
@@ -160,16 +319,18 @@ describe('mehmory init --host codex', () => {
     expect(statSync(`${fixture.hooksFile}.mehmory.bak`).mode & 0o777).toBe(0o600);
   });
 
-  it('keeps the pristine pre-mehmory backup across a re-install (F3-5)', () => {
+  it('refreshes the backup to the state immediately before each modification', () => {
     const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config: 'model = "gpt-5"\n' });
     expect(init(fixture).status).toBe(0);
 
     // A re-install is routine — a version bump moves the bundle path, so the hook
     // commands change and the file is rewritten a second time.
-    writeFileSync(fixture.hooksFile, readFileSync(fixture.hooksFile, 'utf-8').replace(/mehmory/g, 'mehmory2'));
-    expect(init(fixture).status).toBe(0);
-
-    expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(FOREIGN_HOOKS);
+    const before = readFileSync(fixture.hooksFile, 'utf-8').replace(/mehmory/g, 'mehmory2');
+    writeFileSync(fixture.hooksFile, before);
+    const run = init(fixture);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(`backed up to ${fixture.hooksFile}.mehmory.bak`);
+    expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(before);
   });
 
   it('is idempotent — a second install writes nothing and leaves one set of entries', () => {
@@ -411,7 +572,9 @@ describe('mehmory doctor — the Codex surface', () => {
     }
 
     const approved = ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end']
-      .map(event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`)
+      .map(
+        event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`
+      )
       .join('\n');
     writeFileSync(fixture.configFile, `${readFileSync(fixture.configFile, 'utf-8')}\n${approved}`);
 

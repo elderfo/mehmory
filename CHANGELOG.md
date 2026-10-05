@@ -28,6 +28,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Codex feature edits preserve valid TOML and comments.** Spaced or commented headers,
+  dotted keys, and simple boolean inline tables are edited in place; unsupported shapes
+  fail before any Codex file is written.
+- **Codex init creates the memory store.** Codex-only users can onboard immediately after setup.
+- **Codex uninstall never writes to the memory store.** Install and uninstall share a lock under `$CODEX_HOME`.
+- **Codex setup refuses missing hook bundles.** It no longer registers commands pointing at nonexistent scripts.
+- **Codex setup accepts symlinked homes and ancestors.** Symlink checks cover only owned paths inside its skills tree in both directions.
+- **Codex setup recognizes hook entries from every supported host.** Pi-marked entries are replaced or removed instead of duplicated.
+- **Codex configuration backups reflect the last modification.** Each `.mehmory.bak` contains the immediately preceding contents, with private permissions.
+- **Codex uninstall keeps hooks and skills consistent on failure.** Skill staging can be rolled back; deletion failures leave the integration uninstalled and identify leftover staging for cleanup.
+- **Unchanged Codex hook entries no longer trigger a re-approval note.** Already-approved hooks are mentioned only when their entries changed.
+
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the
