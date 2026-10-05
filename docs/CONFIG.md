@@ -61,9 +61,11 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 
 `budget_tokens` includes the **memory frame's framing**, estimated as characters / 4,
 rounded up: stored memory, `<mehmory-memory>` delimiters, section headers, the
-`session: <id>` metadata line, and `<mehmory-routing>` when it fits. The session line lets
-skills identify this session without guessing from state-file recency. Routing yields
-before stored content is truncated; framing cost is reserved before allocating that content.
+`session: <id>` metadata line, and the `<mehmory-routing>` block (~75 tokens). The session
+line lets skills identify this session without guessing from state-file recency. Routing is
+reserved on every populated session, however large the store; it is dropped only when the
+budget is so small that keeping it would leave stored content less room than routing itself.
+Framing cost is reserved before allocating that content.
 Closing tags and session ids are never truncated.
 
 Maintenance notices have a **separate 150-token allowance** (`MAINTENANCE_ALLOWANCE_TOKENS`),

@@ -813,15 +813,14 @@ ${sessionLine}
 `;
       const suffix = "\n</mehmory-memory>";
       const budget = config.injection.budget_tokens;
+      const framingFor = (routingText) => estimateTokens(
+        prefix + populated.map((part) => `${headings[part.label]}
+`).join("\n\n") + suffix + routingText
+      );
       let routing = populated.length > 0 ? `
 ${ROUTING_BLOCK}` : "";
-      const complete = prefix + populated.map((part) => `${headings[part.label]}
-${redact(part.content, config.secrets)}`).join("\n\n") + suffix + routing;
-      if (estimateTokens(complete) > budget) routing = "";
-      const framingTokens = estimateTokens(
-        prefix + populated.map((part) => `${headings[part.label]}
-`).join("\n\n") + suffix + routing
-      );
+      if (routing !== "" && budget - framingFor(routing) < estimateTokens(routing)) routing = "";
+      const framingTokens = framingFor(routing);
       if (budget <= framingTokens) {
         const text2 = [
           prefix + suffix,

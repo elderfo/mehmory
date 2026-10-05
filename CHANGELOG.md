@@ -33,8 +33,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep
   their separate 150-token allowance; claimed warnings are truncated, never dropped, and
   unselected ones wait for the next start.
-- **Small injection budgets degrade in order.** Routing goes first, then content; the session id
-  that skills depend on is kept whenever its minimal frame fits.
+- **Small injection budgets degrade in order.** Routing stays on every populated session and goes
+  first only when the budget is squeezed, then content; the session id that skills depend on is
+  kept whenever its minimal frame fits.
 - **Doctor's injection KPI follows config.** It checks the configured frame budget plus the
   150-token maintenance allowance instead of a fixed 950.
 - **Unreadable store paths fail open.** Retrieval, status and SessionStart probes skip them;

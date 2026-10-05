@@ -129,6 +129,26 @@ describe('maintenance and reduced-frame regressions', () => {
     }
   );
 
+  it('keeps the routing block on an oversized store at the default budget', () => {
+    oversizedStore(KEY);
+    const config = loadConfig();
+    expect(config.injection.budget_tokens).toBe(800);
+    const frame = buildScopeInjection(KEY, config, 's1');
+    expect(frame.text).toContain('<mehmory-routing>');
+    expect(frame.text).toContain('\nsession: s1\n');
+    expect(frame.tokens).toBeLessThanOrEqual(800);
+  });
+
+  it('never redacts a whole oversized part to decide routing', () => {
+    seedStore(KEY);
+    writeFileSync(join(mehmoryHome(), 'global', 'identity.md'), 'u '.repeat(170_000));
+    const frame = buildScopeInjection(KEY, loadConfig(), 's1');
+    expect(frame.text).toContain('<mehmory-routing>');
+    expect(frame.text).toContain('u u u');
+    expect(peekWarnings().some((warning) => warning.startsWith('E_REDACT_FAILED'))).toBe(false);
+    expect(errorsLog()).not.toContain('E_REDACT_FAILED');
+  });
+
   it('counts maintenance allowance in the configured doctor KPI', () => {
     seedStore(KEY);
     const config = { ...loadConfig(), injection: { budget_tokens: 400 } };
