@@ -2,6 +2,42 @@
 
 import { dirname, resolve, sep } from 'node:path';
 
+function findVariable(context, node, name) {
+  for (let scope = context.sourceCode.getScope(node); scope; scope = scope.upper) {
+    const variable = scope.set.get(name);
+    if (variable) return variable;
+  }
+}
+
+function moduleSourceListeners(context, checkSource) {
+  const check = (node, source) => {
+    if (typeof source?.value === 'string') checkSource(node, source.value);
+  };
+
+  return {
+    ImportDeclaration(node) { check(node, node.source); },
+    ExportNamedDeclaration(node) { check(node, node.source); },
+    ExportAllDeclaration(node) { check(node, node.source); },
+    ImportExpression(node) { check(node, node.source); },
+    CallExpression(node) {
+      if (node.callee.type === 'Identifier' && node.callee.name === 'require' &&
+          !findVariable(context, node, 'require')?.defs.length) {
+        check(node, node.arguments[0]);
+      }
+    }
+  };
+}
+
+function propertyName(node) {
+  return node.computed ? node.property.value : node.property.name;
+}
+
+function isProcess(node) {
+  return node?.name === 'process' ||
+    (node?.type === 'MemberExpression' && node.object.name === 'globalThis' &&
+      propertyName(node) === 'process');
+}
+
 const noFsImports = {
   meta: {
     type: 'problem',
@@ -11,23 +47,20 @@ const noFsImports = {
     }
   },
   create(context) {
-    const filename = context.filename;
-    // Allow fs imports in fs.ts, errors.ts, and test files
+    const filename = context.filename.split(sep).join('/');
+    // Test fixtures may use fs directly; production I/O goes through the two exact files.
     const isAllowed =
-      filename.includes('src/core/fs.ts') ||
-      filename.includes('src/core/errors.ts') ||
-      filename.includes('test/');
+      /(?:^|\/)src\/core\/(?:fs|errors)\.ts$/.test(filename) ||
+      /(?:^|\/)test\//.test(filename);
 
-    return {
-      ImportDeclaration(node) {
-        if (!isAllowed && (node.source.value === 'fs' || node.source.value === 'node:fs')) {
-          context.report({
-            node,
-            message: 'fs imports only allowed in src/core/fs.ts and src/core/errors.ts (A3)'
-          });
-        }
+    return moduleSourceListeners(context, (node, source) => {
+      if (!isAllowed && ['fs', 'fs/promises', 'node:fs', 'node:fs/promises'].includes(source)) {
+        context.report({
+          node,
+          message: 'fs imports only allowed in src/core/fs.ts and src/core/errors.ts (A3)'
+        });
       }
-    };
+    });
   }
 };
 
@@ -43,14 +76,26 @@ const noProcessExit = {
     const filename = context.filename;
     const isCore = filename.includes('src/core/');
 
+    const checkProperty = (node, name) => {
+      if (name === 'exit' || name === 'abort') {
+        context.report({
+          node,
+          message: `process.${name} is forbidden in src/core/ (A11)`
+        });
+      }
+    };
+
     return {
       MemberExpression(node) {
-        if (isCore && node.object.name === 'process' &&
-            (node.property.name === 'exit' || node.property.name === 'abort')) {
-          context.report({
-            node,
-            message: `process.${node.property.name} is forbidden in src/core/ (A11)`
-          });
+        if (isCore && isProcess(node.object)) checkProperty(node, propertyName(node));
+      },
+      VariableDeclarator(node) {
+        if (!isCore || node.id.type !== 'ObjectPattern' || !isProcess(node.init)) return;
+
+        for (const property of node.id.properties) {
+          if (property.type === 'Property') {
+            checkProperty(property, property.computed ? property.key.value : property.key.name ?? property.key.value);
+          }
         }
       }
     };
@@ -69,58 +114,48 @@ const noExportedPromise = {
     const filename = context.filename;
     const isCore = filename.includes('src/core/');
 
-    const checkFunctionAsync = (decl) => {
-      if (!decl) return false;
-      if (decl.async === true) return true;
-      // Check arrow functions: export const f = async () => {}
-      if (decl.init?.async === true) return true;
-      return false;
+    const checkFunction = (node, decl) => {
+      if (decl?.async === true) {
+        context.report({
+          node,
+          message: 'Exported async functions forbidden in src/core/ (A9 - core is synchronous)'
+        });
+      }
+      if (decl?.returnType && context.sourceCode.getText(decl.returnType).includes('Promise')) {
+        context.report({
+          node,
+          message: 'Exported functions cannot return Promise in src/core/ (A9 - core is synchronous)'
+        });
+      }
     };
 
-    const checkReturnType = (decl) => {
-      if (!decl) return false;
-      // Check function/method return types
-      if (decl.returnType) {
-        const returnTypeText = context.sourceCode.getText(decl.returnType);
-        if (returnTypeText.includes('Promise')) return true;
+    const checkDeclaration = (node, decl) => {
+      if (decl?.type === 'VariableDeclaration') {
+        for (const declarator of decl.declarations) checkFunction(node, declarator.init);
+      } else if (decl?.type === 'Identifier') {
+        // Scope definitions include declarations after the export and preserve local aliases.
+        const variable = findVariable(context, node, decl.name);
+        for (const definition of variable?.defs ?? []) {
+          const declaration = definition.node;
+          checkFunction(node, declaration.type === 'VariableDeclarator' ? declaration.init : declaration);
+        }
+      } else {
+        checkFunction(node, decl);
       }
-      // Check arrow function return types: export const f = (): Promise<X> => {}
-      if (decl.init?.returnType) {
-        const returnTypeText = context.sourceCode.getText(decl.init.returnType);
-        if (returnTypeText.includes('Promise')) return true;
-      }
-      return false;
     };
 
     return {
       ExportNamedDeclaration(node) {
         if (!isCore) return;
 
-        const decl = node.declaration;
-
-        if (checkFunctionAsync(decl)) {
-          context.report({
-            node,
-            message: 'Exported async functions forbidden in src/core/ (A9 - core is synchronous)'
-          });
-        }
-
-        if (checkReturnType(decl)) {
-          context.report({
-            node,
-            message: 'Exported functions cannot return Promise in src/core/ (A9 - core is synchronous)'
-          });
+        if (node.declaration) {
+          checkDeclaration(node, node.declaration);
+        } else if (!node.source) {
+          for (const specifier of node.specifiers) checkDeclaration(specifier, specifier.local);
         }
       },
       ExportDefaultDeclaration(node) {
-        if (!isCore) return;
-
-        if (checkFunctionAsync(node.declaration)) {
-          context.report({
-            node,
-            message: 'Exported async functions forbidden in src/core/ (A9 - core is synchronous)'
-          });
-        }
+        if (isCore) checkDeclaration(node, node.declaration);
       }
     };
   }
@@ -186,29 +221,22 @@ const noCliImports = {
     const isGuarded =
       filename.includes('src/core/') || filename.includes('src/hooks/');
 
-    return {
-      ImportDeclaration(node) {
-        if (!isGuarded) return;
+    return moduleSourceListeners(context, (node, source) => {
+      if (!isGuarded) return;
 
-        const source = node.source.value;
-        if (typeof source !== 'string') return;
+      // Resolve relative specifiers against the importer, not against the lint cwd.
+      const target = source.startsWith('.')
+        ? resolve(dirname(filename), source).split(sep).join('/')
+        : source;
 
-        // Relative specifiers are resolved against the importing file so that
-        // '../cli/index.js' from src/core/ is caught, while a package literally
-        // named e.g. 'oclif' is not.
-        const target = source.startsWith('.')
-          ? resolve(dirname(filename), source).split(sep).join('/')
-          : source;
-
-        if (target.includes('src/cli/') || target.endsWith('src/cli')) {
-          context.report({
-            node,
-            message:
-              'src/core/ and src/hooks/ must not import src/cli/ (A17 - the CLI is a consumer of the library, never the reverse)'
-          });
-        }
+      if (target.includes('src/cli/') || target.endsWith('src/cli')) {
+        context.report({
+          node,
+          message:
+            'src/core/ and src/hooks/ must not import src/cli/ (A17 - the CLI is a consumer of the library, never the reverse)'
+        });
       }
-    };
+    });
   }
 };
 
