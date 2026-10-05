@@ -1,3 +1,4 @@
+import { sessionState, seedSession, stateFileFor } from './session-fixture.js';
 /**
  * `mehmory inbox-tx` — issue #17: the transactional inbox helper reachable through the
  * CLI, with the same input contract as the bundled `hooks/inbox-tx.mjs` script that
@@ -13,12 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, type CliRun } from './cli-fixture.js';
-import {
-  freshSessionState,
-  readSessionState,
-  sessionStatePath,
-  writeSessionState,
-} from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session.js';
 import { statePath } from '../src/core/home.js';
 
 /** `mehmory inbox-tx` with a JSON body piped to stdin — the CLI has no other way in. */
@@ -71,14 +67,14 @@ function seed(): void {
 describe('mehmory inbox-tx pause/resume', () => {
   it('changes only the explicitly named session pause flag', () => {
     seed();
-    writeSessionState({ ...freshSessionState('target'), stop_count: 7 });
-    writeSessionState(freshSessionState('other'));
+    seedSession({ ...freshSessionState('target'), stop_count: 7 });
+    seedSession(freshSessionState('other'));
     expect(json(tx('pause', { session_id: 'target' }))).toEqual({
       session_id: 'target',
       paused: true,
     });
-    expect(readSessionState('target').stop_count).toBe(7);
-    expect(readSessionState('other').paused).toBe(false);
+    expect(sessionState('target').stop_count).toBe(7);
+    expect(sessionState('other').paused).toBe(false);
     expect(json(tx('resume', { session_id: 'target' }))).toEqual({
       session_id: 'target',
       paused: false,
@@ -154,7 +150,7 @@ describe('mehmory inbox-tx append', () => {
   it('falls back to the host recorded in the src session state when none is declared', () => {
     seed();
     writeFileSync(
-      sessionStatePath('sess-cx'),
+      stateFileFor('sess-cx'),
       JSON.stringify({
         session_id: 'sess-cx',
         cursor: { file_id: '0:0', size: 0, offset: 0 },

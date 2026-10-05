@@ -17,29 +17,15 @@
  */
 
 import { runHook } from '../core/hook.js';
-import { logError } from '../core/errors.js';
-import { pathExists } from '../core/fs.js';
-import { isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta } from '../core/capture.js';
+import { captureBeforeCompact } from '../core/capture.js';
 
 runHook('PreCompact', (input, project, host, config) => {
-  if (!config.hooks.pre_compact.enabled || isPaused(input.session_id)) return {};
-
-  const transcript = input.transcript_path;
-  if (transcript === undefined || !pathExists(transcript)) {
-    logError({
-      code: 'E_TRANSCRIPT_PARSE',
-      kind: 'informational',
-      what: 'PreCompact payload carried no readable transcript_path',
-      consequence:
-        'Nothing was captured at this compaction; the next session start finalizes what is left',
-    });
-    return {};
-  }
-
-  const captured = captureDelta(input.session_id, transcript, project, host, config);
-  // A capture is a capture whichever hook made it: the Stop counter restarts here too.
-  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
-
-  return { stats: { captured_entries: captured.appended } };
+  const captured = captureBeforeCompact(
+    input.session_id,
+    input.transcript_path,
+    project,
+    host,
+    config
+  );
+  return captured ? { stats: { captured_entries: captured.appended } } : {};
 });

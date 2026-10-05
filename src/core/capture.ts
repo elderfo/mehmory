@@ -11,22 +11,13 @@ import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { codexHome, mehmoryHome, piSessionsDir } from './home.js';
 import { appendRecord, listDir, lstat, mkdir, pathExists, readFile, realpath, stat } from './fs.js';
-import { withProjectLock, withSessionLock } from './lock.js';
+import { withProjectLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { appendInboxEntries } from './inbox.js';
-import {
-  advanceSessionCursorUnlocked,
-  deleteSessionState,
-  isPaused,
-  ensureSessionActiveUnlocked,
-  listPendingSessions,
-  markSessionFinalized,
-  sessionGeneration,
-  readSessionState,
-} from './session.js';
-import { commitPaths } from './git.js';
-import { enqueueJob } from './queue.js';
+import { observeSession } from './session-lifecycle.js';
+import { advanceCursor, type CursorState } from './cursor.js';
+import { incrementStopCount, isPaused, resetStopCount } from './session.js';
 import { lastStatFor } from './stats.js';
 import { redact } from './redact.js';
 import { currentAgentName, isSafeAgentName } from './agent.js';
@@ -352,14 +343,21 @@ export function distillDelta(
   host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry[] {
-  return (
-    withSessionLock(
-      sessionId,
-      () =>
-        distillDeltaUnlocked(sessionId, transcriptPath, host, config, currentAgentName(config))
-          .entries
-    ) ?? []
+  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) return [];
+  const result = observeSession(
+    sessionId,
+    (state) =>
+      distillSessionDelta(
+        sessionId,
+        transcriptPath,
+        host,
+        config,
+        currentAgentName(config),
+        state.cursor
+      ).entries,
+    { transcriptPath, touch: false }
   );
+  return result.status === 'observed' ? result.value : [];
 }
 
 /** Where each harness writes its own transcripts — the only place capture reads from. */
@@ -389,24 +387,21 @@ interface DistilledDelta {
   readonly endOffset?: number;
 }
 
-function distillDeltaUnlocked(
+/** Compute from the caller's loaded cursor; never reads or writes session state. */
+export function distillSessionDelta(
   sessionId: string,
   transcriptPath: string | undefined,
   host: InboxHost,
   config: MehmoryConfig,
-  agent: string | undefined
+  agent: string | undefined,
+  cursor: CursorState
 ): DistilledDelta {
-  if (
-    !transcriptPath ||
-    !isApprovedTranscript(transcriptPath, host) ||
-    !ensureSessionActiveUnlocked(sessionId, transcriptPath)
-  ) {
+  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) {
     return { entries: [] };
   }
 
   return failOpen<DistilledDelta>(
     () => {
-      const cursor = readSessionState(sessionId).cursor;
       const { records, skipped, endOffset } = readSession(transcriptPath, host, cursor.offset);
 
       const total = records.length + skipped;
@@ -444,35 +439,99 @@ export function captureDelta(
   host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): CaptureResult {
+  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host))
+    return { appended: 0, entries: [] };
   return failOpen<CaptureResult>(
-    () =>
-      withSessionLock(sessionId, () => {
-        const delta = distillDeltaUnlocked(
-          sessionId,
-          transcriptPath,
-          host,
-          config,
-          currentAgentName(config)
-        );
-        const { entries } = delta;
-        const result =
-          entries.length === 0
-            ? { appended: 0, skipped: 0, failed: 0 }
-            : appendInboxEntries(scopePaths(key).inboxFile, entries, key);
-        if ((result.failed ?? 0) > 0) return { ...result, entries };
-        if (transcriptPath && delta.endOffset !== undefined) {
-          advanceSessionCursorUnlocked(
+    () => {
+      const result = observeSession(
+        sessionId,
+        (state) => {
+          const delta = distillSessionDelta(
             sessionId,
             transcriptPath,
-            delta.recordHash ?? '',
-            delta.endOffset
+            host,
+            config,
+            currentAgentName(config),
+            state.cursor
           );
-        }
-        return { appended: result.appended, entries };
-      }) ?? { appended: 0, entries: [], failed: 1 },
+          const { entries } = delta;
+          const result =
+            entries.length === 0
+              ? { appended: 0, skipped: 0, failed: 0 }
+              : appendInboxEntries(scopePaths(key).inboxFile, entries, key);
+          if ((result.failed ?? 0) > 0) return { ...result, entries };
+          if (transcriptPath && delta.endOffset !== undefined) {
+            state.cursor = advanceCursor(
+              state.cursor,
+              transcriptPath,
+              delta.recordHash ?? '',
+              delta.endOffset
+            );
+          }
+          return { appended: result.appended, entries };
+        },
+        { transcriptPath, touch: false }
+      );
+      if (result.status === 'observed') return result.value;
+      return result.status === 'retired'
+        ? { appended: 0, entries: [] }
+        : { appended: 0, entries: [], failed: 1 };
+    },
     { appended: 0, entries: [], failed: 1 },
     'E_APPEND_FAILED'
   );
+}
+
+/** Observe a Stop: only the first threshold crossing nudges; failed captures back off. */
+export function captureAtStop(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  key: string,
+  host: InboxHost,
+  config: MehmoryConfig,
+  stopHookActive = false
+): { count?: number; captured?: CaptureResult; nudge: boolean } {
+  if (stopHookActive || !config.hooks.stop.enabled || isPaused(sessionId)) return { nudge: false };
+  const count = incrementStopCount(sessionId);
+  const threshold = Math.max(1, Math.ceil(config.stop.capture_threshold));
+  const nudge = count === threshold;
+  const retry = count > threshold && (count - threshold - 1) % threshold === 0;
+  if (!nudge && !retry) return { count, nudge: false };
+  const captured = captureDelta(sessionId, transcriptPath, key, host, config);
+  if ((captured.failed ?? 0) === 0) resetStopCount(sessionId);
+  else if (count === threshold + 1) {
+    logError({
+      code: 'E_APPEND_FAILED',
+      kind: 'informational',
+      what: `Stop capture still failing for session ${sessionId}`,
+      consequence: 'The delta is retained; silent retries now wait one threshold window',
+    });
+  }
+  return { count, captured, nudge };
+}
+
+/** Compaction captures without retiring the session, and resets the Stop counter only on success. */
+export function captureBeforeCompact(
+  sessionId: string,
+  transcriptPath: string | undefined,
+  key: string,
+  host: InboxHost,
+  config: MehmoryConfig
+): CaptureResult | undefined {
+  if (!config.hooks.pre_compact.enabled || isPaused(sessionId)) return undefined;
+  if (transcriptPath === undefined || !pathExists(transcriptPath)) {
+    logError({
+      code: 'E_TRANSCRIPT_PARSE',
+      kind: 'informational',
+      what: 'PreCompact payload carried no readable transcript_path',
+      consequence:
+        'Nothing was captured at this compaction; the next session start finalizes what is left',
+    });
+    return undefined;
+  }
+  const captured = captureDelta(sessionId, transcriptPath, key, host, config);
+  if ((captured.failed ?? 0) === 0) resetStopCount(sessionId);
+  return captured;
 }
 
 /** Build the inbox entry for an explicit `remember:` capture (redacted here, U5). */
@@ -613,242 +672,4 @@ export function staleSessionStartWarning(project: string): string | undefined {
   const at = last ? Date.parse(last.ts) : NaN;
   if (!Number.isNaN(at) && Date.now() - at < WARNING_DRAIN_STALE_MS) return undefined;
   return pendingWarnings(1)[0];
-}
-
-// ─── Session finalization (SessionEnd → next SessionStart, issue #16) ───
-
-/** Outcome of `finalizeSession`, surfaced to the adapter's stats line. */
-export interface FinalizeSessionResult {
-  readonly capturedEntries: number;
-  /**
-   * True when finalization was deferred because a named transcript had not yet reached disk.
-   * The session is left pending (state kept, no marker) so a later sweep retries it.
-   */
-  readonly deferred?: boolean;
-}
-
-/** Options for `finalizeSession`. */
-export interface FinalizeSessionOptions {
-  /**
-   * When true, a named-but-absent transcript defers finalization instead of retiring the
-   * session. The Claude Agent SDK (ACP) writes its rollout *after* SessionEnd fires, so an
-   * absent transcript at that moment is a not-yet-flushed session, not an empty one:
-   * finalizing would capture nothing and lose the content the file is about to hold. The
-   * pending sweep (`finalizePendingSessions`) passes no options, so once its idle window has
-   * elapsed it force-finalizes — a transcript that never lands still retires rather than
-   * retrying forever.
-   */
-  readonly deferWhenTranscriptAbsent?: boolean;
-}
-
-/**
- * Substring embedded in a session's `log.md` line, stable across a retried
- * `finalizeSession` call — the log line's own committed content is the idempotency
- * signal for "was this session's end already logged and committed", independent of
- * whether `markSessionFinalized` itself went on to succeed (see `finalizeSession`).
- *
- * Keyed by generation as well as id, because a resumed conversation reuses its session id
- * and ends in a finalization of its own. Keyed by id alone, that second ending reads as a
- * retry of the first and is skipped, which is how a resumed run came to be dropped
- * entirely even once its stale marker was cleared. Generation 0 keeps the original
- * spelling so existing `log.md` content still matches.
- */
-function sessionEndLogTag(sessionId: string, generation = 0): string {
-  if (generation === 0) return `(session ${sessionId})`;
-  return `(session ${JSON.stringify({ id: sessionId, generation })})`;
-}
-
-/**
- * Final-delta handling for one session's end (A12): distill whatever the transcript
- * still holds, enqueue it as a durable write (SessionEnd runs in a dying process, so the
- * *write* — not the distill — is what defers to the next SessionStart), log the
- * outcome, commit the touched paths, and drop the session's state. The session-end
- * adapter is reduced to calling this and shaping the result into stats.
- *
- * Idempotent two ways: a marker recorded on a successful run (`markSessionFinalized`)
- * makes later calls with an unchanged transcript a no-op; and — because that marker
- * write can itself fail *after* the distill/log/commit work already landed, in which
- * case `isSessionFinalized` alone can't tell "done" from "never started" — the
- * distill/log/commit block is additionally guarded by checking whether this session's
- * `log.md` line was already committed. That guard is what stops a retry from
- * re-reading a reset cursor and double-appending the log line / double-committing.
- *
- * Not gated by `hooks.session_end.enabled`. That toggle governs the SessionEnd *hook*,
- * so it is checked in the SessionEnd adapter like every other hook checks its own —
- * and only there. This function is also the recovery path `finalizePendingSessions`
- * drives from SessionStart, which is the only route the session's tail has into the inbox
- * whenever no session-end hook ran. Gating it here made the toggle delete
- * un-distilled material instead of deferring it: a disabled event must capture nothing,
- * never destroy anything. `isPaused` still short-circuits, because discarding the
- * session's tail is what `/mehmory:pause` explicitly promises.
- *
- * Arguments only — no ambient config or environment read (A21); the caller loads
- * config once (or accepts this default) and passes it through. Throws only what
- * `markSessionFinalized` throws on a failed state write — `deleteSessionState` swallows
- * its own failure; the distill, log and commit steps are each fail-open, and
- * `finalizePendingSessions` and `runHook` both bound anything that escapes (A2, A8).
- */
-export function finalizeSession(
-  sessionId: string,
-  transcriptPath: string | undefined,
-  project: string,
-  host: InboxHost,
-  config: MehmoryConfig = loadConfig(),
-  options: FinalizeSessionOptions = {}
-): FinalizeSessionResult {
-  return (
-    withSessionLock(sessionId, () =>
-      finalizeSessionUnlocked(sessionId, transcriptPath, project, host, config, options)
-    ) ?? { capturedEntries: 0 }
-  );
-}
-
-function finalizeSessionUnlocked(
-  sessionId: string,
-  transcriptPath: string | undefined,
-  project: string,
-  host: InboxHost,
-  config: MehmoryConfig,
-  options: FinalizeSessionOptions
-): FinalizeSessionResult {
-  if (!ensureSessionActiveUnlocked(sessionId, transcriptPath)) return { capturedEntries: 0 };
-
-  // Read before any path that deletes state: the generation lives there, and both the
-  // marker and the `log.md` idempotency tag are keyed by it.
-  const generation = sessionGeneration(sessionId);
-
-  const origin = {
-    ...readSessionState(sessionId),
-    ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
-    project_key: project,
-    host,
-  };
-  if (isPaused(sessionId)) {
-    deleteSessionState(sessionId);
-    markSessionFinalized(sessionId, undefined, generation, origin);
-    return { capturedEntries: 0 };
-  }
-
-  // A named transcript that has not reached disk is a not-yet-flushed session, not an empty
-  // one (ACP writes its rollout after SessionEnd fires). Retiring it here captures nothing and
-  // loses the content once the file lands, so defer: leave the state pending for a later
-  // start's sweep, which passes no options and force-finalizes after its idle window if the
-  // transcript never appears. Recovery relies on `transcript_path` being persisted in the
-  // session state (`rememberSessionOrigin`), which is what keeps the session eligible in
-  // `listPendingSessions`. Guard on that: only defer when the persisted state actually carries
-  // a transcript path, so a session that could never be swept (state written without one, or
-  // `rememberSessionOrigin` failed) is retired now rather than stranded in perpetual pending.
-  if (
-    options.deferWhenTranscriptAbsent &&
-    transcriptPath &&
-    !pathExists(transcriptPath) &&
-    readSessionState(sessionId).transcript_path !== undefined
-  ) {
-    return { capturedEntries: 0, deferred: true };
-  }
-
-  const home = mehmoryHome();
-  const paths = scopePaths(project);
-  const alreadyLogged =
-    pathExists(paths.logFile) &&
-    readFile(paths.logFile).includes(sessionEndLogTag(sessionId, generation));
-
-  let capturedEntries = 0;
-  if (!alreadyLogged) {
-    const delta = distillDeltaUnlocked(
-      sessionId,
-      transcriptPath,
-      host,
-      config,
-      readSessionState(sessionId).agent ?? undefined
-    );
-    const { entries } = delta;
-    if (entries.length > 0) {
-      const jobId = enqueueJob(distillJobPayload(project, entries), 'distill-final');
-      if (jobId === null) return { capturedEntries: 0, deferred: true };
-    }
-    if (transcriptPath && delta.endOffset !== undefined) {
-      advanceSessionCursorUnlocked(
-        sessionId,
-        transcriptPath,
-        delta.recordHash ?? '',
-        delta.endOffset
-      );
-    }
-
-    appendLogEntry(
-      project,
-      'session-end',
-      `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId, generation)}`
-    );
-
-    const touched = [paths.logFile, paths.inboxFile]
-      .filter(pathExists)
-      .map((path) => relative(home, path));
-    if (touched.length > 0 && pathExists(join(home, '.git'))) {
-      commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
-    }
-    capturedEntries = entries.length;
-  }
-
-  // Read the cursor before the state file holding it goes away: the marker carries it so
-  // a resumed session (same id) picks up where this left off instead of re-reading the
-  // whole transcript. See `resumeFinalizedSession`.
-  const finalCursor = readSessionState(sessionId).cursor;
-  deleteSessionState(sessionId);
-  markSessionFinalized(sessionId, finalCursor, generation, origin);
-  return { capturedEntries };
-}
-
-/**
- * Finalize every session left pending — state on disk, no finalization marker, idle long
- * enough to be abandoned — at the next session start (issue #24).
- *
- * A session whose end mehmory never sees — killed before SessionEnd fires, a hook Codex
- * skipped for want of a trust decision, a harness with no session-end event — has no other
- * route for its last stretch into the inbox. Every such shape recovers the same way.
- * Either way the work goes through `finalizeSession` — one operation, one marker, so a
- * session already finalized by its own SessionEnd is skipped and nothing is written twice.
- *
- * The current session is excluded by id: it is the one session on disk that is provably
- * still running.
- *
- * The recorded host and project key win over the running session's, because the pending
- * session may well come from the other harness or another project directory; the
- * arguments are only the fallback for state written before either was recorded.
- *
- * Each session is finalized inside its own `failOpen`, not the sweep as a whole: one
- * session whose state write fails must not abandon the rest of that start, nor report
- * `finalized: 0` for the ones that already completed.
- *
- * @returns number of sessions finalized
- */
-export function finalizePendingSessions(
-  currentSessionId: string,
-  project: string,
-  host: InboxHost,
-  config: MehmoryConfig = loadConfig()
-): number {
-  const pending = failOpen(() => listPendingSessions(), [], 'E_SESSION_STATE');
-
-  let finalized = 0;
-  for (const state of pending) {
-    if (state.session_id === currentSessionId) continue;
-    const ok = failOpen(
-      () => {
-        finalizeSession(
-          state.session_id,
-          state.transcript_path,
-          state.project_key ?? project,
-          state.host ?? host,
-          config
-        );
-        return true;
-      },
-      false,
-      'E_SESSION_STATE'
-    );
-    if (ok) finalized++;
-  }
-  return finalized;
 }

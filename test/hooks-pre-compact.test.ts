@@ -1,3 +1,4 @@
+import { sessionState, changeSession } from './session-fixture.js';
 /** PreCompact fixture tests (criteria 12, 14, 16). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -11,7 +12,7 @@ import {
   statsLines,
   writeTranscript,
 } from './hook-fixture.js';
-import { readSessionState, updateSessionState } from '../src/core/session.js';
+
 
 describe('PreCompact hook', () => {
   let cwd: string;
@@ -29,7 +30,7 @@ describe('PreCompact hook', () => {
   });
 
   it('distills into the inbox and emits no decision', () => {
-    updateSessionState('s1', state => ({ ...state, stop_count: 7 }));
+    changeSession('s1', state => ({ ...state, stop_count: 7 }));
 
     const run = runHook('pre-compact', { session_id: 's1', transcript_path: transcript }, { cwd });
 
@@ -40,7 +41,7 @@ describe('PreCompact hook', () => {
     const inbox = readIfPresent(paths(key).inbox);
     expect(inbox).toContain('durable');
     expect(inbox).not.toContain('ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(0);
     expect(statsLines().at(-1)).toMatchObject({ hook: 'PreCompact' });
   });
 

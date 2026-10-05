@@ -13,7 +13,7 @@ import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
 import { resolveActiveHost, resolveHost, type Host } from './host.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
-import { rememberSessionOrigin } from './session.js';
+import { openSession } from './session-lifecycle.js';
 import { currentAgentName } from './agent.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
@@ -157,18 +157,17 @@ export function runHook(
           consequence: 'The invocation was skipped; no session state was read or written',
         });
       } else {
-        // Where this session's material lives and who wrote it, so the next session start
-        // can finalize it even if this session never reports an end (issue #24).
-        // SessionStart owns its explicit resume, which clears a retired session's pause.
-        if (event !== 'SessionStart') {
-          rememberSessionOrigin(
-            input.session_id,
-            input.transcript_path,
+        openSession(
+          input.session_id,
+          {
+            transcriptPath: input.transcript_path,
             host,
             project,
-            currentAgentName(config)
-          );
-        }
+            agent: currentAgentName(config),
+          },
+          event,
+          config
+        );
         result = body(input, project, host, config);
       }
     }

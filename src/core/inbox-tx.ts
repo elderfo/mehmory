@@ -28,7 +28,8 @@ import { mehmoryHome, statePath } from './home.js';
 import { atomicWrite, lstat, pathExists, readFile, realpath, remove } from './fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from './inbox.js';
 import { redact } from './redact.js';
-import { isSessionFinalized, readSessionState, sessionStatePath, setPaused } from './session.js';
+import { setPaused } from './session.js';
+import { inspectSession } from './session-lifecycle.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 
@@ -129,7 +130,7 @@ function validateInbox(input: Record<string, unknown>): { inbox: string; key: st
  *
  * With no `host` declared, the entry's `src` — a session id — is resolved against that
  * session's recorded state, which is the authoritative record of which harness wrote it
- * (`finalizePendingSessions` prefers it over the running host for the same reason). That
+ * (`maintainSessions` prefers it over the running host for the same reason). That
  * keeps a re-appended older entry attributed to the session that produced it rather than
  * to whatever harness is running now. Only when neither is available does the entry go
  * out without a host and pick up the serializer's default.
@@ -193,7 +194,7 @@ function doAppend(input: Record<string, unknown>, config: MehmoryConfig): Record
     if (!/^[A-Za-z0-9._:-]+$/.test(src)) {
       throw new TxError('"src" contains unsafe comment characters');
     }
-    const entryHost = host ?? readSessionState(src).host;
+    const entryHost = host ?? inspectSession(src).state.host;
     return {
       id: inboxEntryId(src + text),
       text,
@@ -246,10 +247,11 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
 
 function doPause(input: Record<string, unknown>, paused: boolean): Record<string, unknown> {
   const sessionId = requireString(input, 'session_id');
-  if (
-    sessionId.trim() === '' ||
-    (!isSessionFinalized(sessionId) && !pathExists(sessionStatePath(sessionId)))
-  ) {
+  const session = inspectSession(sessionId);
+  if (!session.available) {
+    throw new TxError('session is busy or finalized; retry after the next turn');
+  }
+  if (sessionId.trim() === '' || (!session.finalized && !session.exists)) {
     throw new TxError('unknown session_id; use the current live session id');
   }
   if (!setPaused(sessionId, paused)) {

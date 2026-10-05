@@ -1,3 +1,4 @@
+import { changeSession, stateFileFor } from './session-fixture.js';
 /** Fail-open fixtures for all five hooks (criterion 15). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -14,7 +15,7 @@ import {
   type HookName,
 } from './hook-fixture.js';
 import { mehmoryHome } from '../src/core/home.js';
-import { sessionStatePath, updateSessionState } from '../src/core/session.js';
+
 import { loadConfig } from '../src/core/config.js';
 
 /** The Stop capture threshold now comes from config (`stop.capture_threshold`).
@@ -43,7 +44,7 @@ function inputFor(hook: HookName, transcript: string): Record<string, unknown> {
 /** Stop only captures at the threshold; put it there so its write path is exercised. */
 function primeStop(hook: HookName): void {
   if (hook !== 'stop') return;
-  updateSessionState('s1', state => ({ ...state, stop_count: stopThreshold() - 1 }));
+  changeSession('s1', state => ({ ...state, stop_count: stopThreshold() - 1 }));
 }
 
 describe('hooks fail open', () => {
@@ -61,7 +62,7 @@ describe('hooks fail open', () => {
     it(`${hook}: corrupt session state resets and logs`, () => {
       seedStore(key);
       mkdirSync(join(mehmoryHome(), '.state'), { recursive: true });
-      writeFileSync(sessionStatePath('s1'), '{ this is not json');
+      writeFileSync(stateFileFor('s1'), '{ this is not json');
 
       const run = runHook(hook, inputFor(hook, transcript), { cwd });
 

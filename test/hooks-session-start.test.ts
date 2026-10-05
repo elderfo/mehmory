@@ -1,3 +1,4 @@
+import { sessionState, stateFileFor } from './session-fixture.js';
 /** SessionStart fixture tests (criteria 7, 8, 9, 16, 19). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -24,8 +25,9 @@ import {
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { recordWarning } from '../src/core/errors.js';
 import { enqueueJob } from '../src/core/queue.js';
-import { readSessionState, setPaused, sessionStatePath } from '../src/core/session.js';
-import { finalizeSession } from '../src/core/capture.js';
+import { setPaused } from '../src/core/session.js';
+import { finalizeSession } from '../src/core/session-lifecycle.js';
+import { loadConfig } from '../src/core/config.js';
 import { estimateTokens } from '../src/core/tokens.js';
 import { inboxEntryId } from '../src/schema/format.js';
 
@@ -174,7 +176,7 @@ describe('SessionStart hook', () => {
       setPaused('s1', true);
       const old = new Date(Date.now() - 60 * 60 * 1000);
       utimesSync(transcript, old, old);
-      finalizeSession('s1', transcript, key, 'claude-code');
+      finalizeSession('s1', transcript, key, 'claude-code', loadConfig());
       const touch = (): void => {
         writeTranscript(
           [...records, { text: 'We decided to resume this session with new work.' }],
@@ -193,14 +195,14 @@ describe('SessionStart hook', () => {
 
       expect(run.status).toBe(0);
       expect(additionalContext(run)).toContain('\nsession: s1\n');
-      expect(readSessionState('s1').paused).toBe(false);
-      expect(readSessionState('s1').generation).toBe(1);
-      expect(readSessionState('s1').agent).toBe('returning');
+      expect(sessionState('s1').paused).toBe(false);
+      expect(sessionState('s1').generation).toBe(1);
+      expect(sessionState('s1').agent).toBe('returning');
       expect(existsSync(join(paths(key).projectDir, 'archive', 'ancient.md'))).toBe(true);
       if (order === 'after') touch();
       runHook('stop', input, { cwd });
-      expect(readSessionState('s1').paused).toBe(false);
-      expect(readSessionState('s1').generation).toBe(1);
+      expect(sessionState('s1').paused).toBe(false);
+      expect(sessionState('s1').generation).toBe(1);
     }
   );
 
@@ -267,7 +269,7 @@ describe('SessionStart hook', () => {
 
   it('sweeps session-state files past the age bound', () => {
     seedStore(key);
-    const stale = sessionStatePath('ancient-session');
+    const stale = stateFileFor('ancient-session');
     mkdirSync(statePath(), { recursive: true });
     writeFileSync(
       stale,

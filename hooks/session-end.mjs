@@ -1,10 +1,10 @@
 import {
-  finalizeSession,
   runHook
-} from "./chunk-7FSOFKBN.mjs";
-import "./chunk-WB3BMRQX.mjs";
-import "./chunk-572P3JTD.mjs";
-import "./chunk-H34NFU7U.mjs";
+} from "./chunk-RTT2NKDM.mjs";
+import {
+  finalizeSession
+} from "./chunk-S6YFTPNW.mjs";
+import "./chunk-PWN6QP6F.mjs";
 
 // src/hooks/session-end.ts
 runHook("SessionEnd", (input, project, host, config) => {
@@ -12,5 +12,7 @@ runHook("SessionEnd", (input, project, host, config) => {
   const result = finalizeSession(input.session_id, input.transcript_path, project, host, config, {
     deferWhenTranscriptAbsent: true
   });
-  return { stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false } };
+  return {
+    stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false }
+  };
 });

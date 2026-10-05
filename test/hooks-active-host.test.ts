@@ -1,3 +1,4 @@
+import { sessionState, changeSession, stateFileFor } from './session-fixture.js';
 /** MEHMORY_ACTIVE_HOST (A30): one capturing harness per process tree, asserted through the
  * built bundles like every other hook suite. */
 
@@ -15,7 +16,7 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { loadConfig } from '../src/core/config.js';
-import { readSessionState, sessionStatePath, updateSessionState } from '../src/core/session.js';
+
 
 const REMEMBER = 'remember: staging needs the VPN';
 
@@ -40,7 +41,7 @@ describe('MEHMORY_ACTIVE_HOST', () => {
   /** Stop at the capture threshold: one call away from filing the transcript and blocking. */
   const stopAtThreshold = (host: string, env: Record<string, string> = {}): ReturnType<typeof runHook> => {
     const transcript = writeTranscript([{ text: 'We decided to use fly.io for deploys.' }]);
-    updateSessionState('s1', state => ({ ...state, stop_count: loadConfig().stop.capture_threshold - 1 }));
+    changeSession('s1', state => ({ ...state, stop_count: loadConfig().stop.capture_threshold - 1 }));
     return runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd, args: [host], env });
   };
 
@@ -52,7 +53,7 @@ describe('MEHMORY_ACTIVE_HOST', () => {
 
       expect(run.status).toBe(0);
       expect(run.stdout).toBe('');
-      expect(existsSync(sessionStatePath('s1'))).toBe(false);
+      expect(existsSync(stateFileFor('s1'))).toBe(false);
       expect(statsLines().at(-1)).toMatchObject({
         project: key,
         hook: 'SessionStart',
@@ -73,7 +74,7 @@ describe('MEHMORY_ACTIVE_HOST', () => {
 
       expect(run.stdout).toBe('{}');
       expect(readIfPresent(paths(key).inbox)).toBe('');
-      expect(readSessionState('s1').stop_count).toBe(loadConfig().stop.capture_threshold - 1);
+      expect(sessionState('s1').stop_count).toBe(loadConfig().stop.capture_threshold - 1);
       expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop', host: 'claude-code', suppressed: 'active_host' });
     });
   });

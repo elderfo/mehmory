@@ -1,3 +1,6 @@
+import { loadConfig } from '../src/core/config.js';
+import { finalizeSession, maintainSessions, openSession } from '../src/core/session-lifecycle.js';
+import { sessionState, stateFileFor, markerFileFor } from './session-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendFileSync,
@@ -8,24 +11,20 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { captureDelta, finalizePendingSessions, finalizeSession } from '../src/core/capture.js';
+import { captureDelta } from '../src/core/capture.js';
 import { statePath } from '../src/core/home.js';
 import { readInboxEntries } from '../src/core/inbox.js';
 import { claimJob } from '../src/core/queue.js';
 import * as fsModule from '../src/core/fs.js';
 import {
-  advanceSessionCursorUnlocked,
-  finalizedMarkerPath,
+  advanceSessionCursor,
   freshSessionState,
   incrementStopCount,
-  markSessionFinalized,
-  readSessionState,
   rememberTopic,
   resetStopCount,
-  sessionStatePath,
   setPaused,
 } from '../src/core/session.js';
-import { withSessionLock } from '../src/core/lock.js';
+
 import { createTempDir } from './helpers.js';
 import {
   keyFor,
@@ -59,7 +58,7 @@ describe('capture durability', () => {
     const lock = statePath('locks', '__store__.lock');
     writeFileSync(lock, String(process.pid));
     expect(captureDelta('durable', transcript, key, 'claude-code').appended).toBe(0);
-    expect(readSessionState('durable').cursor.offset).toBe(0);
+    expect(sessionState('durable').cursor.offset).toBe(0);
     rmSync(lock);
     expect(captureDelta('durable', transcript, key, 'claude-code').appended).toBe(1);
     expect(readInboxEntries(paths(key).inbox).map((e) => e.text)).toEqual([
@@ -80,7 +79,7 @@ describe('capture durability', () => {
       .mockImplementationOnce(append)
       .mockReturnValueOnce({ ok: false, error: 'disk write failed' });
     expect(captureDelta('durable', transcript, key, 'claude-code').failed).toBe(1);
-    expect(readSessionState('durable').cursor.offset).toBe(0);
+    expect(sessionState('durable').cursor.offset).toBe(0);
     vi.restoreAllMocks();
     expect(captureDelta('durable', transcript, key, 'claude-code').appended).toBe(1);
     expect(readInboxEntries(paths(key).inbox).map((e) => e.text)).toEqual([
@@ -92,15 +91,15 @@ describe('capture durability', () => {
   it('fails open and replays safely if the cursor write fails after an append', () => {
     const write = fsModule.atomicWrite;
     vi.spyOn(fsModule, 'atomicWrite').mockImplementation((path, content) => {
-      if (path === sessionStatePath('durable')) throw new Error('cursor write failed');
+      if (path === stateFileFor('durable')) throw new Error('cursor write failed');
       write(path, content);
     });
     expect(captureDelta('durable', transcript, key, 'claude-code').failed).toBe(1);
-    expect(readSessionState('durable').cursor.offset).toBe(0);
+    expect(sessionState('durable').cursor.offset).toBe(0);
     vi.restoreAllMocks();
     expect(captureDelta('durable', transcript, key, 'claude-code').appended).toBe(0);
     expect(readInboxEntries(paths(key).inbox).length).toBe(1);
-    expect(readSessionState('durable').cursor.offset).toBeGreaterThan(0);
+    expect(sessionState('durable').cursor.offset).toBeGreaterThan(0);
   });
 
   it('retries the same tail after enqueue fails', () => {
@@ -109,29 +108,29 @@ describe('capture durability', () => {
       if (path.startsWith(statePath('queue') + '/')) throw new Error('queue write failed');
       original(path, content);
     });
-    expect(finalizeSession('durable', transcript, key, 'claude-code')).toEqual({
+    expect(finalizeSession('durable', transcript, key, 'claude-code', loadConfig())).toEqual({
       capturedEntries: 0,
       deferred: true,
     });
-    expect(readSessionState('durable').cursor.offset).toBe(0);
+    expect(sessionState('durable').cursor.offset).toBe(0);
     vi.restoreAllMocks();
-    expect(finalizeSession('durable', transcript, key, 'claude-code').capturedEntries).toBe(1);
+    expect(
+      finalizeSession('durable', transcript, key, 'claude-code', loadConfig()).capturedEntries
+    ).toBe(1);
     expect(
       (claimJob('distill-final')?.data['entries'] as { text: string }[]).map((e) => e.text)
     ).toEqual(['We decided to keep durable capture retries.']);
   });
 
   it('ordinary mutators and trailing capture never resurrect finalized state', () => {
-    finalizeSession('durable', transcript, key, 'claude-code');
+    finalizeSession('durable', transcript, key, 'claude-code', loadConfig());
     incrementStopCount('durable');
     resetStopCount('durable');
     rememberTopic('durable', new Set(['capture']));
     setPaused('durable', true);
-    withSessionLock('durable', () =>
-      advanceSessionCursorUnlocked('durable', transcript, 'last', 1)
-    );
+    advanceSessionCursor('durable', transcript, 'last', 1);
     captureDelta('durable', transcript, key, 'claude-code');
-    expect(existsSync(sessionStatePath('durable'))).toBe(false);
+    expect(existsSync(stateFileFor('durable'))).toBe(false);
     expect(readInboxEntries(paths(key).inbox)).toEqual([]);
   });
 
@@ -144,7 +143,12 @@ describe('capture durability', () => {
       project_key: key,
       host: 'claude-code' as const,
     };
-    markSessionFinalized('durable', origin.cursor, 0, origin);
+    openSession('durable', {
+      transcriptPath: origin.transcript_path,
+      host: origin.host,
+      project: origin.project_key,
+    });
+    finalizeSession('durable', undefined, key, 'claude-code', loadConfig());
     writeFileSync(
       statePath('..', 'config.json'),
       JSON.stringify({ stop: { capture_threshold: 1 } })
@@ -152,8 +156,8 @@ describe('capture durability', () => {
 
     runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
 
-    expect(existsSync(sessionStatePath('durable'))).toBe(false);
-    expect(existsSync(finalizedMarkerPath('durable'))).toBe(true);
+    expect(existsSync(stateFileFor('durable'))).toBe(false);
+    expect(existsSync(markerFileFor('durable'))).toBe(true);
     expect(readInboxEntries(paths(key).inbox)).toEqual([]);
   });
 
@@ -162,8 +166,8 @@ describe('capture durability', () => {
     (change) => {
       captureDelta('durable', transcript, key, 'claude-code');
       writeFileSync(paths(key).inbox, '# Inbox\n');
-      finalizeSession('durable', transcript, key, 'claude-code');
-      const marker = fsModule.readFile(finalizedMarkerPath('durable'));
+      finalizeSession('durable', transcript, key, 'claude-code', loadConfig());
+      const marker = fsModule.readFile(markerFileFor('durable'));
       if (change === 'truncation') truncateSync(transcript, 10);
       const later = new Date(Date.now() + 1000);
       utimesSync(transcript, later, later);
@@ -171,8 +175,8 @@ describe('capture durability', () => {
       runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
       incrementStopCount('durable');
 
-      expect(existsSync(sessionStatePath('durable'))).toBe(false);
-      expect(fsModule.readFile(finalizedMarkerPath('durable'))).toBe(marker);
+      expect(existsSync(stateFileFor('durable'))).toBe(false);
+      expect(fsModule.readFile(markerFileFor('durable'))).toBe(marker);
       expect(readInboxEntries(paths(key).inbox)).toEqual([]);
     }
   );
@@ -186,7 +190,7 @@ describe('capture durability', () => {
     runHook('stop', input, { cwd });
     setPaused('durable', true);
     const old = new Date(Date.now() - 60 * 60 * 1000);
-    utimesSync(sessionStatePath('durable'), old, old);
+    utimesSync(stateFileFor('durable'), old, old);
     utimesSync(transcript, old, old);
     runHook('session-start', { session_id: 'sweeper' }, { cwd });
     appendFileSync(
@@ -201,19 +205,19 @@ describe('capture durability', () => {
     );
     runHook('stop', input, { cwd });
     runHook('stop', input, { cwd });
-    expect(readSessionState('durable').paused).toBe(true);
+    expect(sessionState('durable').paused).toBe(true);
     expect(readInboxEntries(paths(key).inbox)).toEqual([]);
   });
 
   it('unchanged incomplete transcript tails do not resurrect finalized state', () => {
     appendFileSync(transcript, '{"type":"message"');
-    finalizeSession('durable', transcript, key, 'claude-code');
-    const marker = fsModule.readFile(finalizedMarkerPath('durable'));
+    finalizeSession('durable', transcript, key, 'claude-code', loadConfig());
+    const marker = fsModule.readFile(markerFileFor('durable'));
     incrementStopCount('durable');
     captureDelta('durable', transcript, key, 'claude-code');
-    finalizeSession('durable', transcript, key, 'claude-code');
-    expect(existsSync(sessionStatePath('durable'))).toBe(false);
-    expect(fsModule.readFile(finalizedMarkerPath('durable'))).toBe(marker);
+    finalizeSession('durable', transcript, key, 'claude-code', loadConfig());
+    expect(existsSync(stateFileFor('durable'))).toBe(false);
+    expect(fsModule.readFile(markerFileFor('durable'))).toBe(marker);
   });
 
   it.each(['claude-code', 'codex', 'pi'] as const)(
@@ -238,10 +242,10 @@ describe('capture durability', () => {
       ]);
       writeFileSync(paths(key).inbox, '# Inbox\n');
       const old = new Date(Date.now() - 60 * 60 * 1000);
-      utimesSync(sessionStatePath('durable'), old, old);
+      utimesSync(stateFileFor('durable'), old, old);
       utimesSync(transcript, old, old);
       runHook('session-start', { session_id: 'sweeper' }, options);
-      expect(existsSync(sessionStatePath('durable'))).toBe(false);
+      expect(existsSync(stateFileFor('durable'))).toBe(false);
       const text = 'We decided to capture work after the idle sweep.';
       const record = {
         'claude-code': {
@@ -264,7 +268,7 @@ describe('capture durability', () => {
       expect(readInboxEntries(paths(key).inbox).map((e) => e.text)).toEqual([
         'We decided to capture work after the idle sweep.',
       ]);
-      expect(readSessionState('durable').generation).toBe(1);
+      expect(sessionState('durable').generation).toBe(1);
     }
   );
 
@@ -273,9 +277,11 @@ describe('capture durability', () => {
     (hook) => {
       runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
       const old = new Date(Date.now() - 60 * 60 * 1000);
-      utimesSync(sessionStatePath('durable'), old, old);
+      utimesSync(stateFileFor('durable'), old, old);
       utimesSync(transcript, old, old);
-      expect(finalizePendingSessions('sweeper', key, 'claude-code')).toBe(1);
+      expect(
+        maintainSessions('sweeper', key, 'claude-code', loadConfig(), { sweep: false }).finalized
+      ).toBe(1);
       claimJob('distill-final');
       appendFileSync(
         transcript,
@@ -301,16 +307,21 @@ describe('capture durability', () => {
   it.each([undefined, { file_id: '', size: 0, offset: 0 }])(
     'ordinary mutations use mtime after finalization when there is no real cursor (%j)',
     (cursor) => {
-      markSessionFinalized('durable', cursor, 0, {
-        ...freshSessionState('durable'),
-        transcript_path: transcript,
-        project_key: key,
-        host: 'claude-code',
-      });
+      openSession('durable', { transcriptPath: transcript, host: 'claude-code', project: key });
+      finalizeSession('durable', undefined, key, 'claude-code', loadConfig());
+      if (cursor === undefined) {
+        // Legacy completion markers may omit the cursor entirely.
+        const marker = JSON.parse(fsModule.readFile(markerFileFor('durable'))) as Record<
+          string,
+          unknown
+        >;
+        delete marker['cursor'];
+        writeFileSync(markerFileFor('durable'), JSON.stringify(marker));
+      }
       const later = new Date(Date.now() + 1000);
       utimesSync(transcript, later, later);
       expect(incrementStopCount('durable')).toBe(1);
-      expect(readSessionState('durable').generation).toBe(1);
+      expect(sessionState('durable').generation).toBe(1);
       expect(
         captureDelta('durable', transcript, key, 'claude-code').entries.map((e) => e.text)
       ).toEqual(['We decided to keep durable capture retries.']);
@@ -318,7 +329,7 @@ describe('capture durability', () => {
   );
 
   it('SessionStart explicitly resumes from the saved cursor and records the returning agent', () => {
-    finalizeSession('durable', transcript, key, 'claude-code');
+    finalizeSession('durable', transcript, key, 'claude-code', loadConfig());
     expect(
       runHook(
         'session-start',
@@ -329,8 +340,8 @@ describe('capture durability', () => {
         }
       ).status
     ).toBe(0);
-    expect(readSessionState('durable').generation).toBe(1);
-    expect(readSessionState('durable').agent).toBe('returning');
+    expect(sessionState('durable').generation).toBe(1);
+    expect(sessionState('durable').agent).toBe('returning');
     transcript = writeTranscript(
       [
         { text: 'We decided to keep durable capture retries.' },
@@ -355,11 +366,13 @@ describe('capture durability', () => {
       ).status
     ).toBe(0);
     const old = new Date(Date.now() - 60 * 60 * 1000);
-    utimesSync(sessionStatePath('durable'), old, old);
+    utimesSync(stateFileFor('durable'), old, old);
     utimesSync(transcript, old, old);
     vi.stubEnv('MEHMORY_AGENT', 'sweeper');
     try {
-      expect(finalizePendingSessions('current', key, 'claude-code')).toBe(1);
+      expect(
+        maintainSessions('current', key, 'claude-code', loadConfig(), { sweep: false }).finalized
+      ).toBe(1);
       const entries = claimJob('distill-final')?.data['entries'] as { agent?: string }[];
       expect(entries.map((e) => e.agent ?? null)).toEqual([agent || null]);
     } finally {

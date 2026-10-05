@@ -1,3 +1,4 @@
+import { changeSession } from './session-fixture.js';
 /**
  * The built Pi extension (`hooks/pi-extension.mjs`), driven the way Pi drives it: the
  * default export receives an API whose `on` collects handlers, and each handler is
@@ -20,7 +21,7 @@ import {
   writePiSession,
   TODAY,
 } from './hook-fixture.js';
-import { updateSessionState } from '../src/core/session.js';
+
 import { loadConfig } from '../src/core/config.js';
 import { parseInboxEntries } from '../src/schema/format.js';
 
@@ -67,7 +68,7 @@ function fire(handlers: Map<string, Handler>, event: string, payload: unknown, c
 
 function primeCounter(): void {
   const threshold = loadConfig().stop.capture_threshold;
-  updateSessionState(PI_SESSION, state => ({ ...state, stop_count: threshold - 1 }));
+  changeSession(PI_SESSION, state => ({ ...state, stop_count: threshold - 1 }));
 }
 
 describe('Pi extension', () => {

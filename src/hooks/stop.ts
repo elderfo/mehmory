@@ -10,9 +10,7 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHook, type HookResult } from '../core/hook.js';
-import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
-import { logError } from '../core/errors.js';
+import { captureAtStop, scopePaths, skillRef } from '../core/capture.js';
 import type { InboxHost } from '../schema/format.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
@@ -92,33 +90,19 @@ function blockReason(key: string, sessionId: string, host: InboxHost): string {
 }
 
 runHook('Stop', (input, project, host, config) => {
-  if (input.stop_hook_active === true) return {};
-
-  if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
-
-  const count = incrementStopCount(input.session_id);
-  const threshold = Math.max(1, Math.ceil(config.stop.capture_threshold));
-  const firstCrossing = count === threshold;
-  // One immediate silent retry, then one per threshold window. Keep the durable cursor
-  // and counter on failure without putting a store-lock wait on every later turn.
-  const retry = count > threshold && (count - threshold - 1) % threshold === 0;
-  if (!firstCrossing && !retry) return { stats: { stop_count: count } };
-
-  const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
-  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
-  else if (count === threshold + 1) {
-    logError({
-      code: 'E_APPEND_FAILED',
-      kind: 'informational',
-      what: `Stop capture still failing for session ${input.session_id}`,
-      consequence: 'The delta is retained; silent retries now wait one threshold window',
-    });
-  }
+  const { count, captured, nudge } = captureAtStop(
+    input.session_id,
+    input.transcript_path,
+    project,
+    host,
+    config,
+    input.stop_hook_active
+  );
+  if (count === undefined) return {};
+  if (captured === undefined) return { stats: { stop_count: count } };
 
   return {
-    ...(firstCrossing
-      ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host))
-      : {}),
+    ...(nudge ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host)) : {}),
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });

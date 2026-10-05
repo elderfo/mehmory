@@ -1,3 +1,4 @@
+import { sessionState, seedSession, stateFileFor, markerFileFor } from './session-fixture.js';
 /**
  * Direct tests for the bundled `hooks/inbox-tx.mjs` transactional helper (criterion 17).
  *
@@ -11,13 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { statePath } from '../src/core/home.js';
-import {
-  finalizedMarkerPath,
-  freshSessionState,
-  readSessionState,
-  sessionStatePath,
-  writeSessionState,
-} from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session.js';
 import { hermeticEnv } from './helpers.js';
 
 const HELPER = resolve('hooks/inbox-tx.mjs');
@@ -167,14 +162,14 @@ describe('inbox-tx snapshot/clear', () => {
 
 describe('inbox-tx pause/resume', () => {
   it('changes only the explicitly named session pause flag', () => {
-    writeSessionState({ ...freshSessionState('target'), stop_count: 7 });
-    writeSessionState(freshSessionState('other'));
+    seedSession({ ...freshSessionState('target'), stop_count: 7 });
+    seedSession(freshSessionState('other'));
     expect(json(tx('pause', { session_id: 'target' }))).toEqual({
       session_id: 'target',
       paused: true,
     });
-    expect(readSessionState('target').stop_count).toBe(7);
-    expect(readSessionState('other').paused).toBe(false);
+    expect(sessionState('target').stop_count).toBe(7);
+    expect(sessionState('other').paused).toBe(false);
     expect(json(tx('resume', { session_id: 'target' }))).toEqual({
       session_id: 'target',
       paused: false,
@@ -184,7 +179,7 @@ describe('inbox-tx pause/resume', () => {
   it.each(['pause', 'resume'])(
     '%s tells an unchanged retired session to retry after the next turn',
     (command) => {
-      writeFileSync(finalizedMarkerPath('done'), '{}');
+      writeFileSync(markerFileFor('done'), '{}');
 
       const result = tx(command, { session_id: 'done' });
 
@@ -192,24 +187,24 @@ describe('inbox-tx pause/resume', () => {
       expect(result.stderr).toBe(
         'inbox-tx: session is busy or finalized; retry after the next turn\n'
       );
-      expect(existsSync(sessionStatePath('done'))).toBe(false);
+      expect(existsSync(stateFileFor('done'))).toBe(false);
     }
   );
 
   it('fails without changing state when the session is busy, missing, or finalized', () => {
-    writeSessionState(freshSessionState('target'));
+    seedSession(freshSessionState('target'));
     mkdirSync(statePath('locks'), { recursive: true });
     writeFileSync(statePath('locks', 'sessions_target.lock'), String(process.pid));
     expect(tx('pause', { session_id: 'target' }).stderr).toContain('busy');
-    expect(readSessionState('target').paused).toBe(false);
+    expect(sessionState('target').paused).toBe(false);
     expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
-    expect(existsSync(sessionStatePath('missing'))).toBe(false);
-    writeFileSync(finalizedMarkerPath('done'), '{}');
+    expect(existsSync(stateFileFor('missing'))).toBe(false);
+    writeFileSync(markerFileFor('done'), '{}');
     const finalized = tx('resume', { session_id: 'done' });
     expect(finalized.status).toBe(1);
     expect(finalized.stderr).toContain('finalized; retry after the next turn');
     expect(finalized.stderr).not.toContain('unknown session_id');
-    expect(existsSync(sessionStatePath('done'))).toBe(false);
+    expect(existsSync(stateFileFor('done'))).toBe(false);
   });
 });
 

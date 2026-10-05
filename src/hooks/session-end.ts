@@ -8,7 +8,7 @@
  */
 
 import { runHook } from '../core/hook.js';
-import { finalizeSession } from '../core/capture.js';
+import { finalizeSession } from '../core/session-lifecycle.js';
 
 runHook('SessionEnd', (input, project, host, config) => {
   // Disabling this event means this event does nothing — the session stays pending and
@@ -22,5 +22,7 @@ runHook('SessionEnd', (input, project, host, config) => {
   const result = finalizeSession(input.session_id, input.transcript_path, project, host, config, {
     deferWhenTranscriptAbsent: true,
   });
-  return { stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false } };
+  return {
+    stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false },
+  };
 });
