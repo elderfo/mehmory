@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-EDYLBKGV.mjs";
+} from "./chunk-ODLV4UIH.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -24,8 +24,8 @@ import {
   resumeFinalizedSession,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-OI5RI5RL.mjs";
-import "./chunk-3T2Z6INZ.mjs";
+} from "./chunk-2IESAF5R.mjs";
+import "./chunk-YPED7F4N.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -41,7 +41,7 @@ import {
   rename,
   shellQuote,
   stat
-} from "./chunk-DMITHIMK.mjs";
+} from "./chunk-PZNSX44T.mjs";
 
 // src/core/store.ts
 import { join } from "path";

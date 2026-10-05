@@ -12,11 +12,11 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   |---|---|
   | 0 | Success |
   | 1 | Usage error — unknown command/flag, wrong arity, ambiguous scope selector |
-  | 2 | Store missing where the command requires one |
+  | 2 | Store missing where required |
   | 3 | Operation failed — a write or git failure |
   | 4 | Aborted by the user — wrong purge confirmation token |
 
-  `doctor` is the one exception: it additionally exits **5** (warnings only, no errors) and
+  `doctor` additionally exits **5** (warnings only, no errors) and
   **6** (at least one error-level finding), and **never exits 2** — a missing store is itself
   the finding `doctor` exists to report, not a reason to fail differently from every other
   finding.
@@ -35,8 +35,8 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   `MehmoryError` minus the `Details:` path, so a model reading the output gets the error code
   and the command's name without parsing prose. This includes usage errors: if `--json` was
   anywhere in argv, even a parse failure emits the envelope (`ok:false`, populated `errors[]`)
-  on stdout and exits 1, rather than falling back to a plain-text usage message. Human-mode
-  text goes to stdout for normal output and stderr for errors; JSON mode always writes to
+  on stdout and exits 1, rather than falling back to a
+  plain-text usage message. Human-mode text goes to stdout for normal output and stderr for errors; JSON mode always writes to
   stdout only.
 
 - **Scopes.** The four scope-taking commands — `onboard`, `search`, `stats`, and `purge` —
@@ -46,7 +46,8 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
   - `--project [<key>]` — a specific project. The value is optional: with no value, the scope
     resolves from the current working directory's project key. A full key or a unique
     substring both match; an ambiguous substring exits 1 listing the candidate keys.
-  - `--global` — the global scope (`identity.md`, `global/pages/`). Treated as first-class,
+  - `--global` — the whole global scope (`global/`, including identity, index, inbox, log,
+    pages and archive). Treated as first-class,
     not as "every project" — it is the most personal content in the store and must not
     require touching every project to reach.
   - `--all` — every scope.
@@ -186,7 +187,8 @@ sessions; a Pi project starts from the hooks capturing forward.
 
 Mines existing Claude Code transcripts under `~/.claude/projects/*/` to seed the inbox before
 you've ever run a session with mehmory active — the cold-start path. Defaults: `--sessions 30`,
-`--max-bytes` 500 KB, `--projects 50`.
+`--max-bytes` 500 KB, `--projects 50`. `--max-bytes` must be at least 1; zero is a usage
+error (exit 1), not a resumable byte-capped run.
 
 - Each `~/.claude/projects/<encoded>` directory name is decoded back to a filesystem path,
   and the project key is resolved by running `resolveProjectKey()` **in that directory**. A
@@ -205,9 +207,16 @@ you've ever run a session with mehmory active — the cold-start path. Defaults:
   `/mehmory:onboard-session` inside a Claude Code session in your project instead."
 - `--dry-run` writes nothing to the store — every byte of that guarantee is testable by
   hashing the store tree before and after.
-- `--resume` continues an interrupted run using the same scope flags; it exits 1 if the
-  recorded scope in the state file differs from the flags you passed. Reaching `done` deletes
-  the state file.
+- `--resume` continues an interrupted or byte-capped run using the same scope flags; it exits
+  1 if the recorded scope differs from the flags you passed. The byte cap resets for each
+  invocation, and completed sessions are skipped, so `mehmory onboard --resume` reaches older
+  sessions instead of repeating the newest batch. Reaching `done` deletes the state file;
+  stopping at the byte cap or on an append failure preserves it.
+- An append failure returns **exit 3**, `E_APPEND_FAILED`, and the partial appended count.
+  Wait for a busy store to become available, or repair the named inbox path, permissions or
+  disk-space problem, then use the printed `mehmory onboard --resume` command. The failed
+  session is retried, with entry-id deduplication preserving any entries that were
+  successfully appended before the failure.
 
 ### `mehmory search <query> [--project [<key>]|--global|--all] [--limit N] [--json]`
 
@@ -300,7 +309,7 @@ carries the same data as `data.hosts: [{host, count, capturedEntries, suppressed
 harness, or `none`). A skipped hook still reads stdin to resolve the session's project key, so
 plain `mehmory stats` in that project counts it. The text line appends `N suppressed (<reason>)`.
 
-### `mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all`
+### `mehmory purge <page-slug> [--agent <name>] | --session <id> | --project [<key>] | --global | --all`
 
 `[--dry-run] [--export <path>] [--yes]`
 
@@ -330,12 +339,37 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
 
 - A bare page slug that resolves in more than one scope exits 1, listing the candidates —
   it never deletes from both. The error's `fix` is the disambiguated command:
-  `mehmory purge <slug> --project <key>` (or `mehmory purge <slug> --global`). Passing a
-  scope beside a slug is a *qualifier*, not a second target.
+  `mehmory purge <slug> --project <key>`, `mehmory purge <slug> --global`, or
+  `mehmory purge <slug> --agent <name>`, according to the scope kind. Passing a scope beside
+  a slug is a *qualifier*, not a second target. `--agent` requires a page slug and a safe
+  single-segment agent name; it cannot be combined with another scope or purge form.
+  Project keys and agent names remain distinct even when their display labels collide.
+- Page purges remove all live (`pages/`) and archived (`archive/`) copies of that slug in
+  the selected scope, including an agent scope selected by `--agent` or an unambiguous slug.
+  Only matching normative `- [[slug]] — summary` catalog lines are removed from that scope's
+  `index.md`; freeform references and lines without the summary separator stay. Deleted
+  summaries are no longer injected at SessionStart. Both file paths and the exact index
+  lines appear in text and JSON dry-run previews. `--export` saves the selected index lines
+  alongside the page copies, not the whole index.
+- `--global` removes the **entire `global/` directory**, including identity, index, inbox,
+  log, pages and archive; projects and agents stay. No global skeleton survives the purge.
+  `mehmory init` (or the next SessionStart) may recreate empty template files. Until then,
+  commands requiring the store's identity file report a missing store; run `mehmory init`.
+- `--session <id>` requires **at least 8 characters and no whitespace**. Empty and shorter
+  values are usage errors (**exit 1**, `E_USAGE`), even with `--yes` or `--dry-run`.
 - A wrong token — or no token at all, which includes running the command on a terminal with
   nothing piped in — exits 4 and changes nothing.
-- `--export <path>` copies the targets before deleting; if the export fails, the command
-  aborts with exit 3 and deletes nothing.
+- Purge validates every file, directory and index target before any export or mutation.
+  Unsafe targets, including symlinks escaping the store, abort with exit 3: nothing is
+  deleted and catalog lines stay intact. A symlink nested inside a whole-scope target is
+  found during `--export`, so files copied before it may remain in the export directory;
+  nothing from outside the store is copied.
+- `--export <path>` copies the targets before deleting and checks each source, including
+  nested files, for store containment. If the export fails, the command aborts with exit 3
+  and deletes nothing.
+- A failure while clearing multiple inboxes returns exit 3 and reports how many selected
+  entries were deleted and how many remain. Earlier clears are not rolled back, and no purge
+  commit was made: inspect `git -C <store> status` before retrying the remaining deletion.
 - Purge deletes from the working tree, then commits. **If the commit fails, the files are
   already gone** — that is a terminal state, exit 3, naming the dirty store and
   `git -C ~/.mehmory commit -a` as the remedy.

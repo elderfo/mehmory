@@ -94,14 +94,28 @@ Three more things follow from working-tree deletion:
    been integrated into a page yet. Once `/mehmory:integrate` folds an entry into a wiki page,
    the session id that produced it is gone — the page just has a fact on it. Purging a
    session cannot reach content that already made it into a page; if you need that gone,
-   purge the page itself.
+   purge the page itself. Page purges remove both live and archived copies in the selected
+   scope and their matching index summaries; the dry-run preview lists both. Only normative
+   `- [[slug]] — summary` index lines are removed; freeform references and lines without the
+   summary separator are untouched. Agent-scope pages are discoverable by slug too; use
+   `purge <slug> --agent <name>` to resolve ambiguity, `--project <key>` for a project, or
+   `--global` for global memory. Agent names must be safe single directory segments, and
+   `--agent` only qualifies a page purge, not a whole-scope deletion. Project and agent
+   scopes stay distinct even if a project's alias key is `agent/<name>`.
+   Catalog summaries are still in git history, so removing a page from history alone is
+   not enough — selectively rewrite the old index lines as well, without deleting the
+   whole index.
+   Session ids must contain at least 8 characters with no whitespace; invalid ids are
+   rejected as usage errors before confirmation (exit 1).
    Within that limit it is deliberately **store-wide**: `--session` clears matching entries
    from *every* inbox, not only the project you happen to be standing in. Session ids are
    unique, so there is no false positive to fear, and a session that touched two projects is
    exactly the case where a scope-limited delete would leave a copy behind.
-3. **`--global` is its own scope**, not "every project" — `identity.md` and `global/pages/`
-   are the most personal content in the store, and purge lets you reach them without deleting
-   every project's memory along with them.
+3. **`--global` is its own scope**, not "every project" — it removes the entire `global/`
+   directory: identity, index, inbox, log, pages, archive and any other global files. Project
+   and agent directories stay. No global skeleton survives; a later `mehmory init` or
+   SessionStart can recreate empty templates, not the deleted content. Until reinitialized,
+   CLI commands requiring `global/identity.md` report a missing store.
 
 **The agent scope is a separation-of-concerns boundary, not a security boundary.** An agent
 name is self-declared and unauthenticated: mehmory takes whatever `MEHMORY_AGENT` or
@@ -109,11 +123,26 @@ name is self-declared and unauthenticated: mehmory takes whatever `MEHMORY_AGENT
 that the process claiming it is the agent it says it is. And because every agent in a repo
 shares one project inbox, anything that can write that inbox can stamp an entry with any
 agent's name, which integration will then file into that agent's scope. An agent scope also
-has no purge target of its own yet: deleting one means deleting the directory by hand, and
-un-integrated entries stamped with that name stay in the project inbox. The isolation that agent scopes
-give you is read-side and cooperative — it keeps distinct agents from being *merged* into
+has no whole-scope purge flag of its own yet: delete that directory by hand (or use
+`purge --all`), though individual pages can be purged with `--agent <name>` or an
+unambiguous slug. Un-integrated entries stamped with that name stay in the project inbox.
+The isolation that agent scopes give you is read-side and cooperative — it keeps distinct agents from being *merged* into
 one indistinct self. It does not keep one agent out of another's memory, and it is not
 a control to rely on against anything adversarial.
+
+**Purge does not touch queued jobs under `.state/queue/`.** Pending, claimed or failed job
+payloads may contain distilled text, even after `purge --all`; inspect and remove those
+separately if you need that data gone too.
+
+Every purge target is checked for store containment before export or mutation. A refused
+page or index target leaves both the page and catalog unchanged. Export also checks every
+source recursively, so a symlinked `pages/` or `archive/` directory cannot copy outside-store
+content into the export.
+
+If an inbox clear fails after earlier scopes were cleared, purge reports the deleted and
+remaining entry counts and exits 3; it does not roll back those earlier clears or create a
+purge commit. Inspect `git -C <store> status`, then retry the remaining deletion. Content
+already deleted is still reachable in the store's prior history.
 
 ## Why mehmory never rewrites git history
 

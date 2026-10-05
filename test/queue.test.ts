@@ -3,14 +3,91 @@
  * Critical test: 5 real concurrent processes claiming 1 job, exactly one wins.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, utimesSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { statePath } from '../src/core/home.js';
-import { enqueueJob, claimJob } from '../src/core/queue.js';
+import { enqueueJob, claimJob, completeJob } from '../src/core/queue.js';
 import { pathExists, mkdir, listDir } from '../src/core/fs.js';
+
+interface ClaimResult {
+  success: boolean;
+  id?: string;
+  pid: number;
+}
+
+async function runClaimers(scriptPath: string, barrierDir: string): Promise<ClaimResult[]> {
+  const processCount = 5;
+  const workers: ChildProcess[] = [];
+  const closed: Promise<void>[] = [];
+  let barrierPoll: ReturnType<typeof setInterval> | undefined;
+  try {
+    return await new Promise<ClaimResult[]>((resolve, reject) => {
+      const results: ClaimResult[] = [];
+      const deadline = Date.now() + 20000;
+      barrierPoll = setInterval(() => {
+        try {
+          const ready = readdirSync(barrierDir).filter((f) => f.startsWith('ready-')).length;
+          if (ready >= processCount) {
+            clearInterval(barrierPoll);
+            writeFileSync(join(barrierDir, 'go'), 'go');
+          } else if (Date.now() > deadline) {
+            reject(
+              new Error(
+                `barrier timeout: only ${String(ready)}/${String(processCount)} workers ready`
+              )
+            );
+          }
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      }, 10);
+
+      for (let i = 0; i < processCount; i++) {
+        const proc = spawn(process.execPath, [scriptPath], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        workers.push(proc);
+        closed.push(
+          new Promise<void>((done) => {
+            proc.once('close', () => {
+              done();
+            });
+          })
+        );
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (data: Buffer | string) => {
+          stdout += data.toString();
+        });
+        proc.stderr.on('data', (data: Buffer | string) => {
+          stderr += data.toString();
+        });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          try {
+            if (code !== 0) throw new Error(`Worker exited with ${String(code)}: ${stderr}`);
+            results.push(JSON.parse(stdout) as ClaimResult);
+            if (results.length === processCount) resolve(results);
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+      }
+    });
+  } finally {
+    clearInterval(barrierPoll);
+    for (const worker of workers) {
+      if (worker.exitCode === null && worker.signalCode === null) worker.kill();
+    }
+    await Promise.all(closed);
+  }
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('durable queue (done-when 9)', () => {
   it('enqueueJob creates a queued job file', () => {
@@ -49,33 +126,82 @@ describe('durable queue (done-when 9)', () => {
       // Job should be in claimed/ directory
       const claimedFiles = listDir(join(queueDir, 'claimed'));
       expect(claimedFiles).toContain(claimed.claimFile);
-      expect(claimed.claimFile).toMatch(new RegExp(`^${jobId}\\.${String(process.pid)}\\.[0-9a-f]{32}\\.json$`));
+      expect(claimed.claimFile).toMatch(
+        new RegExp(`^${jobId}\\.${String(process.pid)}\\.[0-9a-f]{32}\\.\\d+\\.json$`)
+      );
     }
   });
 
-  it('concurrent claim test: 5 processes claim 1 job, exactly 1 wins (real concurrency)', { timeout: 30000 }, () => {
-    const queueDir = join(statePath('queue'));
-    mkdir(queueDir);
+  it('does not reclaim a new claim of a job enqueued hours earlier', () => {
+    const id = enqueueJob({ task: 'delayed' }, 'SessionEnd');
+    if (!id) throw new Error('Failed to enqueue');
+    const oldTime = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    utimesSync(join(statePath('queue'), `${id}.json`), oldTime, oldTime);
 
-    // Enqueue 1 job
-    const jobId = enqueueJob({ target: 'single' });
-    expect(jobId).not.toBeNull();
-    if (!jobId) throw new Error('Failed to enqueue');
+    const first = claimJob('SessionEnd');
+    if (!first) throw new Error('Failed to claim');
+    expect(first.data).toEqual({ task: 'delayed', _jobType: 'SessionEnd' });
+    expect(claimJob('SessionEnd')).toBeNull();
+    expect(listDir(join(statePath('queue'), 'claimed'))).toEqual([first.claimFile]);
+    completeJob(id, first.claimFile);
+    expect(listDir(join(statePath('queue'), 'claimed'))).toEqual([]);
+  });
 
-    const testScriptPath = join(statePath(), 'queue-claimer.mjs');
-    mkdirSync(dirname(testScriptPath), { recursive: true });
-    // Vitest's cwd is the repo root; hardcoding a developer's path breaks on CI.
-    const repoRoot = process.cwd();
+  it('requeues timestamped claims only after their claim time expires', () => {
+    const id = '0123456789abcdef';
+    const claimFile = `${id}.99999.${'a'.repeat(32)}.${String(Date.now() - 40000)}.json`;
+    const claimedDir = join(statePath('queue'), 'claimed');
+    mkdir(claimedDir);
+    writeFileSync(join(claimedDir, claimFile), JSON.stringify({ task: 'recover' }));
 
-    // Two-phase barrier. A timer-based release does NOT synchronize these workers:
-    // a worker whose node boot outlasts the timer finds the flag already set and
-    // never waits, so the claims never overlap and the test cannot observe a
-    // non-atomic claim. Release must be conditional on all workers being ready.
-    const barrierDir = join(statePath(), 'barrier');
-    mkdirSync(barrierDir, { recursive: true });
-    const goPath = join(barrierDir, 'go');
+    const recovered = claimJob();
+    if (!recovered) throw new Error('Failed to recover');
+    expect(recovered.id).toBe(id);
+    expect(recovered.data).toEqual({ task: 'recover', _attempts: 1 });
+    expect(pathExists(join(claimedDir, claimFile))).toBe(false);
+    completeJob(id, recovered.claimFile);
+    expect(listDir(claimedDir)).toEqual([]);
+  });
 
-    const scriptContent = `import { claimJob } from '${repoRoot}/dist/core/queue.js';
+  it('completes legacy tokenized claims', () => {
+    const id = '0123456789abcdef';
+    const claimFile = `${id}.99999.${'b'.repeat(32)}.json`;
+    const claimedDir = join(statePath('queue'), 'claimed');
+    mkdir(claimedDir);
+    writeFileSync(join(claimedDir, claimFile), '{}');
+    completeJob(id, claimFile);
+    expect(listDir(claimedDir)).toEqual([]);
+  });
+
+  it(
+    'concurrent claim test: 5 processes claim 1 job, exactly 1 wins (real concurrency)',
+    { timeout: 30000 },
+    async () => {
+      const queueDir = join(statePath('queue'));
+      mkdir(queueDir);
+
+      // Enqueue 1 job
+      const jobId = enqueueJob({ target: 'single' });
+      expect(jobId).not.toBeNull();
+      if (!jobId) throw new Error('Failed to enqueue');
+
+      const oldTime = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+      utimesSync(join(queueDir, `${jobId}.json`), oldTime, oldTime);
+
+      const testScriptPath = join(statePath(), 'queue-claimer.mjs');
+      mkdirSync(dirname(testScriptPath), { recursive: true });
+      // Vitest's cwd is the repo root; hardcoding a developer's path breaks on CI.
+      const repoRoot = process.cwd();
+
+      // Two-phase barrier. A timer-based release does NOT synchronize these workers:
+      // a worker whose node boot outlasts the timer finds the flag already set and
+      // never waits, so the claims never overlap and the test cannot observe a
+      // non-atomic claim. Release must be conditional on all workers being ready.
+      const barrierDir = join(statePath(), 'barrier');
+      mkdirSync(barrierDir, { recursive: true });
+      const goPath = join(barrierDir, 'go');
+
+      const scriptContent = `import { claimJob } from '${repoRoot}/dist/core/queue.js';
 import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 const barrierDir = ${JSON.stringify(barrierDir)};
@@ -87,77 +213,34 @@ if (claimed) {
 } else {
   console.log(JSON.stringify({ success: false, pid: process.pid }));
 }`;
-    writeFileSync(testScriptPath, scriptContent);
+      writeFileSync(testScriptPath, scriptContent);
 
-    const processCount = 5;
-    const results: Array<{ success: boolean; id?: string; pid: number }> = [];
-    let completed = 0;
+      const results = await runClaimers(testScriptPath, barrierDir);
+      const successes = results.filter((r) => r.success);
+      expect(successes).toHaveLength(1);
+      const winner = successes[0];
+      if (!winner) throw new Error('No winner');
+      expect(winner.id).toBe(jobId);
+      expect(pathExists(join(queueDir, `${jobId}.json`))).toBe(false);
+      expect(
+        listDir(join(queueDir, 'claimed')).some((file) =>
+          new RegExp(`^${jobId}\\.${String(winner.pid)}\\.[0-9a-f]{32}\\.\\d+\\.json$`).test(file)
+        )
+      ).toBe(true);
+    }
+  );
 
-    return new Promise<void>((resolve, reject) => {
-      // Release only once all workers report ready; fail loudly if they never do,
-      // so a boot failure surfaces as a red test rather than a vacuous green one.
-      const barrierDeadline = Date.now() + 20000;
-      const barrierPoll = setInterval(() => {
-        const ready = readdirSync(barrierDir).filter(f => f.startsWith('ready-')).length;
-        if (ready >= processCount) {
-          clearInterval(barrierPoll);
-          writeFileSync(goPath, 'go');
-        } else if (Date.now() > barrierDeadline) {
-          clearInterval(barrierPoll);
-          reject(new Error(`barrier timeout: only ${String(ready)}/${String(processCount)} workers ready`));
-        }
-      }, 10);
+  it('clears barrier polling and stops workers when a worker cannot boot', async () => {
+    const barrierDir = join(statePath(), 'failed-barrier');
+    mkdir(barrierDir);
+    const scriptPath = join(statePath(), 'broken-claimer.mjs');
+    writeFileSync(scriptPath, "import './missing-dist.mjs';");
+    const poll = vi.spyOn(globalThis, 'setInterval');
+    const clear = vi.spyOn(globalThis, 'clearInterval');
 
-      for (let i = 0; i < processCount; i++) {
-        const proc = spawn(process.execPath, [testScriptPath], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env },
-        });
-
-        let stdout = '';
-
-        proc.stdout.on('data', (data: Buffer | string) => {
-          stdout += data.toString();
-        });
-
-        proc.on('exit', () => {
-          completed++;
-
-          try {
-            if (stdout) {
-              const result = JSON.parse(stdout) as { success: boolean; id?: string; pid: number };
-              results.push(result);
-            }
-          } catch {
-            reject(new Error(`Failed to parse: ${stdout}`));
-            return;
-          }
-
-          if (completed === processCount) {
-            try {
-              const successes = results.filter(r => r.success);
-              expect(successes).toHaveLength(1);
-              const winner = successes[0];
-              if (!winner) throw new Error('No winner');
-              expect(winner.id).toBe(jobId);
-              expect(pathExists(join(queueDir, `${jobId}.json`))).toBe(false);
-              expect(
-                listDir(join(queueDir, 'claimed')).some(file =>
-                  new RegExp(`^${jobId}\\.${String(winner.pid)}\\.[0-9a-f]{32}\\.json$`).test(file)
-                )
-              ).toBe(true);
-              resolve();
-            } catch (err) {
-              reject(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        });
-
-        proc.on('error', () => {
-          reject(new Error('Worker failed'));
-        });
-      }
-    });
+    await expect(runClaimers(scriptPath, barrierDir)).rejects.toThrow('Worker exited');
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledWith(poll.mock.results[0]?.value);
   });
 
   it('fails job after 3 claim attempts', () => {
@@ -249,7 +332,7 @@ if (claimed) {
     }
   });
 
-  it('claimJob with wrong jobType does not consume another type\'s claim attempts', () => {
+  it("claimJob with wrong jobType does not consume another type's claim attempts", () => {
     const queueDir = join(statePath('queue'));
     mkdir(queueDir);
 
@@ -263,7 +346,7 @@ if (claimed) {
     // Check that no claim record was created
     const claimedDir = join(queueDir, 'claimed');
     const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
-    const jobClaims = claimedFiles.filter(f => f.startsWith(jobId + '.'));
+    const jobClaims = claimedFiles.filter((f) => f.startsWith(jobId + '.'));
     expect(jobClaims).toHaveLength(0);
 
     // Now claim as SessionEnd - should succeed
