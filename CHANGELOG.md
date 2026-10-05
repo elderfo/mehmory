@@ -28,6 +28,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Status counts only pages retrieval can read.** Symlinked pages, symlinked page directories,
+  unreadable files and non-file `.md` entries no longer inflate live or archived page counts.
+- **Decay keeps archives inside their scope.** A destination resolving to exactly the scope's
+  parent is refused by the same canonical containment rule used for wiki reads.
 - **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one
   staleness rule, so exempt decay classes get no age label or ranking demotion.
 - **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep

@@ -13,9 +13,9 @@
 
 import { atomicWrite } from './fs.js';
 import type { MehmoryConfig } from './config.js';
-import { archivePage, openScope } from './wiki.js';
+import { archivePage, openScope, type WikiIndex } from './wiki.js';
 import { failOpen } from './errors.js';
-import { ARCHIVE_DIVIDER, isStalePage, parseIndexLine } from '../schema/format.js';
+import { ARCHIVE_DIVIDER, isStalePage } from '../schema/format.js';
 
 export { readFrontmatter } from '../schema/format.js';
 
@@ -27,17 +27,6 @@ export interface DecayResult {
   archived: string[];
   /** True when index.md was rewritten. */
   rewroteIndex: boolean;
-}
-
-/**
- * True when an index line refers to this page.
- *
- * Association is by the `format.ts` grammar (run-2 amendment 26 promoted this from
- * run 2's heuristic), so a prose line that merely *names* a page is no longer
- * mistaken for that page's index line.
- */
-function lineRefersTo(line: string, pageFile: string): boolean {
-  return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, '');
 }
 
 /**
@@ -68,7 +57,7 @@ export function decayPass(
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
 
       const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
-      if (wiki.pages.length === 0) return empty;
+      if (!wiki.pagesReadable) return empty;
 
       const demoted: string[] = [];
       const archived: string[] = [];
@@ -92,7 +81,7 @@ export function decayPass(
       }
 
       const original = wiki.index.body;
-      const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
+      const rewritten = rewriteIndex(wiki.index, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
 
       atomicWrite(wiki.scope.indexFile, rewritten);
@@ -107,31 +96,30 @@ export function decayPass(
  * Rebuild index.md: live page lines newest-first, then `## Archive` with the demoted
  * lines, with every non-page line (frontmatter, headings, prose) kept in place.
  *
- * Index lines are recognized by `INDEX_LINE_PATTERN` (`format.ts`); everything else
- * — frontmatter, headings, prose — is preamble and is kept in place.
+ * The wiki reader supplies parsed line positions; everything else remains preamble.
  */
 function rewriteIndex(
-  contents: string,
+  index: WikiIndex,
   liveOrder: ReadonlyMap<string, number>,
   demoted: readonly string[],
   archived: readonly string[]
 ): string {
-  const lines = contents.split('\n');
+  const lines = index.body.split('\n');
   const preamble: string[] = [];
   const live: { line: string; updated: number }[] = [];
   const belowDivider: string[] = [];
 
-  const findPage = (line: string): string | undefined => {
-    for (const name of [...liveOrder.keys(), ...demoted, ...archived]) {
-      if (lineRefersTo(line, name)) return name;
-    }
-    return undefined;
-  };
+  const known = new Set([...liveOrder.keys(), ...demoted, ...archived]);
+  const pageLines = new Map(
+    index.lines
+      .filter((entry) => known.has(`${entry.slug}.md`))
+      .map((entry) => [entry.line, `${entry.slug}.md`])
+  );
 
-  for (const line of lines) {
+  for (const [offset, line] of lines.entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) continue; // re-emitted below if still needed
 
-    const page = findPage(line);
+    const page = pageLines.get(offset);
     if (page === undefined) {
       preamble.push(line);
       continue;

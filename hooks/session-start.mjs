@@ -15,13 +15,12 @@ import {
   storeExists,
   storeIsUnpopulated,
   truncateToTokens
-} from "./chunk-7NFDAHS7.mjs";
+} from "./chunk-CN7YET36.mjs";
 import {
   ARCHIVE_DIVIDER,
   currentAgentName,
   isPaused,
   isStalePage,
-  parseIndexLine,
   readInboxEntries,
   rememberSessionOrigin,
   resumeFinalizedSession,
@@ -279,9 +278,6 @@ Every commit has a message summarizing the operation and entry count. The full g
 `;
 
 // src/core/decay.ts
-function lineRefersTo(line, pageFile) {
-  return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, "");
-}
 function decayPass(scopeDir, config, options = {}) {
   const empty = { demoted: [], archived: [], rewroteIndex: false };
   return failOpen(
@@ -291,7 +287,7 @@ function decayPass(scopeDir, config, options = {}) {
       const archiveDays = options.archiveDays ?? config.decay.archive_days;
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
       const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
-      if (wiki.pages.length === 0) return empty;
+      if (!wiki.pagesReadable) return empty;
       const demoted = [];
       const archived = [];
       const liveOrder = /* @__PURE__ */ new Map();
@@ -310,7 +306,7 @@ function decayPass(scopeDir, config, options = {}) {
         return { demoted, archived, rewroteIndex: false };
       }
       const original = wiki.index.body;
-      const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
+      const rewritten = rewriteIndex(wiki.index, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
       atomicWrite(wiki.scope.indexFile, rewritten);
       return { demoted, archived, rewroteIndex: true };
@@ -319,20 +315,18 @@ function decayPass(scopeDir, config, options = {}) {
     "E_ATOMIC_WRITE"
   );
 }
-function rewriteIndex(contents, liveOrder, demoted, archived) {
-  const lines = contents.split("\n");
+function rewriteIndex(index, liveOrder, demoted, archived) {
+  const lines = index.body.split("\n");
   const preamble = [];
   const live = [];
   const belowDivider = [];
-  const findPage = (line) => {
-    for (const name of [...liveOrder.keys(), ...demoted, ...archived]) {
-      if (lineRefersTo(line, name)) return name;
-    }
-    return void 0;
-  };
-  for (const line of lines) {
+  const known = /* @__PURE__ */ new Set([...liveOrder.keys(), ...demoted, ...archived]);
+  const pageLines = new Map(
+    index.lines.filter((entry) => known.has(`${entry.slug}.md`)).map((entry) => [entry.line, `${entry.slug}.md`])
+  );
+  for (const [offset, line] of lines.entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) continue;
-    const page = findPage(line);
+    const page = pageLines.get(offset);
     if (page === void 0) {
       preamble.push(line);
       continue;

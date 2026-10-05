@@ -43,7 +43,9 @@ describe('scope wiki reads', () => {
     const scope = scopePaths(KEY);
     rmSync(scope.pagesDir, { recursive: true });
     writeFileSync(scope.pagesDir, 'deploy');
-    expect(openScope(scope.dir).pages).toEqual([]);
+    const wiki = openScope(scope.dir);
+    expect(wiki.pages).toEqual([]);
+    expect(wiki.pagesReadable).toBe(false);
     expect(errorsLog()).toContain('E_STORE_READ');
   });
 
@@ -106,8 +108,8 @@ describe('scope wiki reads', () => {
   it('parses index entries once and records which are below the archive divider', () => {
     seedStore(KEY, { index: '# Index\nprose\n- [[live]] — current\n## Archive\n- [[old]]\n' });
     expect(openScope(scopePaths(KEY).dir).index.lines).toEqual([
-      { slug: 'live', summary: 'current', demoted: false },
-      { slug: 'old', summary: '', demoted: true },
+      { slug: 'live', summary: 'current', demoted: false, line: 2 },
+      { slug: 'old', summary: '', demoted: true, line: 4 },
     ]);
   });
 
@@ -123,6 +125,7 @@ describe('scope wiki reads', () => {
     expect(wiki.project).toBe('project');
     expect(list).not.toHaveBeenCalled();
     expect(wiki.pages).toBe(wiki.pages);
+    expect(wiki.pagesReadable).toBe(true);
     expect(wiki.index).toBe(wiki.index);
     expect(read.mock.calls.filter(([path]) => path.endsWith('/a.md'))).toHaveLength(1);
     expect(read.mock.calls.filter(([path]) => path.endsWith('/project.md'))).toHaveLength(1);

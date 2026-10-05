@@ -291,6 +291,9 @@ pages are falling off the front of the wiki. Warnings are read via `peekWarnings
 `status` does not consume the warning channel that the next `SessionStart` also reads; run it
 as many times as you like without losing that signal.
 
+Live and archived page counts use retrieval's reader: only readable regular `.md` files
+count. Symlinked pages, symlinked page directories and directories named `*.md` are skipped.
+
 ### `mehmory stats [--project [<key>]|--global|--all] [--since <iso>] [--json]`
 
 Aggregates only fields that actually exist in `stats.jsonl`: per-hook invocation counts,

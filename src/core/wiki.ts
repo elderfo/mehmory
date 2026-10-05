@@ -86,7 +86,7 @@ export interface WikiPage {
   readonly path: string;
   readonly slug: string;
   readonly body: string;
-  /** Filename plus first heading, preserving the existing scoring weight. */
+  /** Lowercased filename plus first heading, preserving the existing scoring weight. */
   readonly title: string;
   readonly frontmatter: Readonly<Record<string, string>>;
   readonly decayClass: string;
@@ -97,15 +97,18 @@ export interface WikiPage {
 }
 
 export interface WikiIndex {
+  /** Missing, refused or unreadable files must not be rewritten by maintenance. */
   readonly readable: boolean;
   readonly body: string;
-  readonly lines: readonly (IndexLine & { readonly demoted: boolean })[];
+  /** Original zero-based line positions let writers reuse the parse. */
+  readonly lines: readonly (IndexLine & { readonly demoted: boolean; readonly line: number })[];
 }
 
 /** Lazy, per-open snapshot: unused corpora are never scanned, each used part reads once. */
 export interface Wiki {
   readonly scope: WikiScope;
   readonly pages: readonly WikiPage[];
+  readonly pagesReadable: boolean;
   readonly archive: readonly WikiPage[];
   readonly index: WikiIndex;
   readonly identity: string;
@@ -131,10 +134,15 @@ function readIfPresent(path: string): string | undefined {
   );
 }
 
-function readPages(dir: string, options: WikiReadOptions, archived: boolean): WikiPage[] {
+interface PageRead {
+  readonly pages: readonly WikiPage[];
+  readonly readable: boolean;
+}
+
+function readPages(dir: string, options: WikiReadOptions, archived: boolean): PageRead {
   return failOpen(
     () => {
-      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return [];
+      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return { pages: [], readable: false };
       const pages: WikiPage[] = [];
       const now = options.now ?? Date.now();
       for (const name of listDir(dir)) {
@@ -169,9 +177,9 @@ function readPages(dir: string, options: WikiReadOptions, archived: boolean): Wi
         );
         if (page !== undefined) pages.push(page);
       }
-      return pages;
+      return { pages, readable: true };
     },
-    [],
+    { pages: [], readable: false },
     'E_STORE_READ'
   );
 }
@@ -179,12 +187,12 @@ function readPages(dir: string, options: WikiReadOptions, archived: boolean): Wi
 function readIndex(path: string): WikiIndex {
   const contents = readIfPresent(path);
   const body = contents ?? '';
-  const lines: (IndexLine & { demoted: boolean })[] = [];
+  const lines: (IndexLine & { demoted: boolean; line: number })[] = [];
   let demoted = false;
-  for (const line of body.split('\n')) {
+  for (const [offset, line] of body.split('\n').entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) demoted = true;
     const parsed = parseIndexLine(line);
-    if (parsed !== undefined) lines.push({ ...parsed, demoted });
+    if (parsed !== undefined) lines.push({ ...parsed, demoted, line: offset });
   }
   return { readable: contents !== undefined, body, lines };
 }
@@ -192,8 +200,8 @@ function readIndex(path: string): WikiIndex {
 /** Read only requested parts, with one no-symlink/regular-file policy for every page. */
 export function openScope(dir: string, options: WikiReadOptions = {}): Wiki {
   const scope = wikiScope(dir);
-  let pages: readonly WikiPage[] | undefined;
-  let archive: readonly WikiPage[] | undefined;
+  let pages: PageRead | undefined;
+  let archive: PageRead | undefined;
   let index: WikiIndex | undefined;
   let identity: string | undefined;
   let project: string | undefined;
@@ -201,10 +209,13 @@ export function openScope(dir: string, options: WikiReadOptions = {}): Wiki {
   return {
     scope,
     get pages() {
-      return (pages ??= readPages(scope.pagesDir, options, false));
+      return (pages ??= readPages(scope.pagesDir, options, false)).pages;
+    },
+    get pagesReadable() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).readable;
     },
     get archive() {
-      return (archive ??= readPages(scope.archiveDir, options, true));
+      return (archive ??= readPages(scope.archiveDir, options, true)).pages;
     },
     get index() {
       return (index ??= readIndex(scope.indexFile));
@@ -243,6 +254,9 @@ export function openProjectWiki(key: string, options: WikiReadOptions = {}): Wik
     },
     get pages() {
       return sourceFor(paths.pagesDir).pages;
+    },
+    get pagesReadable() {
+      return sourceFor(paths.pagesDir).pagesReadable;
     },
     get index() {
       return sourceFor(paths.indexFile).index;
@@ -287,7 +301,7 @@ export function storeIsUnpopulated(key: string): boolean {
   );
 }
 
-/** Archive a page into its scope. */
+/** Archival writes must stay inside the canonical scope, even for the exact parent. */
 export function archivePage(scope: WikiScope, page: WikiPage): boolean {
   return failOpen(
     () => {
@@ -295,8 +309,7 @@ export function archivePage(scope: WikiScope, page: WikiPage): boolean {
         throw new Error('archive directory must not be a symlink');
       }
       mkdir(scope.archiveDir);
-      const suffix = relative(realpath(scope.dir), realpath(scope.archiveDir));
-      if (suffix !== '' && suffix !== '..' && suffix.startsWith('..')) {
+      if (!contained(scope.dir, scope.archiveDir)) {
         throw new Error('archive directory must remain inside the scope');
       }
       rename(page.path, join(scope.archiveDir, `${page.slug}.md`));

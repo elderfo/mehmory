@@ -281,7 +281,7 @@ function readIfPresent(path) {
 function readPages(dir, options, archived) {
   return failOpen(
     () => {
-      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return [];
+      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return { pages: [], readable: false };
       const pages = [];
       const now = options.now ?? Date.now();
       for (const name of listDir(dir)) {
@@ -313,9 +313,9 @@ function readPages(dir, options, archived) {
         );
         if (page !== void 0) pages.push(page);
       }
-      return pages;
+      return { pages, readable: true };
     },
-    [],
+    { pages: [], readable: false },
     "E_STORE_READ"
   );
 }
@@ -324,10 +324,10 @@ function readIndex(path) {
   const body = contents ?? "";
   const lines = [];
   let demoted = false;
-  for (const line of body.split("\n")) {
+  for (const [offset, line] of body.split("\n").entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) demoted = true;
     const parsed = parseIndexLine(line);
-    if (parsed !== void 0) lines.push({ ...parsed, demoted });
+    if (parsed !== void 0) lines.push({ ...parsed, demoted, line: offset });
   }
   return { readable: contents !== void 0, body, lines };
 }
@@ -342,10 +342,13 @@ function openScope(dir, options = {}) {
   return {
     scope,
     get pages() {
-      return pages ??= readPages(scope.pagesDir, options, false);
+      return (pages ??= readPages(scope.pagesDir, options, false)).pages;
+    },
+    get pagesReadable() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).readable;
     },
     get archive() {
-      return archive ??= readPages(scope.archiveDir, options, true);
+      return (archive ??= readPages(scope.archiveDir, options, true)).pages;
     },
     get index() {
       return index ??= readIndex(scope.indexFile);
@@ -380,6 +383,9 @@ function openProjectWiki(key, options = {}) {
     get pages() {
       return sourceFor(paths.pagesDir).pages;
     },
+    get pagesReadable() {
+      return sourceFor(paths.pagesDir).pagesReadable;
+    },
     get index() {
       return sourceFor(paths.indexFile).index;
     },
@@ -403,8 +409,7 @@ function archivePage(scope, page) {
         throw new Error("archive directory must not be a symlink");
       }
       mkdir(scope.archiveDir);
-      const suffix = relative(realpath(scope.dir), realpath(scope.archiveDir));
-      if (suffix !== "" && suffix !== ".." && suffix.startsWith("..")) {
+      if (!contained(scope.dir, scope.archiveDir)) {
         throw new Error("archive directory must remain inside the scope");
       }
       rename(page.path, join2(scope.archiveDir, `${page.slug}.md`));

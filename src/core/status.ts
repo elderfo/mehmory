@@ -11,7 +11,7 @@
 import { runStoreGit } from './git.js';
 import { dirname } from 'node:path';
 import { mehmoryHome } from './home.js';
-import { listDir, pathExists, stat } from './fs.js';
+import { pathExists, stat } from './fs.js';
 import { openScope } from './wiki.js';
 import { failOpen, peekWarnings } from './errors.js';
 import { readInboxEntries } from './inbox.js';
@@ -20,7 +20,7 @@ export interface StatusReport {
   /** Resolved project key (or `global`). */
   readonly key: string;
   readonly dir: string;
-  /** Markdown files under `pages/`. */
+  /** Readable regular markdown pages, using retrieval's no-symlink policy. */
   readonly pages: number;
   /** Lines in `index.md` that match the index-line format. */
   readonly indexLines: number;
@@ -52,25 +52,16 @@ export function buildStatus(key: string, dir: string): StatusReport {
   return {
     key,
     dir,
-    pages: countPages(files.pagesDir),
+    pages: wiki.pages.length,
     indexLines: wiki.index.lines.length,
     demoted: wiki.index.lines.filter((line) => line.demoted).length,
-    archived: countPages(files.archiveDir),
+    archived: wiki.archive.length,
     inboxEntries: entries.length,
     ...(oldest !== undefined ? { oldestInbox: oldest } : {}),
     ...(integrated !== undefined ? { lastIntegrate: integrated } : {}),
     ...(commit !== undefined ? { lastCommit: commit } : {}),
     warnings: peekWarnings(),
   };
-}
-
-/** Markdown pages in a scope. */
-export function countPages(pagesDir: string): number {
-  return failOpen(
-    () => (pathExists(pagesDir) ? listDir(pagesDir).filter(f => f.endsWith('.md')).length : 0),
-    0,
-    'E_STORE_READ'
-  );
 }
 
 /** `log.md` lines, newest last. Empty when the file is absent. */
