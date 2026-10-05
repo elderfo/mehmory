@@ -20,6 +20,12 @@ Any error in memory operations returns a fallback (defaults for config, empty fo
 
 All file I/O is mediated through `src/core/fs.ts` so the module dependency graph is controllable and testable. Errors are an exception: errors.ts must be able to log to disk before fs.ts exists, so it has its own bounded append.
 
+The five custom ESLint rules normalize both slash styles and scope filenames relative to
+ESLint's working directory. A3's `test/` exception applies only to the checkout's test
+subtree, not to a checkout whose parent directory is named `test`. A3 and A17 check
+static imports, re-exports, dynamic imports and unshadowed `require` calls, including
+module specifiers written as template literals without expressions.
+
 **Rejected:** Scattered fs calls (defeats the purpose of a fs layer).
 
 ### A4. Format constants are code, not data
@@ -86,6 +92,10 @@ Exported functions from `src/core/` are synchronous. No Promises, no async/await
 ### A11. Core never exits the process and never throws across its boundary
 
 Exported functions return values or typed errors via `MehmoryError`. `process.exit()` and `process.abort()` are banned in `src/core/` by ESLint rule. This makes A2's fail-open promise enforceable rather than aspirational—a library that can exit can kill the user's session.
+
+The lint rule also rejects exit/abort access through identifiers initialized from
+`process` or `globalThis.process`, declaration and assignment destructuring, and
+computed property keys written as template literals without expressions.
 
 **Rejected:** Exit on unrecoverable (there is no error worth killing a user's session over).
 
@@ -258,8 +268,8 @@ Established in run 3 (CLI, search, docs, CI). Binding on run 4.
 `src/cli/` owns argument parsing, exit codes, stdout/stderr and the `--json` envelope;
 every behavior lives in `src/core|schema|distill`. Extends A12 to the run's second
 consumer, upholding A1. The core's `no-process-exit` and `no-stderr` rules gate on
-`filename.includes('src/core/')` (`eslint-rules/index.js`), so the CLI needs no rule
-change to exit or write stderr; a new import-boundary rule (`custom/no-cli-imports`)
+normalized, checkout-relative `src/core/` paths (`eslint-rules/index.js`), so the CLI
+needs no rule change to exit or write stderr; an import-boundary rule (`custom/no-cli-imports`)
 keeps the dependency edge from inverting — `src/core/**` and `src/hooks/**` may never
 import `src/cli/**`.
 
@@ -353,7 +363,7 @@ the layout it owns just grows by two files.
 
 **Note on A12's enforcement claim.** A12 (run 2) states the eslint boundary rules
 `no-exported-promise`, `no-process-exit`, and `no-stderr` "extend to `src/hooks/`." In
-practice, all three gate on `filename.includes('src/core/')` in
+practice, all three gate on normalized, checkout-relative `src/core/` paths in
 `eslint-rules/index.js` and **never fire in `src/hooks/`** — only the
 `fs`/`no-cli-imports` boundary rules genuinely extend there. Consequently
 `eslint.config.js`'s rule exemption carved out for `inbox-tx.ts` (A15's bundled helper,
