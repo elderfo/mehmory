@@ -156,9 +156,15 @@ export function lastIntegrate(logFile: string): string | undefined {
 
 /** Age of a scope's inbox in ms, from `inbox.md` mtime. Undefined when absent. */
 export function inboxAgeMs(inboxFile: string, now: number = Date.now()): number | undefined {
-  if (!pathExists(inboxFile)) return undefined;
-  const mtime = stat(inboxFile)?.mtime.getTime();
-  return mtime === undefined ? undefined : Math.max(0, now - mtime);
+  return failOpen(
+    () => {
+      if (!pathExists(inboxFile)) return undefined;
+      const mtime = stat(inboxFile)?.mtime.getTime();
+      return mtime === undefined ? undefined : Math.max(0, now - mtime);
+    },
+    undefined,
+    'E_APPEND_FAILED'
+  );
 }
 
 /** `<short-sha> <date> <subject>` of the store's last commit, or undefined. */

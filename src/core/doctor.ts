@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 import { mehmoryHome, statePath } from './home.js';
-import { pathExists, readFile, stat } from './fs.js';
+import { listDir, pathExists, readFile, stat } from './fs.js';
 import { failOpen, shellQuote, type ErrorCode } from './errors.js';
 import { probeCodexInstall, type CodexProbe } from './codex-install.js';
 import { readInboxEntries } from './inbox.js';
@@ -42,12 +42,9 @@ export interface Finding {
 }
 
 /**
- * KPI budgets, from the **amended** numbers (run-1 amendment 1, run-2 amendments 10 and
- * 14) rather than the spec's stale KPI table, which run 3 rewrites separately.
+ * Hook latency budgets. The injection token threshold comes from the caller's config.
  */
 export const KPI_BUDGETS = {
-  /** Injection plus maintenance lines, as SessionStart records it. */
-  combinedInjectionTokens: 950,
   /** UserPromptSubmit, in-hook. */
   userPromptSubmitMs: 100,
   /** SessionStart, the injection path. */
@@ -86,14 +83,26 @@ export function runDoctor(
   }
   findings.push({ check: 'store', level: 'ok', message: `store at ${home}` });
 
-  findings.push(...checkGit(home));
-  findings.push(...checkHookConfig(config));
-  findings.push(...checkHookLiveness());
-  findings.push(...checkScope(config, cwd));
-  findings.push(checkErrorLog());
-  findings.push(checkSchemaVersion(home));
-  findings.push(checkConfigParses(home));
-  findings.push(...checkKpiBudgets());
+  for (const [check, run] of [
+    ['git', () => checkGit(home)],
+    ['hooks.enabled', () => checkHookConfig(config)],
+    ['hooks.liveness', () => checkHookLiveness()],
+    ['scope', () => checkScope(config, cwd)],
+    ['errors', () => [checkErrorLog()]],
+    ['schema_version', () => [checkSchemaVersion(home)]],
+    ['config', () => [checkConfigParses(home)]],
+    ['kpi', () => checkKpiBudgets(config)],
+  ] as const) {
+    try {
+      findings.push(...run());
+    } catch (err) {
+      findings.push({
+        check,
+        level: 'error',
+        message: `check failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
 
   return findings;
 }
@@ -414,6 +423,9 @@ function checkHookLiveness(): readonly Finding[] {
 function checkScope(config: MehmoryConfig, cwd: string): readonly Finding[] {
   const key = resolveProjectKey(cwd);
   const files = scopeFiles(join(mehmoryHome(), 'projects', key));
+  for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
+    if (pathExists(pagesDir)) listDir(pagesDir);
+  }
   const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
   const findings: Finding[] = [];
 
@@ -513,7 +525,7 @@ function checkConfigParses(home: string): Finding {
   }
 }
 
-function checkKpiBudgets(): readonly Finding[] {
+function checkKpiBudgets(config: MehmoryConfig): readonly Finding[] {
   const report = summarize(readStats());
   if (report.records === 0) return [];
 
@@ -521,11 +533,11 @@ function checkKpiBudgets(): readonly Finding[] {
   const over = (actual: number | undefined, budget: number): boolean =>
     actual !== undefined && actual > budget;
 
-  if (over(report.injectedTokensP95, KPI_BUDGETS.combinedInjectionTokens)) {
+  if (over(report.injectedTokensP95, config.injection.budget_tokens)) {
     findings.push({
       check: 'kpi.injection',
       level: 'warn',
-      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(KPI_BUDGETS.combinedInjectionTokens)} combined budget`,
+      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(config.injection.budget_tokens)} combined budget`,
       fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
     });
   }

@@ -11,14 +11,14 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-CC4E3AQB.mjs";
+} from "./chunk-KLQ3PATG.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
   currentAgentName,
   isPaused,
+  isStalePage,
   loadConfig,
-  pageAgeDays,
   parseIndexLine,
   readFrontmatter,
   readInboxEntries,
@@ -27,7 +27,7 @@ import {
   runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-CR4WRARC.mjs";
+} from "./chunk-5J2J3ZM3.mjs";
 import "./chunk-WVRKG4UX.mjs";
 import {
   atomicWrite,
@@ -305,14 +305,8 @@ function decayPass(scopeDir, options = {}) {
         if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
-        const decayClass = fields["decay"] ?? "default";
-        const age = pageAgeDays(contents, now);
         const updatedAt = Date.parse(fields["updated"] ?? "");
-        if (decayClass !== "default" || age === null) {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
-          continue;
-        }
-        if (age > purgeDays) {
+        if (isStalePage(contents, now, purgeDays)) {
           const archiveDir = join2(scopeDir, ARCHIVE_DIR);
           if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
             throw new Error("archive directory must not be a symlink");
@@ -324,7 +318,7 @@ function decayPass(scopeDir, options = {}) {
           }
           rename(pagePath, join2(archiveDir, name));
           archived.push(name);
-        } else if (age > archiveDays) {
+        } else if (isStalePage(contents, now, archiveDays)) {
           demoted.push(name);
         } else {
           liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
@@ -438,7 +432,12 @@ runHook("SessionStart", (input, project, host, config) => {
     );
   }
   const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
-  const context = [injection.text, ...lines].filter(Boolean).join("\n");
+  let context = [injection.text, ...lines].filter(Boolean).join("\n");
+  while (lines.length > 0 && estimateTokens(context) > config.injection.budget_tokens) {
+    lines.pop();
+    context = [injection.text, ...lines].filter(Boolean).join("\n");
+  }
+  if (estimateTokens(context) > config.injection.budget_tokens) context = "";
   const finalized = maintenance(input.session_id, project, host, config);
   return {
     context,

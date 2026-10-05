@@ -151,7 +151,7 @@ describe('Pi extension', () => {
       message: { content: string };
     };
     expect(pointed.message.content).toContain(`# project ${key}`);
-    expect(pointed.message.content).toContain('relevant: pages/deployment.md');
+    expect(pointed.message.content).toContain(`relevant: ${join(paths(key).pages, 'deployment.md')}`);
 
     await fire(
       handlers,

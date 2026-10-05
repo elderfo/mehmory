@@ -46,9 +46,9 @@ describe('matchPages', () => {
 
     const paths = matchPages('how does deploy work', pagesDir('m1')).map(p => p.path);
 
-    expect(paths[0]).toBe(join('pages', 'deploy.md'));
-    expect(paths).toContain(join('pages', 'rollback.md'));
-    expect(paths).not.toContain(join('pages', 'testing.md'));
+    expect(paths[0]).toBe(join(pagesDir('m1'), 'deploy.md'));
+    expect(paths).toContain(join(pagesDir('m1'), 'rollback.md'));
+    expect(paths).not.toContain(join(pagesDir('m1'), 'testing.md'));
   });
 
   it('returns nothing when no page matches', () => {
@@ -69,7 +69,9 @@ describe('matchPages', () => {
     writePage('m4', 'rollback.md', '# Rollback\n\nshort note\n');
     writePage('m4', 'misc.md', '# Misc\n\nrollback is mentioned once here in the body\n');
 
-    expect(matchPages('rollback', pagesDir('m4'))[0]?.path).toBe(join('pages', 'rollback.md'));
+    expect(matchPages('rollback', pagesDir('m4'))[0]?.path).toBe(
+      join(pagesDir('m4'), 'rollback.md')
+    );
   });
 
   it('returns nothing for an empty prompt or a missing directory', () => {
@@ -110,7 +112,10 @@ describe('matchPages staleness (A22)', () => {
 
     const hits = matchPages('deploy', pagesDir('s2'), 3, { staleAfterDays: 60, now: NOW });
 
-    expect(hits.map(h => h.path)).toEqual([join('pages', 'fresh.md'), join('pages', 'stale.md')]);
+    expect(hits.map((h) => h.path)).toEqual([
+      join(pagesDir('s2'), 'fresh.md'),
+      join(pagesDir('s2'), 'stale.md'),
+    ]);
     expect(hits[1]?.stale).toBe(true);
   });
 

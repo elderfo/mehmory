@@ -49,30 +49,34 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 { "injection": { "budget_tokens": 800 } }
 ```
 
-This budget governs **stored memory plus session metadata**: SessionStart's
-`session: <id>` line inside `<mehmory-memory>` takes a share, so skills can identify
-this session without guessing from state-file recency. `SessionStart` also emits a fixed
-`<mehmory-routing>` block of about 80 tokens telling the model how to use that memory
-(follow pointers before grepping, what `(stale)` means, how to capture). It sits outside
-`budget_tokens` on purpose — a large wiki must not crowd out the lines explaining what to
-do with it — and is capped by its own test rather than by this key.
+This budget caps the **complete emitted SessionStart context**, estimated as characters / 4,
+rounded up: stored memory, `<mehmory-memory>` delimiters, section headers, the
+`session: <id>` metadata line, `<mehmory-routing>`, and any maintenance notices. The session
+line lets skills identify this session without guessing from state-file recency. Framing
+cost is reserved before allocating stored content; optional maintenance lines are dropped
+from lowest priority first when the final context would exceed the cap. Closing tags are
+never truncated. `doctor` compares its injection KPI against this configured cap, not a
+fixed threshold.
 
-- `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
-  index content. At the default 800, the split is identity 200 / project 200 / index 400.
-  All three scale with the total in that 1:1:2 ratio, so raising or lowering
-  `budget_tokens` moves them together — 2000 gives identity 500 / project 500 / index 1000
-  — and the index absorbs whatever the flooring leaves over. **Honored**
-  (`buildInjection`).
+- `budget_tokens` — integer from 1 to 8000, default 800. The **remaining content allowance**
+  after framing is split identity / project / index in a 1:1:2 ratio, with flooring remainder
+  assigned to index. **Honored** (`buildInjection`, `buildScopeInjection`, `SessionStart`).
+
+If the budget cannot accommodate framing, `buildScopeInjection` returns the smallest valid
+frame, `<mehmory-memory></mehmory-memory>` (9 estimated tokens), without content, routing or
+session metadata. For budgets below even those 9 tokens, SessionStart emits no context at
+all rather than breaking the configured cap. Thus only the core framing helper's minimal
+fallback can exceed a tiny budget; the actual hook output never does.
 
 **The named-agent share.** When the running agent has a name (see `identity.agent` below),
 its own scope is injected too, taking a fourth share of the *same* `budget_tokens` rather
 than adding to it. Its nominal size is identity's, so a named frame's nominal split is
-identity 200 / agent 200 / project 200 / index 400 and every share scales to the configured
-budget against that total of 1000: at the default 800 a named agent gets identity 160 /
-agent 160 / project 160 / index 320. `budget_tokens` stays a hard cap either way, and an
-unnamed agent's allocation is byte-identical to what it was before agent scopes existed.
+identity 200 / agent 200 / project 200 / index 400 and every share scales to the
+remaining content allowance against that total of 1000: identity / agent / project / index
+have a 1:1:1:2 ratio after framing is reserved. `budget_tokens` stays a hard cap either way.
 Truncation runs in priority order — index, then project, then the agent share, then identity.
-Identity is never emptied, only shortened.
+Identity is only shortened when content fits; the minimal-frame fallback has no content.
+Truncation never splits a UTF-16 surrogate pair.
 
 ## `decay`
 
@@ -84,7 +88,9 @@ Identity is never emptied, only shortened.
 - `archive_days` — index pages older than this move below the Archive divider. **Also the
   staleness horizon for retrieval** (A22): past it, a page is scored ×0.7 in both
   `matchPages` and `search` and comes back flagged `stale`. Raising this makes retrieval
-  trust old pages for longer; it does not make them disappear either way.
+  trust old pages for longer; it does not make them disappear either way. Only `default`
+  decay pages age mechanically: `evergreen` and `ephemeral` pages are exempt in both
+  decay and retrieval. A missing decay class means `default`.
 - `purge_days` — index pages older than this move into `archive/`. Archived pages stay
   searchable, scored ×0.5 — lower than the staleness demotion, because archival is an
   explicit act rather than mere drift.
@@ -92,7 +98,12 @@ Identity is never emptied, only shortened.
   All three **honored** (`decay.ts`, and `archive_days` additionally by `match.ts` /
   `search.ts`). Neither demotion multiplier is configurable: they are calibration
   constants in `schema/format.ts`, and `archive_days` already controls when demotion
-  starts. Nothing is ever excluded from retrieval for age.
+  starts. Nothing is ever excluded from retrieval for age. Both the prompt matcher and
+  CLI search skip symlinked pages and symlinked page directories. Prompt `relevant:`
+  pointers are absolute store paths, including pointers from the global fallback;
+  search results remain scope-relative for CLI attribution. Unreadable retrieval
+  directories yield no hits, status falls back to zero/unknown, and a failing doctor
+  check becomes an error finding rather than aborting the remaining checks.
 
 ## `secrets`
 

@@ -122,7 +122,14 @@ runHook('SessionStart', (input, project, host, config) => {
   }
 
   const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
-  const context = [injection.text, ...lines].filter(Boolean).join('\n');
+  let context = [injection.text, ...lines].filter(Boolean).join('\n');
+  // Optional notices yield first; never slice the data frame or its closing tag.
+  while (lines.length > 0 && estimateTokens(context) > config.injection.budget_tokens) {
+    lines.pop();
+    context = [injection.text, ...lines].filter(Boolean).join('\n');
+  }
+
+  if (estimateTokens(context) > config.injection.budget_tokens) context = '';
 
   const finalized = maintenance(input.session_id, project, host, config);
 

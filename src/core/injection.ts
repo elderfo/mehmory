@@ -4,8 +4,8 @@
  * Coordinates with tokens.ts for budget enforcement (identity 200 / project 200 / index 400 = 800).
  * A named agent adds a fourth share the same nominal size as identity, taken out of the
  * same budget rather than added on top of it — `injection.budget_tokens` stays the cap.
- * Data-only framing is applied AFTER truncation, wrapping the content in an explicit
- * data-only wrapper so the model treats injected memory as facts, not instructions.
+ * The caller reserves its framing cost before content allocation, then wraps the result
+ * as reference data rather than instructions.
  */
 
 import { redact, type RedactOptions } from './redact.js';
@@ -52,6 +52,8 @@ interface TruncationResult {
 export interface InjectionOptions {
   /** `config.injection.budget_tokens`. Defaults to `INJECTION_BUDGET_TOKENS` (800). */
   readonly budgetTokens?: number;
+  /** Tokens reserved for wrappers, section headers, routing and session metadata. */
+  readonly framingTokens?: number;
   /** `config.secrets`, forwarded to `redact()`. */
   readonly secrets?: RedactOptions;
 }
@@ -71,7 +73,7 @@ export interface InjectionOptions {
  * - Identity is never dropped entirely (may be truncated, but always present) — its
  *   sub-budget is floored at one token so even a budget below the four the nominal split
  *   needs spends what it has on identity rather than emptying it
- * - Data-only framing is applied AFTER truncation (framing never pushes over budget)
+ * - Reserves `framingTokens` before allocating shares; the caller assembles the wrapper
  * - Return frame always satisfies totalTokens ≤ budget_tokens
  *
  * @param parts — Array of InjectionPart with label, content
@@ -88,20 +90,22 @@ export function buildInjection(
   // and leaves the unnamed split (scale = budget/800) exactly as it was.
   const isNamed = parts.some(part => part.label === 'agent');
   const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
-  const budget =
+  const configuredBudget =
     options.budgetTokens !== undefined &&
     Number.isInteger(options.budgetTokens) &&
     options.budgetTokens >= 1 &&
     options.budgetTokens <= MAX_INJECTION_BUDGET_TOKENS
       ? options.budgetTokens
       : INJECTION_BUDGET_TOKENS;
+  const budget = Math.max(0, configuredBudget - (options.framingTokens ?? 0));
   const scale = budget / nominalTotal;
   // Floored at one token, the smallest share that can still carry text. Below a budget of
   // 4 (5 named) every scaled share rounds to zero, and truncating to a zero sub-budget
   // empties the part outright — which for identity is the one thing the contract above
   // says never happens. Identity is the only share with the floor because it is the only
   // one promised to survive; the others are all allowed to reach empty.
-  const identityBudget = Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
+  const identityBudget =
+    budget === 0 ? 0 : Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
   const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
   // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the sub-budgets
@@ -241,7 +245,18 @@ function truncateToTokens(text: string, targetTokens: number): TruncationResult 
     return { text: '', tokens: 0 };
   }
 
-  const truncated = text.substring(0, Math.max(1, targetChars));
+  let end = Math.min(text.length, targetChars);
+  // UTF-16 offsets must not leave a high surrogate without its low surrogate.
+  if (
+    end > 0 &&
+    end < text.length &&
+    text.charCodeAt(end - 1) >= 0xd800 &&
+    text.charCodeAt(end - 1) <= 0xdbff &&
+    text.charCodeAt(end) >= 0xdc00 &&
+    text.charCodeAt(end) <= 0xdfff
+  )
+    end--;
+  const truncated = text.substring(0, end);
   const tokens = estimateTokens(truncated);
   return { text: truncated, tokens };
 }

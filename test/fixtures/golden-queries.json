@@ -1,7 +1,23 @@
 {
   "version": 1,
   "description": "Golden retrieval set for mehmory. A fixed miniature wiki plus the queries a user would actually type at it, each naming the page that should come back. Recall@K over this set is how a retrieval change is judged: run it before and after, and the numbers say whether the change helped. Queries marked \"paraphrase\": true use none of the target page's vocabulary — grep structurally cannot answer them, and they are here to measure exactly how much of the set keyword matching leaves on the table.",
+  "measurement": {
+    "change": "Share retrieval scoring, skip symlinks, and respect decay exemptions",
+    "before": {
+      "keywordRecallAt1": "12/12 = 1.00",
+      "keywordRecallAt3": "12/12 = 1.00",
+      "paraphraseRecallAt1": "0/4 = 0.00",
+      "paraphraseRecallAt3": "1/4 = 0.25"
+    },
+    "after": {
+      "keywordRecallAt1": "13/13 = 1.00",
+      "keywordRecallAt3": "13/13 = 1.00",
+      "paraphraseRecallAt1": "0/4 = 0.00",
+      "paraphraseRecallAt3": "1/4 = 0.25"
+    }
+  },
   "pages": {
+    "stewardship.md": "---\nupdated: 2020-01-01\ndecay: evergreen\n---\n# Stewardship\n\n- Stewardship means preserving the user's decisions.\n",
     "deploy.md": "# Deploy\n\n- Production deploys run from CI on merge to main.\n- The deploy job builds a container, pushes it, then rolls the service.\n- A failed deploy rolls back automatically; nothing manual is needed.\n",
     "rollback.md": "# Rollback\n\n- Rollback reverts to the previous container tag.\n- Trigger it from the CI dashboard, not from a laptop.\n",
     "database.md": "# Database\n\n- Postgres 16, one primary, one read replica.\n- Migrations run as a separate job before the service rolls.\n- Never run a migration by hand against production.\n",
@@ -14,6 +30,7 @@
     "secrets.md": "# Secrets\n\n- Secrets come from the vault at boot, never from a checked-in file.\n- A leaked credential is rotated first and investigated second.\n"
   },
   "queries": [
+    { "id": "evergreen-stewardship", "query": "what is stewardship", "expect": "stewardship.md" },
     { "id": "deploy-direct", "query": "how does deploy work", "expect": "deploy.md" },
     { "id": "rollback-direct", "query": "how do I roll back a bad release", "expect": "rollback.md" },
     { "id": "db-version", "query": "what postgres version do we run", "expect": "database.md" },

@@ -10,8 +10,8 @@
  * pages. Upgrade path is run 3's SQLite FTS5 index behind `matchPages`.
  */
 
-import { basename, join } from 'node:path';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { resolve } from 'node:path';
+import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { isStalePage, STALE_SCORE_MULTIPLIER } from '../schema/format.js';
 
 /** Tokens shorter than this are dropped — they match everything. */
@@ -49,7 +49,7 @@ export function jaccard(setA: ReadonlySet<string>, setB: ReadonlySet<string>): n
   return union === 0 ? 0 : intersection / union;
 }
 
-function countOccurrences(haystack: string, token: string): number {
+export function countOccurrences(haystack: string, token: string): number {
   let count = 0;
   let index = haystack.indexOf(token);
   while (index !== -1) {
@@ -59,9 +59,22 @@ function countOccurrences(haystack: string, token: string): number {
   return count;
 }
 
+/** Shared title/filename weighting for the prompt matcher and multi-corpus search. */
+export function scoreDoc(
+  tokens: ReadonlySet<string>,
+  lowerBody: string,
+  lowerTitle: string
+): number {
+  let score = 0;
+  for (const token of tokens) {
+    score += countOccurrences(lowerBody, token) + 3 * countOccurrences(lowerTitle, token);
+  }
+  return score;
+}
+
 /** One matched page: where it lives, and whether it has aged past the staleness horizon. */
 export interface MatchedPage {
-  /** Page path relative to the scope root, e.g. `pages/deploy.md`. */
+  /** Absolute page path, readable directly from the user's repository cwd. */
   readonly path: string;
   /** True when the page is older than `staleAfterDays` — demoted, never excluded. */
   readonly stale: boolean;
@@ -103,16 +116,22 @@ export function matchPages(
   if (tokens.size === 0 || !pathExists(pagesDir)) return [];
 
   const now = options.now ?? Date.now();
-  const prefix = basename(pagesDir);
   const scored: { path: string; score: number; stale: boolean }[] = [];
+  let names: string[];
+  try {
+    if (lstat(pagesDir)?.isSymbolicLink()) return [];
+    names = listDir(pagesDir);
+  } catch {
+    return [];
+  }
 
-  for (const name of listDir(pagesDir)) {
+  for (const name of names) {
     if (!name.endsWith('.md')) continue;
-    const filePath = join(pagesDir, name);
+    const filePath = resolve(pagesDir, name);
 
     let contents: string;
     try {
-      if (!stat(filePath)?.isFile()) continue;
+      if (lstat(filePath)?.isSymbolicLink() || !stat(filePath)?.isFile()) continue;
       contents = readFile(filePath);
     } catch {
       continue; // unreadable page: skip, never fail the prompt
@@ -128,13 +147,10 @@ export function matchPages(
     const titleLine = /^#\s+(.*)$/m.exec(body);
     const title = `${name.toLowerCase()} ${titleLine?.[1] ?? ''}`;
 
-    let score = 0;
-    for (const token of tokens) {
-      score += countOccurrences(body, token) + 3 * countOccurrences(title, token);
-    }
+    const score = scoreDoc(tokens, body, title);
     if (score > 0) {
       scored.push({
-        path: join(prefix, name),
+        path: filePath,
         score: stale ? score * STALE_SCORE_MULTIPLIER : score,
         stale,
       });
