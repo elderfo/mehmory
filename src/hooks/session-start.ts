@@ -11,7 +11,13 @@ import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
 import { logError, pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
-import { isPaused, resumeFinalizedSession, sweepSessionState } from '../core/session.js';
+import {
+  isPaused,
+  rememberSessionOrigin,
+  resumeFinalizedSession,
+  sweepSessionState,
+} from '../core/session.js';
+import { currentAgentName } from '../core/agent.js';
 import { readInboxEntries } from '../core/inbox.js';
 import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
@@ -80,7 +86,15 @@ runHook('SessionStart', (input, project, host, config) => {
   // reuses the id, so without this every later SessionEnd for it is a no-op and the whole
   // resumed run is never captured. Runs before `maintenance`, whose sweep skips this
   // session id anyway, so the two cannot contend.
-  resumeFinalizedSession(input.session_id);
+  if (resumeFinalizedSession(input.session_id)) {
+    rememberSessionOrigin(
+      input.session_id,
+      input.transcript_path,
+      host,
+      project,
+      currentAgentName(config)
+    );
+  }
 
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);

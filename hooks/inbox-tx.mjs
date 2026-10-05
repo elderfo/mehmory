@@ -8,8 +8,10 @@ import {
   loadConfig,
   readInboxEntries,
   readSessionState,
-  redact
-} from "./chunk-CU44STGN.mjs";
+  redact,
+  sessionStatePath,
+  setPaused
+} from "./chunk-ZL7TGK6G.mjs";
 import {
   atomicWrite,
   lstat,
@@ -135,7 +137,9 @@ function doAppend(input, config) {
       ts
     };
   });
-  return appendInboxEntries(inbox, entries, key);
+  const result = appendInboxEntries(inbox, entries, key);
+  if ((result.failed ?? 0) > 0) throw new TxError("inbox append failed; retry the same entries");
+  return result;
 }
 function doSnapshot(input) {
   const { inbox, key } = validateInbox(input);
@@ -161,6 +165,16 @@ function doClear(input) {
   remove(path);
   return result;
 }
+function doPause(input, paused) {
+  const sessionId = requireString(input, "session_id");
+  if (sessionId.trim() === "" || !pathExists(sessionStatePath(sessionId))) {
+    throw new TxError("unknown session_id; use the current live session id");
+  }
+  if (!setPaused(sessionId, paused)) {
+    throw new TxError("session is busy or finalized; retry after SessionStart resumes it");
+  }
+  return { session_id: sessionId, paused };
+}
 function runInboxTx(subcommand, input, config) {
   switch (subcommand) {
     case "append":
@@ -169,8 +183,14 @@ function runInboxTx(subcommand, input, config) {
       return doSnapshot(input);
     case "clear":
       return doClear(input);
+    case "pause":
+      return doPause(input, true);
+    case "resume":
+      return doPause(input, false);
     default:
-      throw new TxError(`unknown subcommand "${subcommand}" (expected append|snapshot|clear)`);
+      throw new TxError(
+        `unknown subcommand "${subcommand}" (expected append|snapshot|clear|pause|resume)`
+      );
   }
 }
 

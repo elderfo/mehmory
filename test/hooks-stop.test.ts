@@ -15,6 +15,8 @@ import {
 } from './hook-fixture.js';
 import { readSessionState, updateSessionState } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { statePath } from '../src/core/home.js';
 
 /** The Stop capture threshold now comes from config (`stop.capture_threshold`).
  * Read inside the test, not at import time — MEHMORY_HOME is only hermetic once
@@ -61,6 +63,20 @@ describe('Stop hook', () => {
     // below-threshold Stop is the most frequent one (D9).
     expect(run.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(1);
+  });
+
+  it('keeps the threshold counter and cursor when the append fails', () => {
+    primeCounter('s1');
+    mkdirSync(statePath('locks'), { recursive: true });
+    const lock = statePath('locks', '__store__.lock');
+    writeFileSync(lock, String(process.pid));
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(readSessionState('s1').stop_count).toBe(stopThreshold());
+    expect(readSessionState('s1').cursor.offset).toBe(0);
+    rmSync(lock);
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
   });
 
   it('captures and blocks once at the threshold', () => {

@@ -316,7 +316,7 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
   would otherwise be in. Session ids are unique, and a session that touched two projects is
   exactly the case where a scoped purge would silently leave a copy behind.
 
-### `mehmory inbox-tx <append|snapshot|clear> [--json]`
+### `mehmory inbox-tx <append|snapshot|clear|pause|resume> [--json]`
 
 The transactional inbox helper (A15), reachable through the CLI so a skill can call the
 `mehmory` binary directly instead of resolving a path through a Claude-Code-specific
@@ -337,14 +337,28 @@ echo '{"inbox":"<path>/inbox.md","key":"<project key>"}' \
   | mehmory inbox-tx snapshot   # -> {"snapshotId":"...","entries":[...]}
 echo '{"inbox":"<path>/inbox.md","key":"<project key>","snapshotId":"<id>"}' \
   | mehmory inbox-tx clear      # -> {"removed":n}
+echo '{"session_id":"<current harness session id>"}' \
+  | mehmory inbox-tx pause      # -> {"session_id":"...","paused":true}
+echo '{"session_id":"<current harness session id>"}' \
+  | mehmory inbox-tx resume     # -> {"session_id":"...","paused":false}
 ```
+
+`pause` and `resume` require an explicit, existing live `session_id`, not an inbox path
+or project key. They change only the pause flag under the session lock and preserve the
+cursor, Stop counter, topic cache, and origin. Use a reliably identified harness session
+id; selecting the newest state file is unsafe with concurrent sessions. State filenames
+are SHA-256 hashes of ids, not the ids themselves. These operations never edit config or
+re-enable hooks disabled there. Busy or finalized sessions fail without changing state;
+only a harness SessionStart resumes a finalized session from its saved cursor.
 
 Without `--json`, stdout is exactly the result object above on one line — identical to
 `hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the
 other. With `--json`, the result is wrapped in the standard envelope as `data`.
 
 - Bad or missing input (unparseable stdin, a missing field, an unknown subcommand, a
-  malformed or already-cleared `snapshotId`) is a usage error: exit **1**, code `E_USAGE`.
+  malformed or already-cleared `snapshotId`), failed appends, and busy or unavailable
+  session state are usage errors: exit **1**, code `E_USAGE`. An append failure reports
+  stderr and no success object; retry the same entries (already-written ids are deduped).
   This departs from `hooks/inbox-tx.mjs`'s own convention (a bare `inbox-tx: <message>`
   line on stderr, no code) — the CLI reports the same failures through its own envelope
   and exit-code conventions instead.

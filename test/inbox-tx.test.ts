@@ -10,6 +10,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { statePath } from '../src/core/home.js';
+import {
+  finalizedMarkerPath,
+  freshSessionState,
+  readSessionState,
+  sessionStatePath,
+  writeSessionState,
+} from '../src/core/session.js';
 import { hermeticEnv } from './helpers.js';
 
 const HELPER = resolve('hooks/inbox-tx.mjs');
@@ -159,7 +167,50 @@ describe('inbox-tx snapshot/clear', () => {
   });
 });
 
+describe('inbox-tx pause/resume', () => {
+  it('changes only the explicitly named session pause flag', () => {
+    writeSessionState({ ...freshSessionState('target'), stop_count: 7 });
+    writeSessionState(freshSessionState('other'));
+    expect(json(tx('pause', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: true,
+    });
+    expect(readSessionState('target').stop_count).toBe(7);
+    expect(readSessionState('other').paused).toBe(false);
+    expect(json(tx('resume', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: false,
+    });
+  });
+
+  it('fails without changing state when the session is busy, missing, or finalized', () => {
+    writeSessionState(freshSessionState('target'));
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', 'sessions_target.lock'), String(process.pid));
+    expect(tx('pause', { session_id: 'target' }).stderr).toContain('busy');
+    expect(readSessionState('target').paused).toBe(false);
+    expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
+    expect(existsSync(sessionStatePath('missing'))).toBe(false);
+    writeFileSync(finalizedMarkerPath('done'), '{}');
+    expect(tx('resume', { session_id: 'done' }).status).toBe(1);
+    expect(existsSync(sessionStatePath('done'))).toBe(false);
+  });
+});
+
 describe('inbox-tx failure paths', () => {
+  it('exits 1 and reports a failed append instead of reporting success', () => {
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'retry this fact', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('retry');
+    expect(readFileSync(inbox, 'utf-8')).toBe('# Inbox\n');
+  });
   it('exits 1 with one stderr line and leaves the inbox untouched on bad JSON', () => {
     tx('append', { inbox, key, entries: [{ text: 'survivor', src: 'sess-a' }] });
     const before = readFileSync(inbox, 'utf-8');

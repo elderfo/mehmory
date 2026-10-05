@@ -3,12 +3,12 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-KDPDRDAW.mjs";
+} from "./chunk-I27XOHQZ.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-CU44STGN.mjs";
+} from "./chunk-ZL7TGK6G.mjs";
 import "./chunk-YZTNJJDP.mjs";
 import "./chunk-NTSIN6Z2.mjs";
 
@@ -50,7 +50,7 @@ runHook("Stop", (input, project, host, config) => {
   const count = incrementStopCount(input.session_id);
   if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
   const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
-  resetStopCount(input.session_id);
+  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
   return {
     ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
     stats: { stop_count: count, captured_entries: captured.appended }

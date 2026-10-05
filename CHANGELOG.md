@@ -28,6 +28,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Capture retries keep their delta.** Cursors advance only after a successful inbox append or durable enqueue, and failed captures retain the Stop counter.
+- **Trailing hooks cannot recreate finalized sessions.** Ordinary mutators honor the marker; SessionStart alone resumes from the saved cursor.
+- **Deferred tails retain their origin agent.** Session state records the agent so another process's sweep cannot misattribute its entries.
+- **Failed inbox appends report failure.** Both transactional entry points return stderr and a non-zero exit, including partial failures that can be safely retried.
+- **Pause and resume use locked transactions.** Skills pass an explicit session id to new inbox-tx operations instead of guessing a state filename and hand-editing it.
+
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

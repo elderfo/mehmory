@@ -22,6 +22,7 @@ import { loadConfig } from './config.js';
 import { withSessionLock } from './lock.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
+import { isSafeAgentName } from './agent.js';
 
 /** Cached prompt token set used to skip repeat lookups within a TTL. */
 export interface TopicCache {
@@ -55,6 +56,8 @@ export interface SessionState {
    * harness happens to start next would both mis-parse and mis-attribute it (issue #20).
    */
   host?: InboxHost;
+  /** Origin agent; null records an explicitly unnamed session, absent is legacy state. */
+  agent?: string | null;
   /**
    * How many times this id has been finalized already. A harness that resumes a
    * conversation reuses its session id, and each resumed run ends in a finalization of
@@ -122,6 +125,9 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
       : {}),
     ...(typeof v['transcript_path'] === 'string' ? { transcript_path: v['transcript_path'] } : {}),
     ...(host !== undefined ? { host } : {}),
+    ...(v['agent'] === null || (typeof v['agent'] === 'string' && isSafeAgentName(v['agent']))
+      ? { agent: v['agent'] }
+      : {}),
     paused: v['paused'] === true,
   };
 }
@@ -161,11 +167,18 @@ export function tryUpdateSessionState(
   sessionId: string,
   mutate: (_state: SessionState) => SessionState
 ): SessionState | undefined {
-  return withSessionLock(sessionId, () => {
-    const next = mutate(readSessionState(sessionId));
-    writeSessionState(next);
-    return next;
-  });
+  return withSessionLock(sessionId, () => updateSessionStateUnlocked(sessionId, mutate));
+}
+
+function updateSessionStateUnlocked(
+  sessionId: string,
+  mutate: (_state: SessionState) => SessionState
+): SessionState | undefined {
+  // A trailing hook is not a resume. Only SessionStart may restore the marker cursor.
+  if (isSessionFinalized(sessionId)) return undefined;
+  const next = mutate(readSessionState(sessionId));
+  writeSessionState(next);
+  return next;
 }
 
 /** Read-modify-write a session's state; returns the current state on contention. */
@@ -317,7 +330,8 @@ export function rememberSessionOrigin(
   sessionId: string,
   transcriptPath: string | undefined,
   host: InboxHost,
-  projectKey: string
+  projectKey: string,
+  agent?: string
 ): void {
   if (transcriptPath === undefined || transcriptPath === '') return;
   // A hook that fires after the session was finalized (a trailing Stop, a retry, a sweep
@@ -332,7 +346,8 @@ export function rememberSessionOrigin(
     if (
       state.transcript_path === transcriptPath &&
       state.host === host &&
-      state.project_key === projectKey
+      state.project_key === projectKey &&
+      state.agent === (agent ?? null)
     ) {
       return;
     }
@@ -341,6 +356,7 @@ export function rememberSessionOrigin(
       transcript_path: transcriptPath,
       host,
       project_key: projectKey,
+      agent: agent ?? null,
     });
   });
 }
@@ -350,9 +366,9 @@ export function rememberSessionOrigin(
  * as abandoned and finalizes it (issue #24).
  *
  * A live session touches its state on every prompt and every Stop, so the window only has
- * to outlast a quiet stretch. Finalizing a session that is merely idle is not data loss —
- * entry ids are stable, so its next capture re-distills and dedups — but it does retire
- * that session early, which is why the window is not tighter.
+ * to outlast a quiet stretch. A session retired while merely idle stays finalized until
+ * SessionStart explicitly resumes it from the saved cursor; trailing hooks cannot recreate
+ * fresh state. This can retire a quiet live session early, so the window is not tighter.
  *
  * ponytail: fixed constant, not a config knob. Promote it to `session_state` if a real
  * session is ever observed idling past it.
@@ -509,14 +525,11 @@ export function advanceSessionCursorUnlocked(
   filepath: string,
   recordHash: string,
   newOffset: number
-): CursorState {
-  const state = readSessionState(sessionId);
-  const next = {
+): CursorState | undefined {
+  return updateSessionStateUnlocked(sessionId, (state) => ({
     ...state,
     cursor: advanceCursor(state.cursor, filepath, recordHash, newOffset),
-  };
-  writeSessionState(next);
-  return next.cursor;
+  }))?.cursor;
 }
 
 /** Reset this session's read position to the start of the transcript. */
@@ -571,8 +584,8 @@ export function rememberTopic(
 // ─── Pause ───
 
 /** Set or clear the session pause flag. */
-export function setPaused(sessionId: string, paused: boolean): void {
-  updateSessionState(sessionId, s => ({ ...s, paused }));
+export function setPaused(sessionId: string, paused: boolean): boolean {
+  return tryUpdateSessionState(sessionId, (s) => ({ ...s, paused })) !== undefined;
 }
 
 /** True when this session is paused. */

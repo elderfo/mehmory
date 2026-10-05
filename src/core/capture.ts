@@ -286,10 +286,12 @@ export interface CaptureResult {
   readonly appended: number;
   /** Entries the delta produced, before dedup. */
   readonly entries: readonly InboxEntry[];
+  /** Failed writes; a caller must keep its Stop counter for retry when nonzero. */
+  readonly failed?: number;
 }
 
 /**
- * Distill this session's transcript delta into inbox entries and advance its cursor.
+ * Preview this session's transcript delta without advancing its cursor.
  *
  * Reads from the session's own cursor offset (A13), so two interleaved sessions never
  * reset each other. Text is redacted here as well as inside `distill` — this module is
@@ -309,9 +311,14 @@ export function distillDelta(
   host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): InboxEntry[] {
-  return withSessionLock(sessionId, () =>
-    distillDeltaUnlocked(sessionId, transcriptPath, host, config)
-  ) ?? [];
+  return (
+    withSessionLock(
+      sessionId,
+      () =>
+        distillDeltaUnlocked(sessionId, transcriptPath, host, config, currentAgentName(config))
+          .entries
+    ) ?? []
+  );
 }
 
 /** Where each harness writes its own transcripts — the only place capture reads from. */
@@ -338,15 +345,28 @@ function isApprovedTranscript(path: string, host: InboxHost): boolean {
   }
 }
 
+interface DistilledDelta {
+  readonly entries: InboxEntry[];
+  readonly recordHash?: string;
+  readonly endOffset?: number;
+}
+
 function distillDeltaUnlocked(
   sessionId: string,
   transcriptPath: string | undefined,
   host: InboxHost,
-  config: MehmoryConfig
-): InboxEntry[] {
-  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) return [];
+  config: MehmoryConfig,
+  agent: string | undefined
+): DistilledDelta {
+  if (
+    isSessionFinalized(sessionId) ||
+    !transcriptPath ||
+    !isApprovedTranscript(transcriptPath, host)
+  ) {
+    return { entries: [] };
+  }
 
-  return failOpen(
+  return failOpen<DistilledDelta>(
     () => {
       const cursor = readSessionState(sessionId).cursor;
       const { records, skipped, endOffset } = readSession(transcriptPath, host, cursor.offset);
@@ -362,8 +382,7 @@ function distillDeltaUnlocked(
       }
 
       const ts = new Date().toISOString();
-      const agent = currentAgentName(config);
-      const entries = distill(records, sessionId, config.secrets).map(entry => ({
+      const entries = distill(records, sessionId, config.secrets).map((entry) => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
         src: entry.source.sessionId,
@@ -372,15 +391,9 @@ function distillDeltaUnlocked(
         ts,
       }));
 
-      advanceSessionCursorUnlocked(
-        sessionId,
-        transcriptPath,
-        records[records.length - 1]?.uuid ?? '',
-        endOffset
-      );
-      return entries;
+      return { entries, recordHash: records[records.length - 1]?.uuid ?? '', endOffset };
     },
-    [],
+    { entries: [] },
     'E_TRANSCRIPT_PARSE'
   );
 }
@@ -393,10 +406,35 @@ export function captureDelta(
   host: InboxHost,
   config: MehmoryConfig = loadConfig()
 ): CaptureResult {
-  const entries = distillDelta(sessionId, transcriptPath, host, config);
-  if (entries.length === 0) return { appended: 0, entries };
-  const { appended } = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
-  return { appended, entries };
+  return failOpen<CaptureResult>(
+    () =>
+      withSessionLock(sessionId, () => {
+        const delta = distillDeltaUnlocked(
+          sessionId,
+          transcriptPath,
+          host,
+          config,
+          currentAgentName(config)
+        );
+        const { entries } = delta;
+        const result =
+          entries.length === 0
+            ? { appended: 0, skipped: 0, failed: 0 }
+            : appendInboxEntries(scopePaths(key).inboxFile, entries, key);
+        if ((result.failed ?? 0) > 0) return { ...result, entries };
+        if (transcriptPath && delta.endOffset !== undefined) {
+          advanceSessionCursorUnlocked(
+            sessionId,
+            transcriptPath,
+            delta.recordHash ?? '',
+            delta.endOffset
+          );
+        }
+        return { appended: result.appended, entries };
+      }) ?? { appended: 0, entries: [], failed: 1 },
+    { appended: 0, entries: [], failed: 1 },
+    'E_APPEND_FAILED'
+  );
 }
 
 /** Build the inbox entry for an explicit `remember:` capture (redacted here, U5). */
@@ -673,10 +711,25 @@ function finalizeSessionUnlocked(
 
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
+    const delta = distillDeltaUnlocked(
+      sessionId,
+      transcriptPath,
+      host,
+      config,
+      readSessionState(sessionId).agent ?? undefined
+    );
+    const { entries } = delta;
     if (entries.length > 0) {
       const jobId = enqueueJob(distillJobPayload(project, entries), 'distill-final');
       if (jobId === null) return { capturedEntries: 0, deferred: true };
+    }
+    if (transcriptPath && delta.endOffset !== undefined) {
+      advanceSessionCursorUnlocked(
+        sessionId,
+        transcriptPath,
+        delta.recordHash ?? '',
+        delta.endOffset
+      );
     }
 
     appendLogEntry(

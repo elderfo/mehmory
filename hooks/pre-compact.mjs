@@ -1,11 +1,11 @@
 import {
   captureDelta,
   runHook
-} from "./chunk-KDPDRDAW.mjs";
+} from "./chunk-I27XOHQZ.mjs";
 import {
   isPaused,
   resetStopCount
-} from "./chunk-CU44STGN.mjs";
+} from "./chunk-ZL7TGK6G.mjs";
 import "./chunk-YZTNJJDP.mjs";
 import {
   logError,
@@ -26,6 +26,6 @@ runHook("PreCompact", (input, project, host, config) => {
     return {};
   }
   const captured = captureDelta(input.session_id, transcript, project, host, config);
-  resetStopCount(input.session_id);
+  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
   return { stats: { captured_entries: captured.appended } };
 });

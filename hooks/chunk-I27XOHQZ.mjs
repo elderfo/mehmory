@@ -20,7 +20,7 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-CU44STGN.mjs";
+} from "./chunk-ZL7TGK6G.mjs";
 import {
   readPiSession,
   readTranscript
@@ -176,7 +176,13 @@ function runHook(event, body) {
           consequence: "The invocation was skipped; no session state was read or written"
         });
       } else {
-        rememberSessionOrigin(input.session_id, input.transcript_path, host, project);
+        rememberSessionOrigin(
+          input.session_id,
+          input.transcript_path,
+          host,
+          project,
+          currentAgentName(config)
+        );
         result = body(input, project, host, config);
       }
     }
@@ -876,12 +882,6 @@ ${ROUTING_BLOCK}`;
     "E_ATOMIC_WRITE"
   );
 }
-function distillDelta(sessionId, transcriptPath, host, config = loadConfig()) {
-  return withSessionLock(
-    sessionId,
-    () => distillDeltaUnlocked(sessionId, transcriptPath, host, config)
-  ) ?? [];
-}
 var TRANSCRIPT_ROOTS = {
   "claude-code": () => join2(homedir(), ".claude", "projects"),
   codex: () => join2(codexHome(), "sessions"),
@@ -903,8 +903,10 @@ function isApprovedTranscript(path, host) {
     return false;
   }
 }
-function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
-  if (!transcriptPath || !isApprovedTranscript(transcriptPath, host)) return [];
+function distillDeltaUnlocked(sessionId, transcriptPath, host, config, agent) {
+  if (isSessionFinalized(sessionId) || !transcriptPath || !isApprovedTranscript(transcriptPath, host)) {
+    return { entries: [] };
+  }
   return failOpen(
     () => {
       const cursor = readSessionState(sessionId).cursor;
@@ -919,7 +921,6 @@ function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
         });
       }
       const ts = (/* @__PURE__ */ new Date()).toISOString();
-      const agent = currentAgentName(config);
       const entries = distill(records, sessionId, config.secrets).map((entry) => ({
         id: inboxEntryId(entry.id),
         text: redact(entry.content, config.secrets),
@@ -928,23 +929,38 @@ function distillDeltaUnlocked(sessionId, transcriptPath, host, config) {
         ...agent !== void 0 ? { agent } : {},
         ts
       }));
-      advanceSessionCursorUnlocked(
-        sessionId,
-        transcriptPath,
-        records[records.length - 1]?.uuid ?? "",
-        endOffset
-      );
-      return entries;
+      return { entries, recordHash: records[records.length - 1]?.uuid ?? "", endOffset };
     },
-    [],
+    { entries: [] },
     "E_TRANSCRIPT_PARSE"
   );
 }
 function captureDelta(sessionId, transcriptPath, key, host, config = loadConfig()) {
-  const entries = distillDelta(sessionId, transcriptPath, host, config);
-  if (entries.length === 0) return { appended: 0, entries };
-  const { appended } = appendInboxEntries(scopePaths(key).inboxFile, entries, key);
-  return { appended, entries };
+  return failOpen(
+    () => withSessionLock(sessionId, () => {
+      const delta = distillDeltaUnlocked(
+        sessionId,
+        transcriptPath,
+        host,
+        config,
+        currentAgentName(config)
+      );
+      const { entries } = delta;
+      const result = entries.length === 0 ? { appended: 0, skipped: 0, failed: 0 } : appendInboxEntries(scopePaths(key).inboxFile, entries, key);
+      if ((result.failed ?? 0) > 0) return { ...result, entries };
+      if (transcriptPath && delta.endOffset !== void 0) {
+        advanceSessionCursorUnlocked(
+          sessionId,
+          transcriptPath,
+          delta.recordHash ?? "",
+          delta.endOffset
+        );
+      }
+      return { appended: result.appended, entries };
+    }) ?? { appended: 0, entries: [], failed: 1 },
+    { appended: 0, entries: [], failed: 1 },
+    "E_APPEND_FAILED"
+  );
 }
 function rememberEntry(text, sessionId, host, config = loadConfig()) {
   const clean = redact(text, config.secrets).trim();
@@ -1040,10 +1056,25 @@ function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, confi
   const alreadyLogged = pathExists(paths.logFile) && readFile(paths.logFile).includes(sessionEndLogTag(sessionId, generation));
   let capturedEntries = 0;
   if (!alreadyLogged) {
-    const entries = distillDeltaUnlocked(sessionId, transcriptPath, host, config);
+    const delta = distillDeltaUnlocked(
+      sessionId,
+      transcriptPath,
+      host,
+      config,
+      readSessionState(sessionId).agent ?? void 0
+    );
+    const { entries } = delta;
     if (entries.length > 0) {
       const jobId = enqueueJob(distillJobPayload(project, entries), "distill-final");
       if (jobId === null) return { capturedEntries: 0, deferred: true };
+    }
+    if (transcriptPath && delta.endOffset !== void 0) {
+      advanceSessionCursorUnlocked(
+        sessionId,
+        transcriptPath,
+        delta.recordHash ?? "",
+        delta.endOffset
+      );
     }
     appendLogEntry(
       project,

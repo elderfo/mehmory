@@ -135,10 +135,11 @@ gets the same deduplication without a dispatch layer).
 
 ### A13. Capture state is session-scoped
 
-One `.state/<session-id>.json` per session holds the transcript cursor, the Stop counter,
-the topic cache, the project key the session ran in, the generation (which run of a
-reused session id this is), and the pause flag. The public `./core/session` export records
-that origin through `rememberSessionOrigin(sessionId, transcriptPath, host, projectKey)`;
+One `.state/<sha256(session-id)>.json` per session holds the transcript cursor, the Stop
+counter, the topic cache, the project key and agent the session ran under, the generation
+(which run of a reused session id this is), and the pause flag. The public `./core/session`
+export records that origin through
+`rememberSessionOrigin(sessionId, transcriptPath, host, projectKey, agent)`;
 the former `setCachedProjectKey` export is removed. The project key is recorded as the
 session's origin rather than cached for speed: a deferred finalize runs inside another
 session's hook, so this file is the only surviving record of which project the transcript
@@ -146,6 +147,18 @@ belongs to. This **amends run 1's global
 `cursor.json` contract** (run-2 amendment 2); the global-cursor API is removed rather
 than kept alongside — one way to do it, and nothing shipped consumes it yet, so the break
 is free now and expensive after run 3.
+
+Capture holds the session lock across reading a delta and its durable append or enqueue.
+The cursor advances only after every append succeeds (dedup skips count as success) or the
+final-delta job is enqueued; failure leaves the delta and Stop counter available for retry.
+`distillDelta` is a preview and does not advance the cursor by itself.
+
+Finalized markers block all ordinary state mutations and capture, including trailing hooks
+from a live session retired by the idle sweep. Only SessionStart explicitly resumes the id,
+restoring the marker cursor and incrementing the generation; a returning session without
+SessionStart remains finalized rather than recreating state at offset zero. Deferred tails
+use the recorded origin agent, never the sweeping process's name. An unnamed origin is
+recorded as null; legacy or invalid names remain unattributed instead of being guessed.
 
 **Rejected:** Global cursor (spec blocker: interleaved sessions reset each other into a
 full re-distill); separate files per concern (`cursor.<id>`, `topics.<id>`, … — N files
@@ -165,7 +178,12 @@ human-readable-markdown premise, which is the product).
 ### A15. Transactional mutations from skills go through a bundled helper, never raw model edits
 
 `hooks/inbox-tx.mjs` wraps the inbox primitives; `integrate` and `remember` invoke it via
-Bash. It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
+Bash. `pause` and `resume` also use the helper with an explicitly identified session id;
+the helper changes the flag under the session lock, not through raw state edits. The CLI
+`mehmory inbox-tx` shares these operations. A failed append is an error, including partial
+failure: retrying the same entries dedups those already written.
+
+It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
 the directory is not — but it is **not a hook**: it reports failures via stderr and a
 non-zero exit like the CLI it prefigures, and is exempt from the U2 no-stderr rule.
 

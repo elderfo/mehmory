@@ -50,6 +50,17 @@ describe('plugin skills layout', () => {
     expect(fields['allowed-tools']).not.toContain(',');
   });
 
+  it.each(['pause', 'resume'])(
+    '%s uses a transactional helper with an explicit session id',
+    (name) => {
+      const body = bodies.get(name) as string;
+      expect(body).toContain(`mehmory inbox-tx ${name}`);
+      expect(body).toContain('session_id');
+      expect(body).not.toContain('xargs -r ls -t');
+      expect(frontmatter(body)['allowed-tools']).not.toContain('Edit');
+    }
+  );
+
   it('remember names the `remember:` prompt prefix in its description', () => {
     // The only run-2 surface that can teach the zero-latency path (criterion 17).
     expect(frontmatter(bodies.get('remember') as string)['description']).toContain('remember:');

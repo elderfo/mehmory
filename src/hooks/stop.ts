@@ -99,7 +99,7 @@ runHook('Stop', (input, project, host, config) => {
   if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
 
   const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
-  resetStopCount(input.session_id);
+  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
 
   return {
     ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
