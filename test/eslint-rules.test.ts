@@ -253,21 +253,25 @@ describe('architecture rule paths through ESLint', () => {
 
 describe('repository ESLint configuration', () => {
   it('enables the architecture rules for source files', async () => {
-    const results = await new ESLint().lintText(
-      "import fs from 'node:fs/promises'; export const f = async () => 1; process['exit'](1); export * from '../cli/index.js';",
-      { filePath: 'src/core/home.ts' }
-    );
+    const config = (await new ESLint().calculateConfigForFile('src/core/home.ts')) as {
+      rules: Record<string, unknown>;
+    };
+    const severity = (rule: string): unknown => {
+      const entry = config.rules[rule];
+      return Array.isArray(entry) ? entry[0] : entry;
+    };
     expect(
-      results
-        .flatMap((result) => result.messages)
-        .filter(({ ruleId }) => ruleId?.startsWith('custom/'))
-        .map(({ ruleId }) => ruleId)
-        .sort()
+      [
+        'custom/no-cli-imports',
+        'custom/no-exported-promise',
+        'custom/no-fs-imports',
+        'custom/no-process-exit',
+      ].map((rule) => [rule, severity(rule)])
     ).toEqual([
-      'custom/no-cli-imports',
-      'custom/no-exported-promise',
-      'custom/no-fs-imports',
-      'custom/no-process-exit',
+      ['custom/no-cli-imports', 2],
+      ['custom/no-exported-promise', 2],
+      ['custom/no-fs-imports', 2],
+      ['custom/no-process-exit', 2],
     ]);
   });
 });
