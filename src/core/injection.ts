@@ -114,9 +114,23 @@ export function buildInjection(
   let indexContent = '';
   let agentContent = '';
 
-  // Extract parts by label
+  // Leave twice the largest frame's character budget for complete matches, while
+  // keeping even three-byte UTF-16 code units below redact's 256 KiB byte cap.
+  const maxFrameChars = MAX_INJECTION_BUDGET_TOKENS / TOKENS_PER_CHAR;
+  const maxRedactionChars = maxFrameChars * 2;
   for (const part of parts) {
-    const redacted = redact(part.content, options.secrets);
+    const bounded =
+      typeof part.content === 'string' ? part.content.slice(0, maxRedactionChars) : '';
+    let redacted = redact(bounded, options.secrets);
+    // Shortening the slice can bring any prefix of its unfinished trailing token
+    // into the frame, even if the redacted slice still exceeds the frame budget.
+    if (
+      typeof part.content === 'string' &&
+      part.content.length > maxRedactionChars &&
+      redacted.length < bounded.length
+    ) {
+      redacted = redacted.replace(/\S+$/, '[REDACTED]');
+    }
     switch (part.label) {
       case 'identity':
         identityContent = redacted;

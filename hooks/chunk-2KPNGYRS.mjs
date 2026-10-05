@@ -21,11 +21,11 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-CR4WRARC.mjs";
+} from "./chunk-RSYE4VWA.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-WVRKG4UX.mjs";
+} from "./chunk-BEEOLIQD.mjs";
 import {
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
@@ -49,7 +49,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-S7B7BPQR.mjs";
+} from "./chunk-3R4TR2B4.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -386,8 +386,14 @@ function buildInjection(parts, options = {}) {
   let projectContent = "";
   let indexContent = "";
   let agentContent = "";
+  const maxFrameChars = MAX_INJECTION_BUDGET_TOKENS / TOKENS_PER_CHAR;
+  const maxRedactionChars = maxFrameChars * 2;
   for (const part of parts) {
-    const redacted = redact(part.content, options.secrets);
+    const bounded = typeof part.content === "string" ? part.content.slice(0, maxRedactionChars) : "";
+    let redacted = redact(bounded, options.secrets);
+    if (typeof part.content === "string" && part.content.length > maxRedactionChars && redacted.length < bounded.length) {
+      redacted = redacted.replace(/\S+$/, "[REDACTED]");
+    }
     switch (part.label) {
       case "identity":
         identityContent = redacted;

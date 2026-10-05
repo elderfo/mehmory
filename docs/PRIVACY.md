@@ -29,9 +29,75 @@ missed today can be backfilled by a later version with a different floor.
 
 ## The secret filter's real limits
 
-Every write to the store passes through `redact()`, which applies five built-in regex
-patterns (AWS keys, GitHub tokens, bearer tokens, private-key blocks, `.env`-shaped
-`KEY=value` lines) plus anything you add under `secrets.patterns` in `config.json`.
+Every write to the store passes through `redact()`, which applies the built-in corpus in
+`redact.ts` plus anything you add under `secrets.patterns` in `config.json`. That setting
+defaults to `[]`; adding or clearing user patterns never removes built-ins. Coverage includes:
+
+- AWS `AKIA` access keys and `ASIA` temporary keys, plus secret-access-key assignments.
+- GitHub `ghp_`, `ghs_`, `ghu_`, `gho_`, `ghr_`, and fine-grained `github_pat_` tokens.
+- Anthropic `sk-ant-`; OpenAI `sk-proj-`, `sk-svcacct-`, `sk-admin-`, and legacy 48-character
+  `sk-` keys; numeric-ID Slack `xox[abposr]-` tokens and Slack webhook URLs.
+- Stripe `sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`, and `whsec_`; Google `AIza` keys;
+  three-part `eyJ` JWTs; npm `npm_`, GitLab `glpat-`, and SendGrid `SG.` tokens.
+- Bearer tokens, including base64 slash, plus and padding; `Authorization: Basic` headers;
+  Azure `AccountKey=` and `SharedAccessKey=` assignments with at least 16 value characters.
+- Generic, RSA, OPENSSH, EC, DSA, encrypted, and PGP private-key blocks, including truncated
+  blocks without a footer (redacted through the end of the input) and differing private-key
+  footer labels. Header words may be separated by spaces or tabs. After optional spaces
+  or tabs, a newline, literal `\n` or `\r\n` escape, or at least 20 consecutive base64
+  characters starts the body. This covers space-flattened keys and bodies touching the
+  header. Other separators (including double-escaped newlines, CR-only, backslash-newline,
+  and `<br>`) or short first lines are covered when a private-key footer begins within
+  8192 characters of the header. A prose mention without a body or nearby footer can
+  remain readable. Public-key footers do not terminate a private-key block.
+- URL user/password or empty-user credentials, including `postgres`, `postgresql`, `mysql`,
+  `mongodb`, `mongodb+srv`, `redis`, `rediss`, and `amqp` schemes, not only HTTP/FTP/SSH.
+  Passwords may contain single slashes and `@` characters before the final `@host`;
+  `//` ends userinfo scanning. Quotes and commas stop password matching when an `@` still
+  follows, so neighboring JSON fields stay readable; a password that itself contains a comma or
+  an apostrophe is still redacted.
+- JSON/YAML/env assignments to secret names such as `api_key`, `password`, and `secret`,
+  camelCase names such as `secretAccessKey`, `clientSecret`, and `refreshToken`, PascalCase
+  names such as `ClientSecret` and `SecretKey`, and backslash-escaped quotes in stringified
+  JSON. Unseparated names ending in `token`, `password`, `passwd`, `secret`, `apikey`,
+  `secretkey`, `privatekey`, `accesskey`, `signingkey`, or `sshkey` (such as `csrftoken` in
+  cookies) are covered too. CamelCase suffixes are case-sensitive: ordinary words like
+  `monkey`, `turkey`, and `hotkey` are not secret names, but PascalCase identifiers such as
+  `HotKey`, `PublicKey`, and `PrimaryKey` are treated as secret names and their values are
+  redacted. Backtick-quoted
+  template-literal values are redacted, including multiline values and escaped backticks.
+  Unquoted `=` values include Unicode, brackets, pipes, and embedded equals signs up to a
+  shell value delimiter; this widened charset applies to `=` assignments,
+  not bare `key: value` colon forms.
+  `)` terminates unquoted values; backticks also end unquoted inline values. Even
+  placeholders like `${PASSWORD}` are redacted.
+  Uppercase `.env` assignments and inline secret-named environment variables (including
+  `PGPASSWORD`, `MYSQL_PWD`, `DB_PASS`, `REDIS_AUTH`, `SECRET_KEY_BASE`, `PASSPHRASE`,
+  `SSH_PASSPHRASE`, `APP_PIN`, and `docker run -e POSTGRES_PASSWORD=...`) are covered even
+  after quotes, backticks, and shell punctuation. `PIN` must be a whole-word `_PIN` suffix,
+  not the end of a word like `SPIN`. Inline env values recognize backslash-escaped double
+  quotes and shell ANSI-C `$'...'` quoting. Unterminated backslash-escaped double quotes
+  are redacted through the next whitespace or double quote.
+  Common environment settings like `PATH` and `*_EXAMPLE` variables are exempt from env
+  matching, but another built-in or custom pattern can still catch a recognizable token
+  inside them. Bare generic assignments exempt only numbers with at most 19 integer
+  digits, lowercase language/type keywords (such as `true`, `false`, `str`, and `int`),
+  and values identical to their key name (`this.password = password`). Capitalized values
+  and property expressions are redacted; quoted values remain subject to redaction.
+
+If the filter encounters an unexpected internal failure, it returns **`[REDACTED]` for the
+entire input**, never unchecked text, without throwing or stopping the harness. Inputs larger
+than 256 KiB of UTF-8 text also become `[REDACTED]` before pattern matching or whitelist
+processing. Both cases log the informational `E_REDACT_FAILED` code without the input or
+exception message. Injection slices each part to 64,000 UTF-16 code units before filtering,
+well above the largest supported frame budget and below the byte cap even for Unicode. This
+preserves the useful prefix of oversized pages instead of replacing their entire section.
+If redaction shortens a sliced part, its last unfinished token is replaced too, so the
+cutoff cannot expose a credential prefix. The final budget cut still happens after redaction.
+Built-in matching avoids repeated JWT/scheme/assignment rescans and has per-pattern
+250 KiB adversarial timing tests; the size cap is not a hard execution deadline for arbitrary
+custom regexes. An invalid user regex is instead logged and skipped, with built-in filtering
+still applied.
 
 **Redaction reaches both harnesses.** There is one store and one `redact()` call on the write
 path, regardless of whether the session that produced the text was Claude Code or Codex CLI —
@@ -43,8 +109,20 @@ look like the shapes above. It does not reliably catch:
 
 - Personally identifiable information in prose (names, addresses, phone numbers written as
   sentences rather than key=value pairs).
-- Secrets in formats the built-in patterns don't recognize (a custom internal token scheme,
-  a credential embedded mid-sentence rather than on its own line).
+- Secrets in free prose or formats the built-in patterns don't recognize (a custom internal
+  token scheme, or a credential without a recognized prefix or assignment). Inside prose,
+  bare colon assignments need a structural delimiter or line end; at a line/structure
+  boundary, whitespace also delimits their values.
+- Unprefixed values assigned to exempt `*_EXAMPLE` variables, and unquoted generic values
+  that are numbers with at most 19 integer digits, lowercase language/type keywords,
+  or identical to their key name.
+  Azure `AccountKey` and `SharedAccessKey` values shorter than 16 characters are also exempt.
+- `Authorization: Token` and `Authorization: ApiKey` headers, `curl -u user:pass`,
+  `mysql -p` passwords, Go `:=` assignments, and cookies without another recognizable
+  secret shape.
+- Provider tokens with `hf_`, `dop_v1_`, `pypi-`, or `xapp-` prefixes.
+- A short key prefix left by distill truncation before enough characters remain to satisfy
+  a provider pattern's minimum length.
 - Anything a whitelist entry exempts — see the whitelist semantics below, which are
   deliberately conservative but still let through exactly what you told it to.
 
