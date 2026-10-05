@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { logError, type MehmoryError } from './errors.js';
 import { readFile, pathExists } from './fs.js';
-import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
+import type { InboxHost } from '../schema/format.js';
 
 /** Maximum SessionStart memory budget, keeping configuration from disabling the cap. */
 export const MAX_INJECTION_BUDGET_TOKENS = 8_000;
@@ -108,18 +108,7 @@ const DEFAULTS: MehmoryConfig = {
     purge_days: 90,
   },
   secrets: {
-    patterns: [
-      // AWS keys: AKIA... or similar
-      /AKIA[0-9A-Z]{16}/,
-      // GitHub tokens: ghp_ or ghs_ or ghu_ or gho_
-      /gh[psuor]_[A-Za-z0-9_]{36,255}/,
-      // Generic bearer tokens
-      /bearer\s+[A-Za-z0-9._-]{20,}/i,
-      // Private key blocks
-      /-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----/,
-      // .env-shaped KEY=value
-      /^[A-Z_][A-Z0-9_]*=.+$/m,
-    ].map(p => p.toString()),
+    patterns: [],
     whitelist: [],
   },
   stop: {
@@ -178,8 +167,9 @@ const DEFAULTS: MehmoryConfig = {
  *
  * Behavior:
  * - If config.json does not exist, returns full defaults
- * - If config.json exists and is valid JSON, deep-merges user config over defaults
- * - If config.json exists but is unparseable, logs E_CONFIG_PARSE and returns defaults
+ * - Deep-merges object config over defaults, defaulting only invalid keys
+ * - Logs E_CONFIG_PARSE once with invalid paths; valid siblings and aliases survive
+ * - If config.json is unparseable or its root is not an object, returns defaults
  * - MEHMORY_HOME env var overrides the home directory
  * - Never throws; always returns a valid, fully-populated MehmoryConfig
  */
@@ -213,29 +203,23 @@ export function loadConfig(): MehmoryConfig {
   }
 
   // Ensure userConfig is an object
-  if (typeof userConfig !== 'object' || userConfig === null) {
+  if (!isRecord(userConfig)) {
     logError(createConfigParseError('config.json root is not an object.'));
     return deepClone(DEFAULTS) as MehmoryConfig;
   }
 
   // Deep merge user config over defaults
-  const merged = deepMerge(
-    deepClone(DEFAULTS) as Record<string, unknown>,
-    userConfig as Record<string, unknown>
-  );
+  const merged = deepMerge(deepClone(DEFAULTS) as Record<string, unknown>, userConfig);
 
-  if (!isValidConfigShape(merged)) {
-    logError(createConfigParseError('config.json contains values with invalid types.'));
-    return deepClone(DEFAULTS) as MehmoryConfig;
-  }
-
-  const secrets = merged['secrets'];
-  if (typeof secrets !== 'object' || secrets === null || Array.isArray(secrets)) {
-    merged['secrets'] = deepClone(DEFAULTS.secrets);
-  } else {
-    const secretConfig = secrets as Record<string, unknown>;
-    if (!Array.isArray(secretConfig['patterns'])) secretConfig['patterns'] = [];
-    if (!Array.isArray(secretConfig['whitelist'])) secretConfig['whitelist'] = [];
+  const invalidKeys: string[] = [];
+  defaultInvalidKeys(merged, DEFAULTS as unknown as Record<string, unknown>, invalidKeys);
+  if (invalidKeys.length > 0) {
+    logError({
+      ...createConfigParseError(
+        `config.json contains invalid values at: ${invalidKeys.join(', ')}.`
+      ),
+      consequence: 'Only invalid settings use defaults; valid settings are still applied.',
+    });
   }
 
   return merged as unknown as MehmoryConfig;
@@ -247,55 +231,64 @@ export function loadConfig(): MehmoryConfig {
  */
 const POLLUTING_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
-/** Validate the merged boundary before typed consumers access nested fields. */
-function isValidConfigShape(config: Record<string, unknown>): boolean {
-  const record = (value: unknown): value is Record<string, unknown> =>
-    typeof value === 'object' && value !== null && !Array.isArray(value);
-  const finite = (value: unknown): value is number =>
-    typeof value === 'number' && Number.isFinite(value);
-  const toggle = (value: unknown): boolean => record(value) && typeof value['enabled'] === 'boolean';
-  const strings = (value: unknown): boolean =>
-    Array.isArray(value) && value.every(item => typeof item === 'string');
-  const aliases = (value: unknown): boolean =>
-    record(value) && Object.values(value).every(item => typeof item === 'string');
-  const group = (name: string): Record<string, unknown> | undefined => {
-    const value = config[name];
-    return record(value) ? value : undefined;
-  };
-  const injection = group('injection');
-  const decay = group('decay');
-  const secrets = group('secrets');
-  const stop = group('stop');
-  const hooks = group('hooks');
-  const hosts = group('hosts');
-  const inbox = group('inbox');
-  const sessionState = group('session_state');
-  const match = group('match');
-  const identity = group('identity');
-  const lock = group('lock');
-  const queue = group('queue');
-  const distill = group('distill');
-  const log = group('log');
-  const warning = group('warning');
-  return (
-    injection !== undefined && Number.isInteger(injection['budget_tokens']) &&
-    (injection['budget_tokens'] as number) >= 1 &&
-    (injection['budget_tokens'] as number) <= MAX_INJECTION_BUDGET_TOKENS &&
-    decay !== undefined && typeof decay['enabled'] === 'boolean' && finite(decay['archive_days']) && finite(decay['purge_days']) &&
-    secrets !== undefined && strings(secrets['patterns']) && strings(secrets['whitelist']) &&
-    stop !== undefined && finite(stop['capture_threshold']) &&
-    hooks !== undefined && ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end'].every(key => toggle(hooks[key])) &&
-    hosts !== undefined && INBOX_HOSTS.every(host => toggle(hosts[host])) &&
-    inbox !== undefined && finite(inbox['nudge_entries']) && finite(inbox['nudge_bytes']) &&
-    sessionState !== undefined && finite(sessionState['max_age_days']) &&
-    match !== undefined && finite(match['jaccard']) && finite(match['cache_ttl_ms']) &&
-    identity !== undefined && aliases(identity['aliases']) && typeof identity['agent'] === 'string' &&
-    lock !== undefined && finite(lock['retry_count']) && finite(lock['retry_delay_ms']) && finite(lock['stale_ms']) &&
-    queue !== undefined && finite(queue['max_claims']) && finite(queue['stale_ms']) && finite(queue['claims_per_start']) &&
-    distill !== undefined && finite(distill['max_loss_percent']) &&
-    log !== undefined && finite(log['rotation_size_mb']) &&
-    warning !== undefined && finite(warning['rate_limit_ms'])
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const INTEGER_KEYS = new Set([
+  'stop.capture_threshold',
+  'inbox.nudge_entries',
+  'inbox.nudge_bytes',
+  'lock.retry_count',
+  'queue.max_claims',
+  'queue.claims_per_start',
+]);
+
+function validNumber(value: unknown, path: string): boolean {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  if (path === 'injection.budget_tokens') {
+    return Number.isInteger(value) && value >= 1 && value <= MAX_INJECTION_BUDGET_TOKENS;
+  }
+  if (path === 'match.jaccard') return value <= 1;
+  if (path === 'distill.max_loss_percent') return value <= 100;
+  if (path === 'log.rotation_size_mb') return value > 0;
+  return !INTEGER_KEYS.has(path) || Number.isSafeInteger(value);
+}
+
+/** Validate known keys independently so an unrelated typo cannot change project identity. */
+function defaultInvalidKeys(
+  config: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+  invalidKeys: string[],
+  prefix = ''
+): void {
+  for (const [key, fallback] of Object.entries(defaults)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const value = config[key];
+    if (isRecord(fallback) && isRecord(value)) {
+      if (path === 'identity.aliases') {
+        for (const [alias, target] of Object.entries(value)) {
+          if (typeof target !== 'string') {
+            invalidKeys.push(`${path}.${alias}`);
+            Reflect.deleteProperty(value, alias);
+          }
+        }
+      } else {
+        defaultInvalidKeys(value, fallback, invalidKeys, path);
+      }
+      continue;
+    }
+
+    const valid = Array.isArray(fallback)
+      ? Array.isArray(value) && value.every((item) => typeof item === 'string')
+      : typeof fallback === 'number'
+        ? validNumber(value, path)
+        : !isRecord(fallback) && typeof value === typeof fallback;
+    if (!valid) {
+      invalidKeys.push(path);
+      config[key] = deepClone(fallback);
+    }
+  }
 }
 
 /**
@@ -329,10 +322,7 @@ function deepMerge(
         !Array.isArray(target[key])
       ) {
         // Both are objects (not arrays), recurse
-        deepMerge(
-          target[key] as Record<string, unknown>,
-          sourceValue as Record<string, unknown>
-        );
+        deepMerge(target[key] as Record<string, unknown>, sourceValue as Record<string, unknown>);
       } else {
         // Replace (scalar, array, or source is not an object)
         target[key] = sourceValue;
@@ -352,7 +342,7 @@ function deepClone(obj: unknown): unknown {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => deepClone(item));
+    return obj.map((item) => deepClone(item));
   }
 
   if (obj instanceof Date) {

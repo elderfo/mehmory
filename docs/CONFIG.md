@@ -4,7 +4,17 @@ mehmory reads `<store home>/config.json`. `mehmory init` writes an **empty** `{}
 a fully-defaulted file — every key below has a real default that applies whether or not you
 set it, and a defaults file on disk would pin every current default forever, silently
 freezing out future default changes. Set only the keys you want to override; `loadConfig()`
-deep-merges your file over the defaults below.
+deep-merges your file over the defaults below. Invalid JSON or a non-object root (including
+an array) uses all defaults. For an object, validation falls back **only for invalid keys**:
+valid siblings, hook/host toggles, and project aliases stay applied. Invalid alias values are
+removed individually, without changing valid aliases. One `E_CONFIG_PARSE` log entry per
+load names the invalid paths, not their values.
+
+Numbers must be finite and non-negative. Entry/byte counts, retry counts, claim counts, and
+`stop.capture_threshold` must be safe integers. `match.jaccard` is in `[0, 1]`,
+`distill.max_loss_percent` in `[0, 100]`, and `log.rotation_size_mb` must be positive.
+`injection.budget_tokens` must be an integer from **1 to 8000** inclusive. Zero remains valid
+for other bounds, including `queue.claims_per_start` (no maintenance claims).
 
 **Store home:** every path in this document is `~/.mehmory` by convention, but the real
 location is `$MEHMORY_HOME` when that environment variable is set. If you've set it, read
@@ -113,19 +123,19 @@ Truncation never splits a UTF-16 surrogate pair.
 ## `secrets`
 
 ```json
-{ "secrets": { "patterns": ["/AKIA[0-9A-Z]{16}/", "..."], "whitelist": [] } }
+{ "secrets": { "patterns": [], "whitelist": [] } }
 ```
 
 - `patterns` — extra regexes (as `RegExp.prototype.toString()` strings, e.g. `"/foo/i"`),
-  **additive** to the five built-in patterns baked into `redact.ts` (AWS keys, GitHub
-  tokens, bearer tokens, private-key blocks, `.env`-shaped `KEY=value` lines). **The default
-  value of `patterns` is a literal mirror of those five built-in patterns** — meaning every
-  `redact()` call runs the built-ins *plus* five duplicates of themselves. This is correct
-  (redacting twice changes nothing) but a real, currently-unowned cost: every capture and
-  every injection pays for five redundant regex passes. Changing the default to `[]` is a
-  behavior change nobody has approved this run, so it's recorded here rather than silently
-  fixed.
-- `whitelist` — literal substrings exempt from redaction. **Whitelist semantics are precise
+  default **`[]`**, purely **additive** to the built-in corpus in `redact.ts`. Setting this
+  array, even to `[]`, never removes built-ins. They cover AWS access/temporary keys,
+  GitHub tokens (including fine-grained tokens), Anthropic/OpenAI project keys, Slack tokens,
+  bearer tokens, private-key blocks, credential-bearing URLs (including database and broker
+  schemes), and JSON/YAML/env secret assignments, including quoted `.env` values.
+  Malformed or overly complex user regexes are logged and skipped; built-ins still run.
+  The complexity guard counts `+`, `*`, and brace quantifiers such as `{n,m}`.
+- `whitelist` — literal substrings exempt from redaction, default **`[]`** (there are no
+  implicit exemptions). **Whitelist semantics are precise
   and matter**: an entry exempts a secret match only when the entry **fully contains** that
   match. A partial overlap still redacts — a whitelist entry can never make the built-in
   patterns catch less than they otherwise would. (The first implementation of this run had

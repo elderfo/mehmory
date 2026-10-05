@@ -48,6 +48,7 @@ var ERROR_KINDS = {
   E_CONFIG_PARSE: "actionable",
   E_LOCK_TIMEOUT: "informational",
   E_DISTILL_LOSSY: "informational",
+  E_REDACT_FAILED: "informational",
   E_STORE_INIT: "actionable",
   E_GIT_COMMIT: "informational",
   E_QUEUE_CLAIM: "informational",

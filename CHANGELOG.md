@@ -28,21 +28,106 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Evergreen and ephemeral pages no longer receive age-based staleness labels or retrieval demotion.
-- SessionStart caps the complete memory frame, including framing, at the configured budget.
-- SessionStart retains its separate 150-token allowance for up to two maintenance notices.
-- Claimed warnings are truncated rather than dropped; unselected warnings remain for the next start.
-- Small injection budgets drop routing and content before the session id that skills require.
-- Doctor's injection KPI uses the configured frame budget plus the 150-token maintenance allowance.
-- Unreadable retrieval directories and status probes fail open; failing doctor checks report errors
-  instead of crashing.
-- Prompt memory pointers now carry directly readable absolute project or global store paths.
-- Injection and search snippet truncation no longer split emoji surrogate pairs.
-- Doctor reports a repair for pages paths that are files and continues inbox and integrate checks.
-- Store read failures use informational `E_STORE_READ`, not the append-failure code.
-- Unreadable SessionStart page listings and inbox size probes no longer suppress memory injection.
-- Prompt matching now skips symlinks like search and shares its occurrence/title scoring without
-  reducing golden-set recall.
+- **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one
+  staleness rule, so exempt decay classes get no age label or ranking demotion.
+- **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep
+  their separate 150-token allowance; claimed warnings are truncated, never dropped, and
+  unselected ones wait for the next start.
+- **Small injection budgets degrade in order.** Routing goes first, then content; the session id
+  that skills depend on is kept whenever its minimal frame fits.
+- **Doctor's injection KPI follows config.** It checks the configured frame budget plus the
+  150-token maintenance allowance instead of a fixed 950.
+- **Unreadable store paths fail open.** Retrieval, status and SessionStart probes skip them;
+  doctor reports a repair for a `pages` path that is a file and continues its other checks.
+  Read failures log informational `E_STORE_READ` instead of an append failure.
+- **Memory pointers are absolute paths.** `relevant:` lines name directly readable project or
+  global store files.
+- **Truncation never splits an emoji.** Injection and search snippets keep surrogate pairs whole.
+- **Prompt matching and search share scoring and skip symlinks.** Golden-set recall is
+  unchanged.
+- **PascalCase secret names are redacted.** `ClientSecret` and `SecretKey` no longer leak.
+- **Unseparated secret suffixes are caught.** Names such as `csrftoken`, `myapikey` and
+  `secretkey` are covered, and URL passwords containing commas or apostrophes are redacted.
+- **More PEM separators are covered.** A private-key footer within 8192 characters confirms a body.
+- **Long numeric secret values are redacted.** Generic exemptions cap integer portions at 19 digits.
+- **Unterminated escaped env quotes no longer leak.** `PGPASSWORD=\"hunter2` is fully redacted.
+- **URL passwords stop at quotes and commas when an `@` still follows.** Neighboring JSON fields
+  and email text stay readable.
+- **Flattened and stringified private keys are redacted.** Space-flattened bodies, literal `\r\n`,
+  trailing header whitespace, adjacent bodies, and variable header word spacing no longer bypass
+  filtering.
+- **Capitalized secret values no longer receive type exemptions.** Bare values such as
+  `password=Hunter` are redacted; generic exemptions are limited to lowercase keywords, numbers, and
+  self-assignments.
+- **Ordinary words ending in key/token/secret stay readable.** CamelCase matching now requires the
+  actual capitalized suffix, so assignments to `monkey`, `turkey`, and `hotkey` are not mistaken for
+  secrets.
+- **Escaped and ANSI-C quoted inline env values are fully redacted.** Backslash-escaped double
+  quotes and `$'...'` no longer leave value fragments behind.
+- **Template-literal secret values are redacted.** Backtick-quoted assignments include multiline
+  bodies and escaped backticks.
+- **Inline passphrases and PINs are covered.** `PASSPHRASE`, `*_PASSPHRASE`, and whole-word `*_PIN`
+  assignments are filtered before commands.
+- **URL passwords containing `@` are fully redacted.** Matching reaches the final userinfo separator
+  without quadratic rescans.
+- **Privacy documentation clarifies assignment limits.** Wide unquoted values apply to `=` only, `)`
+  terminates them, and placeholders like `${PASSWORD}` are redacted.
+- **JWT matching is bounded on repeated base64url prefixes.** Every built-in pattern now has
+  exhaustive 250 KiB adversarial timing coverage.
+- **Inline environment secrets are caught after shell and JSON punctuation.** Backticks, quotes,
+  substitutions, semicolons, pipes, and parentheses no longer bypass the name boundary; backticks
+  terminate bare values.
+- **URL passwords may contain single slashes.** Database and HTTP credentials with slash-bearing
+  passwords are redacted without rescanning subsequent URLs.
+- **More inline environment names are covered.** `*_PASS`, `*_AUTH`, and `SECRET_KEY_BASE` no longer
+  leak before commands.
+- **CamelCase secret keys are filtered.** JSON and JavaScript names ending in Key, Token, Password,
+  Passwd, or Secret are covered.
+- **Oversized memory pages retain useful injection content.** Parts are safely bounded before
+  filtering, and a sliced trailing token cannot be pulled into the frame by earlier redaction
+  shrinking the content.
+- **Unquoted equals assignments accept arbitrary value characters.** Pipes, brackets, Unicode, and
+  embedded equals signs no longer bypass lowercase secret matching.
+- **Private-key header mentions preserve following prose.** A prose-only header without a body does
+  not consume the rest of the document.
+- **Short Azure key examples remain readable.** `AccountKey=` and `SharedAccessKey=` require at
+  least 16 value characters.
+- **Lowercase keywords and self-assignments remain readable.** Bare language/type keywords and
+  assignments such as `this.password = password` are exempt.
+- **Privacy documentation names additional uncaught shapes.** Alternate authorization schemes,
+  command-line passwords, Go assignments, cookies, unsupported provider prefixes, and
+  distill-truncated key prefixes are explicitly disclosed.
+- **Secret filtering covers more credential shapes.** Database/broker URLs, Anthropic/OpenAI project
+  keys, fine-grained GitHub and numeric-ID Slack tokens, AWS temporary keys, additional private-key
+  formats, and quoted JSON/YAML/env assignments are covered; GitHub token lengths are corrected.
+- **Inline environment credentials are filtered before commands.** Secret-named variables such as
+  `PGPASSWORD`, `MYSQL_PWD`, and Docker `-e` assignments no longer escape line-anchored matching.
+- **Truncated private keys redact through the end of input.** Missing footers and differing
+  private-key footer labels no longer leave key material readable after distillation.
+- **URL and assignment matching avoid quadratic rescans.** Empty-user Redis credentials are covered,
+  and inputs over 256 KiB fail closed before pattern matching.
+- **Additional provider credentials are covered.** Stripe, Google, JWT, npm, GitLab, SendGrid, Slack
+  webhooks, legacy/service-account/admin OpenAI keys, Azure key assignments, and Basic authorization
+  headers have regression vectors.
+- **Bearer redaction includes base64 punctuation and padding.** Slash, plus, and equals signs no
+  longer leave part of a matched bearer token behind.
+- **Non-secret identifiers and values stay readable.** AWS matching is case-sensitive and
+  word-bounded; bare lowercase keywords, numbers, and Slack-prefix prose are not treated as
+  credentials.
+- **More assignment delimiters and escaped JSON quotes are recognized.** Unquoted secrets before
+  shell/query/code punctuation or tabs and quoted secrets in stringified JSON are covered.
+- **Filter failures are observable without logging sensitive text.** Informational `E_REDACT_FAILED`
+  reports whole-input redaction, and troubleshooting indexes the partial-config-validation
+  consequence.
+- **Custom secret patterns cannot replace built-ins.** The built-in corpus lives only in the filter;
+  configurable patterns default to an empty additive list.
+- **Regex complexity checks count brace quantifiers.** Overly complex custom patterns using `{n,m}`
+  are skipped rather than silently accepted.
+- **Unexpected filter errors fail closed.** The whole input becomes `[REDACTED]` without stopping
+  the harness, and an informational error is logged.
+- **Invalid config keys no longer discard valid settings or project aliases.** Validation defaults
+  only invalid keys, reports their paths once, rejects array roots, and enforces meaningful numeric
+  bounds.
 - **Codex TOML scanning distinguishes array continuations from table headers.** Root feature
   keys and table booleans after nested arrays are edited or refused without creating a
   duplicate table.

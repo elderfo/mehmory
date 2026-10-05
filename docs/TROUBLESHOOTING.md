@@ -34,16 +34,27 @@ they include the one you will hit most often.
 
 ## E_CONFIG_PARSE (actionable)
 
-Two consequences, same code:
+Three consequences, same code:
 
 - **`config.json` itself is unparseable.**
   Consequence: *Memory is running on defaults, so your settings are not applied.*
   Fix: `$EDITOR <path to config.json>`.
+- **One or more settings have invalid types, values, or bounds.**
+  Consequence: *Only invalid settings use defaults; valid settings are still applied.*
+  Fix: `$EDITOR <path to config.json>`.
+  The warning lists the invalid paths; other settings and valid project aliases survive.
 - **A `secrets.patterns` entry in your config is not a usable regex.**
   Consequence: *That pattern is skipped; the built-in secret patterns still apply.*
   Fix: `$EDITOR <path to config.json>`.
   Your other settings still load; only the one bad pattern is dropped, and the hardcoded
   secret patterns keep working regardless.
+
+## E_REDACT_FAILED (informational)
+
+Secret filtering encountered an unexpected failure, or the input exceeded 256 KiB of UTF-8
+text. Consequence: *The entire text was redacted.* The caller receives `[REDACTED]` instead
+of unchecked text, and the harness continues. No `Fix:` clause. Neither the input nor an
+exception message is included in this error log.
 
 ## E_STORE_INIT (actionable or informational)
 
