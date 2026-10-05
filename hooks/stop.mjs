@@ -1,11 +1,11 @@
 import {
   runHook
-} from "./chunk-RTT2NKDM.mjs";
+} from "./chunk-REP3EMJU.mjs";
 import {
   captureAtStop,
   scopePaths,
   skillRef
-} from "./chunk-S6YFTPNW.mjs";
+} from "./chunk-QGTGVXJ6.mjs";
 import "./chunk-PWN6QP6F.mjs";
 
 // src/hooks/stop.ts

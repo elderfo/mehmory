@@ -4,7 +4,7 @@ import { loadConfig } from '../src/core/config.js';
 import { captureDelta, distillDelta } from '../src/core/capture.js';
 import { statePath } from '../src/core/home.js';
 import { claimJob } from '../src/core/queue.js';
-import { setPaused } from '../src/core/session.js';
+import { isPaused, rememberTopic, setPaused, topicCacheHit } from '../src/core/session.js';
 import { freshCursor } from '../src/core/cursor.js';
 import {
   finalizeSession,
@@ -15,7 +15,8 @@ import {
 } from '../src/core/session-lifecycle.js';
 import * as fsModule from '../src/core/fs.js';
 import * as locks from '../src/core/lock.js';
-import { writeTranscript } from './hook-fixture.js';
+import * as inbox from '../src/core/inbox.js';
+import { errorsLog, writeTranscript } from './hook-fixture.js';
 import { ageSession, markerFileFor, stateFileFor } from './session-fixture.js';
 
 const project = 'lifecycle-project';
@@ -93,6 +94,68 @@ describe('session lifecycle transitions', () => {
     setPaused('paused', true);
     openSession('paused', origin('/later.jsonl'));
     expect(inspectSession('paused').state.paused).toBe(true);
+  });
+
+  it('reads a paused session without waiting for another owner of its lock', () => {
+    setPaused('contended', true);
+    fsModule.mkdir(statePath('locks'));
+    writeFileSync(statePath('locks', 'sessions_contended.lock'), String(process.pid));
+
+    const started = performance.now();
+    const paused = isPaused('contended');
+    const elapsed = performance.now() - started;
+
+    expect(paused).toBe(true);
+    expect(elapsed).toBeLessThan(100);
+    expect(inspectSession('contended')).toMatchObject({
+      available: true,
+      state: { paused: true },
+    });
+    expect(inspectSession('contended', { requireAvailable: true }).available).toBe(false);
+  });
+
+  it('reads the persisted topic cache while another owner holds the session lock', () => {
+    rememberTopic('cached', new Set(['deployment']), 1000);
+    fsModule.mkdir(statePath('locks'));
+    writeFileSync(statePath('locks', 'sessions_cached.lock'), String(process.pid));
+
+    expect(
+      topicCacheHit(inspectSession('cached').state, new Set(['deployment']), 1001, {
+        jaccard: 0.5,
+        ttlMs: 1000,
+      })
+    ).toBe(true);
+  });
+
+  it('reports a thrown capture append as E_APPEND_FAILED and retains its cursor', () => {
+    const transcript = writeTranscript(
+      [{ text: 'We decided to retry failed capture appends.' }],
+      'append-failure'
+    );
+    openSession('append-failure', origin(transcript));
+    vi.spyOn(inbox, 'appendInboxEntries').mockImplementation(() => {
+      throw new Error('simulated append failure');
+    });
+
+    expect(
+      captureDelta('append-failure', transcript, project, 'claude-code', loadConfig()).failed
+    ).toBe(1);
+    expect(inspectSession('append-failure').state.cursor.offset).toBe(0);
+    expect(errorsLog()).toContain('E_APPEND_FAILED: simulated append failure');
+    expect(errorsLog()).not.toContain('E_SESSION_STATE');
+  });
+
+  it('reports a marker-write failure as E_APPEND_FAILED, not corrupt session state', () => {
+    openSession('marker-failure', origin());
+    const write = fsModule.atomicWrite;
+    vi.spyOn(fsModule, 'atomicWrite').mockImplementation((path, content) => {
+      if (path === markerFileFor('marker-failure')) throw new Error('marker write failed');
+      write(path, content);
+    });
+
+    expect(() => end('marker-failure')).not.toThrow();
+    expect(errorsLog()).toContain('E_APPEND_FAILED: SessionEnd hook failed: marker write failed');
+    expect(errorsLog()).not.toContain('E_SESSION_STATE');
   });
 
   it('abandoned + maintenance → finalized before the retention sweep can delete its tail', () => {

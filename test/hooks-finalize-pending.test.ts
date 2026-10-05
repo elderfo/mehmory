@@ -26,7 +26,7 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { mehmoryHome } from '../src/core/home.js';
-import { freshSessionState } from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { parseInboxEntries } from '../src/schema/format.js';
 
 /** The arguments `mehmory init --codex` writes: host first, ownership marker after. */

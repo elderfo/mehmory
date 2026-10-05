@@ -247,7 +247,7 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
 
 function doPause(input: Record<string, unknown>, paused: boolean): Record<string, unknown> {
   const sessionId = requireString(input, 'session_id');
-  const session = inspectSession(sessionId);
+  const session = inspectSession(sessionId, { requireAvailable: true });
   if (!session.available) {
     throw new TxError('session is busy or finalized; retry after the next turn');
   }

@@ -72,6 +72,12 @@ A single-line append to the store (inbox, log, or stats) failed — usually perm
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
 disk space" is prose, not a command, so it's omitted rather than printed as if it were one.
 
+Capture append exceptions also use this code, not `E_SESSION_STATE`; their cursor stays available
+for retry. A retirement marker write logs `E_APPEND_FAILED: SessionEnd hook failed: ...` after
+final-delta handling. Its stats retain `captured_entries`, set `marker_failed: true`, and leave
+`deferred: false`: the queued work already landed, but removed state is not pending for a sweep.
+A repeated SessionEnd uses the log's generation tag to avoid duplicating the queued delta or log.
+
 During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
 count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
 wait for a busy store's write lock to become available, or repair the named inbox (it must

@@ -36,10 +36,10 @@ tsup for bundling, vitest for tests, ESLint flat config with custom rules in `es
   `src/hooks/*.ts` source and rebuild.
 - **Session state mutations go through the lock helpers.** `Stop`, `SessionEnd`, and
   `UserPromptSubmit` hooks can all touch the same per-session state
-  (`src/core/session.ts`, `src/core/capture.ts`) concurrently. Any new code path that reads or
-  writes session state, the finalization marker, or the transcript cursor must go through
-  `withSessionLock` / `withProjectLock` (`src/core/lock.ts`) — see "Conventions mined from PR
-  reviews" below for why this matters in practice.
+  (`src/core/session-lifecycle.ts`) concurrently. Mutations go through `observeSession`,
+  `openSession`, or `finalizeSession`, which own their session locks. Read-only pause/topic
+  gates use lock-free `inspectSession` snapshots; only inbox-tx explicitly probes locked
+  availability before mutating. See "Conventions mined from PR reviews" below.
 
 ## Conventions mined from PR reviews
 
@@ -55,14 +55,14 @@ touching session lifecycle or capture code:
 - **Don't call a locked operation from inside another locked operation on the same lock.**
   The project/session locks in `src/core/lock.ts` are not reentrant. A finalization path that
   calls a helper which itself acquires the same lock will time out and silently fall back to
-  stale state — this has shipped as a real bug (`finalizeSessionUnlocked` → `distillDelta` →
-  `updateSessionState` → `withSessionLock` again). When adding a call inside an already-locked
-  function, check whether the callee acquires a lock itself.
+  stale state — this has shipped in finalization calling a cursor mutation that took the
+  session lock again. Inside `observeSession`, mutate its loaded state rather than calling
+  a session helper that reacquires the lock.
 - **A lock-timeout fallback must not proceed as if it succeeded.** If `withProjectLock` (or
   similar) gives up after its retry budget, the caller must not run the guarded operation
   unlocked — that silently reopens the same race the lock exists to prevent.
 - **Recheck invariants after acquiring a lock, not just before.** A pre-lock check
-  (e.g. `isSessionFinalized(sessionId)`) can go stale while waiting for the lock if another
+  (e.g. `inspectSession(sessionId).finalized`) can go stale while waiting for the lock if another
   process finalizes in between. Re-verify the condition once the lock is held.
 - **Cleanup on the error path still has to leave state consistent.** If a step like removing a
   finalization marker fails, the function must not report success and move on as if the marker

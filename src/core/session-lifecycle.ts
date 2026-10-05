@@ -6,14 +6,14 @@ import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { statePath, mehmoryHome } from './home.js';
 import { atomicWrite, listDir, pathExists, readFile, remove, stat } from './fs.js';
-import { failOpen, logError } from './errors.js';
+import { failOpen, logError, type ErrorCode } from './errors.js';
 import { advanceCursor, freshCursor, isCursorState, type CursorState } from './cursor.js';
 import { withSessionLock } from './lock.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 import { isSafeAgentName } from './agent.js';
 import type { MehmoryConfig } from './config.js';
-import { freshSessionState, type SessionState, type TopicCache } from './session.js';
+import { freshSessionState, type SessionState, type TopicCache } from './session-state.js';
 import { appendLogEntry, distillJobPayload, distillSessionDelta, scopePaths } from './capture.js';
 import { commitPaths } from './git.js';
 import { enqueueJob } from './queue.js';
@@ -202,30 +202,35 @@ function persist(position: Position, observed = false): void {
   }
 }
 
-/** Read-only view; finalized state is not made active merely by inspecting it. */
-export function inspectSession(sessionId: string): {
+/** Lock-free snapshot; inbox-tx may explicitly probe availability before a mutation. */
+export function inspectSession(
+  sessionId: string,
+  options: { requireAvailable?: boolean } = {}
+): {
   state: SessionState;
   exists: boolean;
   finalized: boolean;
   available: boolean;
 } {
+  const unavailable = {
+    state: freshSessionState(sessionId),
+    exists: false,
+    finalized: false,
+    available: false,
+  };
+  const snapshot = () => {
+    const position = loadPosition(sessionId);
+    return {
+      state: position.state,
+      exists: position.exists,
+      finalized: position.marker !== undefined,
+      available: true,
+    };
+  };
   return failOpen(
     () =>
-      withSessionLock(sessionId, () => {
-        const position = loadPosition(sessionId);
-        return {
-          state: position.state,
-          exists: position.exists,
-          finalized: position.marker !== undefined,
-          available: true,
-        };
-      }) ?? {
-        state: freshSessionState(sessionId),
-        exists: false,
-        finalized: false,
-        available: false,
-      },
-    { state: freshSessionState(sessionId), exists: false, finalized: false, available: false },
+      options.requireAvailable ? (withSessionLock(sessionId, snapshot) ?? unavailable) : snapshot(),
+    unavailable,
     'E_SESSION_STATE'
   );
 }
@@ -237,16 +242,25 @@ export type SessionObservation<T> =
 export function observeSession<T>(
   sessionId: string,
   observe: (state: SessionState) => T,
-  options: { transcriptPath?: string; touch?: boolean } = {}
+  options: {
+    transcriptPath?: string;
+    touch?: boolean;
+    /** Callback failures belong to the operation, not to session-state parsing. */
+    callbackErrorCode?: ErrorCode;
+  } = {}
 ): SessionObservation<T> {
   return failOpen<SessionObservation<T>>(
     () =>
       withSessionLock<SessionObservation<T>>(sessionId, () => {
         const position = loadPosition(sessionId);
         if (!activate(position, false, options.transcriptPath)) return { status: 'retired' };
-        const value = observe(position.state);
-        persist(position, options.touch !== false);
-        return { status: 'observed', value };
+        const result = failOpen<SessionObservation<T>>(
+          () => ({ status: 'observed', value: observe(position.state) }),
+          { status: 'skipped' },
+          options.callbackErrorCode ?? 'E_SESSION_STATE'
+        );
+        if (result.status === 'observed') persist(position, options.touch !== false);
+        return result;
       }) ?? { status: 'skipped' },
     { status: 'skipped' },
     'E_SESSION_STATE'
@@ -285,6 +299,8 @@ export function openSession(
 export interface FinalizeSessionResult {
   readonly capturedEntries: number;
   readonly deferred?: boolean;
+  /** Final-delta handling completed, but retirement could not be recorded. */
+  readonly markerFailed?: boolean;
 }
 export interface FinalizeSessionOptions {
   /** ACP writes its transcript after SessionEnd; the idle recovery path force-retires it. */
@@ -297,7 +313,7 @@ function sessionEndLogTag(sessionId: string, generation: number): string {
     : `(session ${JSON.stringify({ id: sessionId, generation })})`;
 }
 
-function retire(position: Position, state: StoredSessionState, cursor?: CursorState): void {
+function retire(position: Position, state: StoredSessionState, cursor?: CursorState): boolean {
   const sessionId = state.session_id;
   try {
     if (position.exists) remove(stateFile(sessionId));
@@ -315,8 +331,19 @@ function retire(position: Position, state: StoredSessionState, cursor?: CursorSt
     agent: state.agent,
     paused: state.paused,
   });
-  atomicWrite(markerFile(sessionId), marker);
-  position.marker = marker;
+  try {
+    atomicWrite(markerFile(sessionId), marker);
+    position.marker = marker;
+    return true;
+  } catch (err) {
+    logError({
+      code: 'E_APPEND_FAILED',
+      kind: 'informational',
+      what: `SessionEnd hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      consequence: 'Final-delta handling completed, but the retirement marker was not saved',
+    });
+    return false;
+  }
 }
 
 function finalize(
@@ -338,8 +365,8 @@ function finalize(
     host,
   };
   if (state.paused) {
-    retire(position, origin);
-    return { capturedEntries: 0 };
+    const marked = retire(position, origin);
+    return { capturedEntries: 0, ...(marked ? {} : { markerFailed: true }) };
   }
   if (
     options.deferWhenTranscriptAbsent &&
@@ -393,8 +420,8 @@ function finalize(
       commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
     capturedEntries = entries.length;
   }
-  retire(position, origin, state.cursor);
-  return { capturedEntries };
+  const marked = retire(position, origin, state.cursor);
+  return { capturedEntries, ...(marked ? {} : { markerFailed: true }) };
 }
 
 /** Enqueue the final delta, log and commit once per generation, then retire the session. */
@@ -412,7 +439,7 @@ export function finalizeSession(
         finalize(loadPosition(sessionId), transcriptPath, project, host, config, options)
       ) ?? { capturedEntries: 0 },
     { capturedEntries: 0, deferred: true },
-    'E_SESSION_STATE'
+    'E_APPEND_FAILED'
   );
 }
 
@@ -551,7 +578,7 @@ export function maintainSessions(
             const completed = failOpen(
               () => {
                 const state = position.state;
-                finalize(
+                const result = finalize(
                   position,
                   state.transcript_path,
                   state.project_key ?? project,
@@ -559,7 +586,7 @@ export function maintainSessions(
                   config,
                   {}
                 );
-                return true;
+                return !result.markerFailed;
               },
               false,
               'E_SESSION_STATE'

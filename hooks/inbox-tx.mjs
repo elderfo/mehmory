@@ -10,7 +10,7 @@ import {
   readInboxEntries,
   redact,
   setPaused
-} from "./chunk-S6YFTPNW.mjs";
+} from "./chunk-QGTGVXJ6.mjs";
 import {
   atomicWrite,
   lstat,
@@ -166,7 +166,7 @@ function doClear(input) {
 }
 function doPause(input, paused) {
   const sessionId = requireString(input, "session_id");
-  const session = inspectSession(sessionId);
+  const session = inspectSession(sessionId, { requireAvailable: true });
   if (!session.available) {
     throw new TxError("session is busy or finalized; retry after the next turn");
   }

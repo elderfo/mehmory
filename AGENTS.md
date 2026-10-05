@@ -20,6 +20,7 @@ mehmory/
 │   │   ├── tokens.ts          # Token estimation (E)
 │   │   ├── injection.ts       # Context builder, cap enforcement (E)
 │   │   ├── inbox.ts           # run 2: inbox entry read/write, snapshot-clear (A)
+│   │   ├── session-state.ts   # Shared session value types and fresh defaults (A13)
 │   │   ├── session.ts         # Cursor, Stop counter, topic cache and pause value helpers (A13)
 │   │   ├── session-lifecycle.ts # Open/observe, origin, resume, finalize and ordered recovery/sweep (A13)
 │   │   ├── decay.ts           # run 2: recency decay/archive file ops (A)

@@ -51,6 +51,7 @@
     "./core/config": "./dist/core/config.js",
     "./core/cursor": "./dist/core/cursor.js",
     "./core/session": "./dist/core/session.js",
+    "./core/session-state": "./dist/core/session-state.js",
     "./core/session-lifecycle": "./dist/core/session-lifecycle.js",
     "./core/inbox": "./dist/core/inbox.js",
     "./core/decay": "./dist/core/decay.js",

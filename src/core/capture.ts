@@ -470,7 +470,7 @@ export function captureDelta(
           }
           return { appended: result.appended, entries };
         },
-        { transcriptPath, touch: false }
+        { transcriptPath, touch: false, callbackErrorCode: 'E_APPEND_FAILED' }
       );
       if (result.status === 'observed') return result.value;
       return result.status === 'retired'

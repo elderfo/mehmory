@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, type CliRun } from './cli-fixture.js';
-import { freshSessionState } from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { statePath } from '../src/core/home.js';
 
 /** `mehmory inbox-tx` with a JSON body piped to stdin — the CLI has no other way in. */

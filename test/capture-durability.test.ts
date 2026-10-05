@@ -18,13 +18,13 @@ import { claimJob } from '../src/core/queue.js';
 import * as fsModule from '../src/core/fs.js';
 import {
   advanceSessionCursor,
-  freshSessionState,
   incrementStopCount,
   rememberTopic,
   resetStopCount,
   setPaused,
 } from '../src/core/session.js';
 
+import { freshSessionState } from '../src/core/session-state.js';
 import { createTempDir } from './helpers.js';
 import {
   keyFor,

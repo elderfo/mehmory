@@ -5,7 +5,7 @@ import {
   openSession,
   recordStat,
   resolveProjectKey
-} from "./chunk-S6YFTPNW.mjs";
+} from "./chunk-QGTGVXJ6.mjs";
 import {
   logError,
   readStdin

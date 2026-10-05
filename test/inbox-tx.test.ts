@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { statePath } from '../src/core/home.js';
-import { freshSessionState } from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { hermeticEnv } from './helpers.js';
 
 const HELPER = resolve('hooks/inbox-tx.mjs');
@@ -192,11 +192,13 @@ describe('inbox-tx pause/resume', () => {
   );
 
   it('fails without changing state when the session is busy, missing, or finalized', () => {
-    seedSession(freshSessionState('target'));
+    seedSession({ ...freshSessionState('target'), paused: true });
     mkdirSync(statePath('locks'), { recursive: true });
     writeFileSync(statePath('locks', 'sessions_target.lock'), String(process.pid));
-    expect(tx('pause', { session_id: 'target' }).stderr).toContain('busy');
-    expect(sessionState('target').paused).toBe(false);
+    expect(tx('resume', { session_id: 'target' }).stderr).toContain('busy');
+    expect(JSON.parse(readFileSync(stateFileFor('target'), 'utf-8'))).toMatchObject({
+      paused: true,
+    });
     expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
     expect(existsSync(stateFileFor('missing'))).toBe(false);
     writeFileSync(markerFileFor('done'), '{}');

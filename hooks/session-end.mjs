@@ -1,9 +1,9 @@
 import {
   runHook
-} from "./chunk-RTT2NKDM.mjs";
+} from "./chunk-REP3EMJU.mjs";
 import {
   finalizeSession
-} from "./chunk-S6YFTPNW.mjs";
+} from "./chunk-QGTGVXJ6.mjs";
 import "./chunk-PWN6QP6F.mjs";
 
 // src/hooks/session-end.ts
@@ -13,6 +13,10 @@ runHook("SessionEnd", (input, project, host, config) => {
     deferWhenTranscriptAbsent: true
   });
   return {
-    stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false }
+    stats: {
+      captured_entries: result.capturedEntries,
+      deferred: result.deferred ?? false,
+      ...result.markerFailed ? { marker_failed: true } : {}
+    }
   };
 });

@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import { utimesSync } from 'node:fs';
 import {
   advanceSessionCursor,
-  freshSessionState,
   incrementStopCount,
   isPaused,
   rememberTopic,
@@ -21,6 +20,7 @@ import {
   setPaused,
   topicCacheHit,
 } from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { atomicWrite, pathExists, readFile } from '../src/core/fs.js';
 import { statePath } from '../src/core/home.js';
 import { readTranscript } from '../src/transcript/reader.js';

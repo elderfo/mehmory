@@ -1335,40 +1335,9 @@ function describe(value) {
   return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
-// src/core/session.ts
+// src/core/session-state.ts
 function freshSessionState(sessionId) {
   return { session_id: sessionId, cursor: freshCursor(), stop_count: 0, paused: false };
-}
-function mutateSession(sessionId, mutate) {
-  const result = observeSession(sessionId, (state) => Object.assign(state, mutate(state)));
-  return result.status === "observed" ? result.value : void 0;
-}
-function mutateOrCurrent(sessionId, mutate) {
-  return mutateSession(sessionId, mutate) ?? inspectSession(sessionId).state;
-}
-function incrementStopCount(sessionId) {
-  return mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
-}
-function resetStopCount(sessionId) {
-  mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: 0 }));
-}
-function topicCacheHit(state, tokens, now = Date.now(), thresholds) {
-  if (!state.topic) return false;
-  const cfg = thresholds ?? {
-    jaccard: loadConfig().match.jaccard,
-    ttlMs: loadConfig().match.cache_ttl_ms
-  };
-  if (now - state.topic.ts > cfg.ttlMs) return false;
-  return jaccard(new Set(state.topic.tokens), tokens) >= cfg.jaccard;
-}
-function rememberTopic(sessionId, tokens, now = Date.now()) {
-  mutateOrCurrent(sessionId, (s) => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
-}
-function setPaused(sessionId, paused) {
-  return mutateSession(sessionId, (s) => ({ ...s, paused })) !== void 0;
-}
-function isPaused(sessionId) {
-  return inspectSession(sessionId).state.paused;
 }
 
 // src/core/queue.ts
@@ -1641,23 +1610,25 @@ function persist(position, observed = false) {
     throw err;
   }
 }
-function inspectSession(sessionId) {
+function inspectSession(sessionId, options = {}) {
+  const unavailable = {
+    state: freshSessionState(sessionId),
+    exists: false,
+    finalized: false,
+    available: false
+  };
+  const snapshot = () => {
+    const position = loadPosition(sessionId);
+    return {
+      state: position.state,
+      exists: position.exists,
+      finalized: position.marker !== void 0,
+      available: true
+    };
+  };
   return failOpen(
-    () => withSessionLock(sessionId, () => {
-      const position = loadPosition(sessionId);
-      return {
-        state: position.state,
-        exists: position.exists,
-        finalized: position.marker !== void 0,
-        available: true
-      };
-    }) ?? {
-      state: freshSessionState(sessionId),
-      exists: false,
-      finalized: false,
-      available: false
-    },
-    { state: freshSessionState(sessionId), exists: false, finalized: false, available: false },
+    () => options.requireAvailable ? withSessionLock(sessionId, snapshot) ?? unavailable : snapshot(),
+    unavailable,
     "E_SESSION_STATE"
   );
 }
@@ -1666,9 +1637,13 @@ function observeSession(sessionId, observe, options = {}) {
     () => withSessionLock(sessionId, () => {
       const position = loadPosition(sessionId);
       if (!activate(position, false, options.transcriptPath)) return { status: "retired" };
-      const value = observe(position.state);
-      persist(position, options.touch !== false);
-      return { status: "observed", value };
+      const result = failOpen(
+        () => ({ status: "observed", value: observe(position.state) }),
+        { status: "skipped" },
+        options.callbackErrorCode ?? "E_SESSION_STATE"
+      );
+      if (result.status === "observed") persist(position, options.touch !== false);
+      return result;
     }) ?? { status: "skipped" },
     { status: "skipped" },
     "E_SESSION_STATE"
@@ -1715,8 +1690,19 @@ function retire(position, state, cursor) {
     agent: state.agent,
     paused: state.paused
   });
-  atomicWrite(markerFile(sessionId), marker);
-  position.marker = marker;
+  try {
+    atomicWrite(markerFile(sessionId), marker);
+    position.marker = marker;
+    return true;
+  } catch (err) {
+    logError({
+      code: "E_APPEND_FAILED",
+      kind: "informational",
+      what: `SessionEnd hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      consequence: "Final-delta handling completed, but the retirement marker was not saved"
+    });
+    return false;
+  }
 }
 function finalize(position, transcriptPath, project, host, config, options) {
   const sessionId = position.state.session_id;
@@ -1730,8 +1716,8 @@ function finalize(position, transcriptPath, project, host, config, options) {
     host
   };
   if (state.paused) {
-    retire(position, origin);
-    return { capturedEntries: 0 };
+    const marked2 = retire(position, origin);
+    return { capturedEntries: 0, ...marked2 ? {} : { markerFailed: true } };
   }
   if (options.deferWhenTranscriptAbsent && transcriptPath && !pathExists(transcriptPath) && state.transcript_path !== void 0) {
     persist(position);
@@ -1773,8 +1759,8 @@ function finalize(position, transcriptPath, project, host, config, options) {
       commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
     capturedEntries = entries.length;
   }
-  retire(position, origin, state.cursor);
-  return { capturedEntries };
+  const marked = retire(position, origin, state.cursor);
+  return { capturedEntries, ...marked ? {} : { markerFailed: true } };
 }
 function finalizeSession(sessionId, transcriptPath, project, host, config, options = {}) {
   return failOpen(
@@ -1783,7 +1769,7 @@ function finalizeSession(sessionId, transcriptPath, project, host, config, optio
       () => finalize(loadPosition(sessionId), transcriptPath, project, host, config, options)
     ) ?? { capturedEntries: 0 },
     { capturedEntries: 0, deferred: true },
-    "E_SESSION_STATE"
+    "E_APPEND_FAILED"
   );
 }
 var PENDING_IDLE_MS = 30 * 60 * 1e3;
@@ -1877,7 +1863,7 @@ function maintainSessions(currentSessionId, project, host, config, options = {})
           const completed = failOpen(
             () => {
               const state = position.state;
-              finalize(
+              const result = finalize(
                 position,
                 state.transcript_path,
                 state.project_key ?? project,
@@ -1885,7 +1871,7 @@ function maintainSessions(currentSessionId, project, host, config, options = {})
                 config,
                 {}
               );
-              return true;
+              return !result.markerFailed;
             },
             false,
             "E_SESSION_STATE"
@@ -1905,6 +1891,39 @@ function maintainSessions(currentSessionId, project, host, config, options = {})
     );
   }
   return { finalized, swept };
+}
+
+// src/core/session.ts
+function mutateSession(sessionId, mutate) {
+  const result = observeSession(sessionId, (state) => Object.assign(state, mutate(state)));
+  return result.status === "observed" ? result.value : void 0;
+}
+function mutateOrCurrent(sessionId, mutate) {
+  return mutateSession(sessionId, mutate) ?? inspectSession(sessionId).state;
+}
+function incrementStopCount(sessionId) {
+  return mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
+}
+function resetStopCount(sessionId) {
+  mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: 0 }));
+}
+function topicCacheHit(state, tokens, now = Date.now(), thresholds) {
+  if (!state.topic) return false;
+  const cfg = thresholds ?? {
+    jaccard: loadConfig().match.jaccard,
+    ttlMs: loadConfig().match.cache_ttl_ms
+  };
+  if (now - state.topic.ts > cfg.ttlMs) return false;
+  return jaccard(new Set(state.topic.tokens), tokens) >= cfg.jaccard;
+}
+function rememberTopic(sessionId, tokens, now = Date.now()) {
+  mutateOrCurrent(sessionId, (s) => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
+}
+function setPaused(sessionId, paused) {
+  return mutateSession(sessionId, (s) => ({ ...s, paused })) !== void 0;
+}
+function isPaused(sessionId) {
+  return inspectSession(sessionId).state.paused;
 }
 
 // src/core/stats.ts
@@ -2389,7 +2408,7 @@ function captureDelta(sessionId, transcriptPath, key, host, config = loadConfig(
           }
           return { appended: result2.appended, entries };
         },
-        { transcriptPath, touch: false }
+        { transcriptPath, touch: false, callbackErrorCode: "E_APPEND_FAILED" }
       );
       if (result.status === "observed") return result.value;
       return result.status === "retired" ? { appended: 0, entries: [] } : { appended: 0, entries: [], failed: 1 };

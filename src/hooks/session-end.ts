@@ -23,6 +23,10 @@ runHook('SessionEnd', (input, project, host, config) => {
     deferWhenTranscriptAbsent: true,
   });
   return {
-    stats: { captured_entries: result.capturedEntries, deferred: result.deferred ?? false },
+    stats: {
+      captured_entries: result.capturedEntries,
+      deferred: result.deferred ?? false,
+      ...(result.markerFailed ? { marker_failed: true } : {}),
+    },
   };
 });

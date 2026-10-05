@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, utimesSync } from 'node:fs';
 import { statePath } from '../src/core/home.js';
 import { inspectSession, observeSession } from '../src/core/session-lifecycle.js';
-import type { SessionState } from '../src/core/session.js';
+import type { SessionState } from '../src/core/session-state.js';
 
 /** Raw paths are only for disk assertions and corrupt/legacy/failure fixtures. */
 export function stateFileFor(id: string): string {

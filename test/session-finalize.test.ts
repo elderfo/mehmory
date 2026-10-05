@@ -19,7 +19,7 @@ import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';
 import * as fsModule from '../src/core/fs.js';
-import { freshSessionState } from '../src/core/session.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { initStore } from '../src/core/store.js';
 
 /** Every file under the store, keyed by its path relative to `mehmoryHome()`, content
@@ -129,9 +129,12 @@ describe('finalizeSession', () => {
       if (path === markerFileFor(sessionId)) throw new Error('simulated marker write failure');
       write(path, content);
     });
-    expect(finalizeSession(sessionId, transcript, key, 'claude-code', loadConfig()).deferred).toBe(
-      true
-    );
+    expect(finalizeSession(sessionId, transcript, key, 'claude-code', loadConfig())).toEqual({
+      capturedEntries: 1,
+      markerFailed: true,
+    });
+    expect(existsSync(stateFileFor(sessionId))).toBe(false);
+    expect(existsSync(markerFileFor(sessionId))).toBe(false);
     markSpy.mockRestore();
     const retried = finalizeSession(sessionId, transcript, key, 'claude-code', loadConfig());
 
