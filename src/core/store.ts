@@ -7,15 +7,13 @@
  */
 
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { runStoreGit } from './git.js';
 import { mehmoryHome } from './home.js';
 import { logError, shellQuote, type MehmoryError } from './errors.js';
 import { mkdir, pathExists, readFile, atomicWrite } from './fs.js';
 
 /** Result type for store initialization (A11: never throws across boundary). */
-export type InitStoreResult =
-  | { ok: true; home: string }
-  | { ok: false; error: MehmoryError };
+export type InitStoreResult = { ok: true; home: string } | { ok: false; error: MehmoryError };
 
 /**
  * Initialize the mehmory store (A6).
@@ -76,19 +74,13 @@ export function initStore(): InitStoreResult {
     const gitDir = join(home, '.git');
     if (!pathExists(gitDir)) {
       try {
-        execFileSync('git', ['init', home], {
-          stdio: 'pipe',
-          encoding: 'utf-8',
-        });
+        runStoreGit(['init', home], home);
         // Disable commit signing for the store itself, so it holds even for git
         // invocations that don't route through commitPaths (a user running
         // `git -C ~/.mehmory commit` by hand, or a future caller). Without this
         // the user's global commit.gpgsign makes every store commit block on the
         // signing agent. Set per-repo, so the user's own repos are untouched.
-        execFileSync('git', ['-C', home, 'config', 'commit.gpgsign', 'false'], {
-          stdio: 'pipe',
-          encoding: 'utf-8',
-        });
+        runStoreGit(['config', '--local', 'commit.gpgsign', 'false'], home);
       } catch (err) {
         const error: MehmoryError = {
           code: 'E_STORE_INIT',
@@ -279,7 +271,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. \`\\\\\`, \`\\n\`, \`\\r\`, and \`--\\>\` are escape sequences in entry text (backslash, newline, carriage return, and \`-->\` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.

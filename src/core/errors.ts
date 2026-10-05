@@ -6,10 +6,12 @@ import {
   renameSync,
   unlinkSync,
   writeFileSync,
+  readdirSync,
+  utimesSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { statePath } from './home.js';
 
 /** Quote a value for a POSIX shell command shown in an actionable fix. */
@@ -242,7 +244,7 @@ interface WarningRecord {
   count: number;
 }
 
-/** Validate a parsed warnings.json entry. The file is user-writable and survives
+/** Validate a parsed warning entry. The file is user-writable and survives
  * across processes, so a hand-edited or half-written entry must be dropped rather
  * than trusted — this is a fail-open path and must not throw. */
 function isWarningRecord(value: unknown): value is WarningRecord {
@@ -256,111 +258,144 @@ function isWarningRecord(value: unknown): value is WarningRecord {
 }
 
 const WARN_RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
+const WARNING_CLAIM_STALE_MS = 60 * 1000;
 
-/** Module-level cache for warnings state. Stores parsed warnings and a hash of
- * the file contents. If the hash changes, the file was modified by another process. */
-let warningsCacheState: {
-  warnings: WarningRecord[];
-  contentHash: string;
-} | null = null;
-
-/** Quick hash of file contents to detect modifications from other processes. */
-function hashFileContents(data: string): string {
-  return createHash('sha256').update(data).digest('hex');
+/** Published records are immutable; include the pre-upgrade array until drained. */
+function warningPaths(): string[] {
+  const paths: string[] = [];
+  const legacy = statePath('warnings.json');
+  if (existsSync(legacy)) paths.push(legacy);
+  const dir = statePath('warning-records');
+  try {
+    paths.push(
+      ...readdirSync(dir)
+        .filter((name) => name.endsWith('.json'))
+        .sort()
+        .map((name) => join(dir, name))
+    );
+  } catch {
+    // Missing or unreadable warning directory.
+  }
+  // A crashed drain may have renamed a record without reading it. Reclaim only
+  // after a minute so a concurrent active drain keeps exclusive ownership.
+  for (const claimDir of [statePath(), dir]) {
+    try {
+      for (const name of readdirSync(claimDir)) {
+        if (!/\.json(?:\.drain-[0-9a-f-]{36})+$/.test(name)) continue;
+        if (claimDir !== dir && !name.startsWith('warnings.json.drain-')) continue;
+        const path = join(claimDir, name);
+        try {
+          if (Date.now() - statSync(path).mtimeMs > WARNING_CLAIM_STALE_MS) paths.push(path);
+        } catch {
+          // Another drain may have just consumed it.
+        }
+      }
+    } catch {
+      // Missing or unreadable state directory.
+    }
+  }
+  return paths;
 }
 
-/** Read warnings from cache if file unchanged, otherwise re-read from disk.
- * This avoids the redundant read-parse on every recordWarning call while
- * staying correct against concurrent modifications from other processes. */
-function getWarningsFromDisk(warningsPath: string): WarningRecord[] {
-  try {
-    const data = readFileSync(warningsPath, 'utf-8');
-    const contentHash = hashFileContents(data);
-
-    // If cache exists and hash matches, file hasn't changed—use cached version
-    if (warningsCacheState !== null && warningsCacheState.contentHash === contentHash) {
-      return warningsCacheState.warnings;
+function readWarnings(consume = false): WarningRecord[] {
+  const records: WarningRecord[] = [];
+  for (const path of warningPaths()) {
+    const claimed = consume
+      ? `${path.replace(/(?:\.drain-[0-9a-f-]{36})+$/, '')}.drain-${randomUUID()}`
+      : path;
+    let renamed = false;
+    if (consume) {
+      try {
+        renameSync(path, claimed);
+        renamed = true;
+        // Rename preserves mtime; an old warning must not look like a stale active claim.
+        const now = new Date();
+        utimesSync(claimed, now, now);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        // Read-only state still has useful warnings, even though they cannot be claimed.
+      }
     }
-
-    // File changed or no cache yet—parse and update cache
-    const parsed: unknown = JSON.parse(data);
-    const warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
-    warningsCacheState = { warnings, contentHash };
-    return warnings;
-  } catch {
-    return [];
+    const readPath = renamed ? claimed : path;
+    try {
+      const contents = readFileSync(readPath, 'utf-8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(contents) as unknown;
+      } catch {
+        if (renamed) {
+          try {
+            unlinkSync(claimed);
+          } catch {
+            // Do not republish corrupt JSON, even if cleanup is temporarily impossible.
+          }
+        }
+        continue;
+      }
+      records.push(
+        ...(Array.isArray(parsed)
+          ? parsed.filter(isWarningRecord)
+          : isWarningRecord(parsed)
+            ? [parsed]
+            : [])
+      );
+      if (renamed) unlinkSync(claimed);
+    } catch {
+      if (renamed) {
+        try {
+          renameSync(claimed, path);
+        } catch {
+          // Best-effort restoration only for I/O failures, not corrupt JSON.
+        }
+      }
+    }
   }
+
+  // Concurrent producers of the same code may both pass the rate-limit check.
+  // Coalesce them without discarding a different code or a later hourly occurrence.
+  const warnings = new Map<string, WarningRecord>();
+  for (const record of records.sort((a, b) => a.lastTime - b.lastTime)) {
+    const existing = warnings.get(record.code);
+    if (!existing) warnings.set(record.code, { ...record });
+    else if (record.lastTime - existing.lastTime >= WARN_RATE_LIMIT_MS) {
+      existing.lastTime = record.lastTime;
+      existing.count += record.count;
+    }
+  }
+  return [...warnings.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /** Record a warning (rate-limited to 1 per hour per code). Marks as delivered when read. */
 export function recordWarning(code: ErrorCode): void {
-  const warningsPath = statePath('warnings.json');
-  const warningsDir = dirname(warningsPath);
-
-  if (!existsSync(warningsDir)) {
-    mkdirSync(warningsDir, { recursive: true });
-  }
-
-  let warnings: WarningRecord[] = [];
-  if (existsSync(warningsPath)) {
-    warnings = getWarningsFromDisk(warningsPath);
-  }
-
-  const now = Date.now();
-  const existingIndex = warnings.findIndex(w => w.code === code);
-
-  if (existingIndex >= 0) {
-    const record = warnings[existingIndex];
-    if (!record) {
-      // Should not happen, but be safe
-      warnings.push({ code, lastTime: now, count: 1 });
-    } else if (now - record.lastTime < WARN_RATE_LIMIT_MS) {
-      // Rate limit not elapsed, skip
-      return;
-    } else {
-      record.lastTime = now;
-      record.count++;
-    }
-  } else {
-    warnings.push({ code, lastTime: now, count: 1 });
-  }
-
-  // Write whole file, not append (fixes corruption)
+  const dir = statePath('warning-records');
+  const path = join(dir, `${randomUUID()}.json`);
+  const temp = `${path}.tmp`;
   try {
-    const jsonStr = JSON.stringify(warnings, null, 2);
-    writeFileSync(warningsPath, jsonStr, 'utf-8');
-    // After writing, update cache with new state and content hash
-    const contentHash = hashFileContents(jsonStr);
-    warningsCacheState = { warnings, contentHash };
+    const now = Date.now();
+    const existing = readWarnings().find((w) => w.code === code);
+    if (existing && now - existing.lastTime < WARN_RATE_LIMIT_MS) return;
+    mkdirSync(dir, { recursive: true });
+    // Publish only after the full record is written. A drain cannot see a partial
+    // record, and no writer retains an open descriptor to a file being consumed.
+    writeFileSync(temp, JSON.stringify({ code, lastTime: now, count: 1 }), { flag: 'wx' });
+    renameSync(temp, path);
   } catch {
-    // Silently fail to write warnings
+    // Warning storage must never turn a reporting failure into a caller failure.
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The temp file is normally already renamed or was never created.
+    }
   }
 }
 
-/** Render the warnings file to its user-facing lines. Empty on any read/parse failure. */
-function readWarningLines(warningsPath: string): readonly string[] {
-  if (!existsSync(warningsPath)) return [];
-
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(warningsPath, 'utf-8'));
-    const warnings: WarningRecord[] = Array.isArray(parsed)
-      ? parsed.filter(isWarningRecord)
-      : [];
-
-    return warnings.map(w => {
-      // w.code comes off disk as a bare string (see isWarningRecord) and is not
-      // guaranteed to be a known ErrorCode; look it up as a partial map so an
-      // unrecognized code still falls back to 'informational' instead of throwing
-      // away that fallback (an `as ErrorCode` cast would tell TS it can never miss,
-      // which isn't true and would silently drop this behavior).
-      const kind =
-        (ERROR_KINDS as Record<string, 'actionable' | 'informational'>)[w.code] ??
-        'informational';
-      return `${w.code} (${kind}, ${String(w.count)} occurrences): see ~/.mehmory/.state/errors.log`;
-    });
-  } catch {
-    return [];
-  }
+function warningLines(warnings: WarningRecord[]): readonly string[] {
+  return warnings.map((w) => {
+    const kind =
+      (ERROR_KINDS as Record<string, 'actionable' | 'informational'>)[w.code] ?? 'informational';
+    return `${w.code} (${kind}, ${String(w.count)} occurrences): see ${statePath('errors.log')}`;
+  });
 }
 
 /**
@@ -371,26 +406,10 @@ function readWarningLines(warningsPath: string): readonly string[] {
  * CLI invocation that stole the warning would mean the user's next session never sees it.
  */
 export function peekWarnings(): readonly string[] {
-  return readWarningLines(statePath('warnings.json'));
+  return warningLines(readWarnings());
 }
 
 /** Get pending warnings as formatted strings for injection. Returns and clears. */
 export function pendingWarnings(): readonly string[] {
-  const warningsPath = statePath('warnings.json');
-  const lines = readWarningLines(warningsPath);
-
-  if (!existsSync(warningsPath)) return lines;
-
-  try {
-    // Clear after reading (consume semantics for U2)
-    const emptyJson = JSON.stringify([], null, 2);
-    writeFileSync(warningsPath, emptyJson, 'utf-8');
-    // Update cache since we just modified the file
-    warningsCacheState = { warnings: [], contentHash: hashFileContents(emptyJson) };
-  } catch {
-    // Unwritable state dir: the lines were still read, so report them once rather
-    // than swallowing them (A2).
-  }
-
-  return lines;
+  return warningLines(readWarnings(true));
 }

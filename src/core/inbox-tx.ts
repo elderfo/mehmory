@@ -11,6 +11,8 @@
  *   append   {inbox, key, host?, entries:[{text, src}]}  -> {appended, skipped}
  *   snapshot {inbox, key}                                -> {snapshotId, entries}
  *   clear    {inbox, key, snapshotId}                    -> {removed}
+ *   pause    {session_id}                                -> {session_id, paused:true}
+ *   resume   {session_id}                                -> {session_id, paused:false}
  *
  * `snapshot` persists the snapshotted id list under `<MEHMORY_HOME>/.state/`; `clear`
  * removes exactly those ids and deletes the snapshot file. Entries appended between the
@@ -26,7 +28,7 @@ import { mehmoryHome, statePath } from './home.js';
 import { atomicWrite, lstat, pathExists, readFile, realpath, remove } from './fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from './inbox.js';
 import { redact } from './redact.js';
-import { readSessionState } from './session.js';
+import { isSessionFinalized, readSessionState, sessionStatePath, setPaused } from './session.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 
@@ -89,10 +91,18 @@ function validateInbox(input: Record<string, unknown>): { inbox: string; key: st
   const homeReal = realpath(home);
   const targetReal = realpath(candidate);
   const parentReal = realpath(dirname(candidate));
-  if (!within(homeReal, targetReal) || !within(homeReal, parentReal) || (pathExists(candidate) && targetReal !== candidate)) {
+  if (
+    !within(homeReal, targetReal) ||
+    !within(homeReal, parentReal) ||
+    (pathExists(candidate) && targetReal !== candidate)
+  ) {
     throw new TxError('"inbox" must not resolve outside MEHMORY_HOME');
   }
-  if (key === 'global' && candidate !== resolve(home, 'global', 'inbox.md') && candidate !== resolve(home, 'inbox.md')) {
+  if (
+    key === 'global' &&
+    candidate !== resolve(home, 'global', 'inbox.md') &&
+    candidate !== resolve(home, 'inbox.md')
+  ) {
     throw new TxError('"key" does not match "inbox"');
   }
   if (key !== 'global') {
@@ -138,10 +148,9 @@ function declaredHost(input: Record<string, unknown>): InboxHost | undefined {
  *
  * `host` accepts a top-level override because a *better* source than the running
  * process exists: the session that produced the entry recorded its own harness, so a
- * re-appended entry stays attributed to it. There is no such source for the agent —
- * session state records none — so a declared `agent` could only ever be a guess, and
- * this helper runs inside the agent's own process, where `MEHMORY_AGENT` is the
- * authoritative answer.
+ * re-appended entry stays attributed to it. Explicit remember writes name the running
+ * agent, not the agent that previously owned a reused session id. This helper runs
+ * inside that agent's own process, where `MEHMORY_AGENT` is the authoritative answer.
  *
  * A declared value is refused rather than ignored, for the same reason an unknown
  * `host` is refused: `agent=` is the routing decision integrate reads, so a wrong or
@@ -160,10 +169,7 @@ function rejectDeclaredAgent(input: Record<string, unknown>, where: string): voi
   }
 }
 
-function doAppend(
-  input: Record<string, unknown>,
-  config: MehmoryConfig
-): Record<string, unknown> {
+function doAppend(input: Record<string, unknown>, config: MehmoryConfig): Record<string, unknown> {
   const { inbox, key } = validateInbox(input);
   const raw = input['entries'];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
@@ -198,7 +204,9 @@ function doAppend(
     };
   });
 
-  return appendInboxEntries(inbox, entries, key);
+  const result = appendInboxEntries(inbox, entries, key);
+  if ((result.failed ?? 0) > 0) throw new TxError('inbox append failed; retry the same entries');
+  return result;
 }
 
 function doSnapshot(input: Record<string, unknown>): Record<string, unknown> {
@@ -207,7 +215,7 @@ function doSnapshot(input: Record<string, unknown>): Record<string, unknown> {
   const snapshotId = randomBytes(8).toString('hex');
   atomicWrite(
     snapshotFile(snapshotId),
-    JSON.stringify({ inbox, key, ids: entries.map(e => e.id) })
+    JSON.stringify({ inbox, key, ids: entries.map((e) => e.id) })
   );
   return { snapshotId, entries };
 }
@@ -225,7 +233,7 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
     stored['inbox'] !== inbox ||
     stored['key'] !== key ||
     !Array.isArray(ids) ||
-    ids.some(id => typeof id !== 'string')
+    ids.some((id) => typeof id !== 'string')
   ) {
     throw new TxError('snapshot does not match the requested inbox');
   }
@@ -234,6 +242,20 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
   if (result === undefined) throw new TxError('inbox is busy; retry the same snapshot');
   remove(path);
   return result;
+}
+
+function doPause(input: Record<string, unknown>, paused: boolean): Record<string, unknown> {
+  const sessionId = requireString(input, 'session_id');
+  if (
+    sessionId.trim() === '' ||
+    (!isSessionFinalized(sessionId) && !pathExists(sessionStatePath(sessionId)))
+  ) {
+    throw new TxError('unknown session_id; use the current live session id');
+  }
+  if (!setPaused(sessionId, paused)) {
+    throw new TxError('session is busy or finalized; retry after the next turn');
+  }
+  return { session_id: sessionId, paused };
 }
 
 /**
@@ -257,7 +279,13 @@ export function runInboxTx(
       return doSnapshot(input);
     case 'clear':
       return doClear(input);
+    case 'pause':
+      return doPause(input, true);
+    case 'resume':
+      return doPause(input, false);
     default:
-      throw new TxError(`unknown subcommand "${subcommand}" (expected append|snapshot|clear)`);
+      throw new TxError(
+        `unknown subcommand "${subcommand}" (expected append|snapshot|clear|pause|resume)`
+      );
   }
 }

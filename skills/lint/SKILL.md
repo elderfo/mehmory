@@ -15,10 +15,18 @@ it never edits before the user says so.
 HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
 ```
 
-Read the project key from the newest session-state file
-(`grep -l '"session_id"' "$HOME_DIR"/.state/*.json | xargs -r ls -t | head -1`), or ask
-the user which of `$HOME_DIR/projects/*` to sweep. Lint one scope at a time; `global/`
-is a valid scope. Read `$HOME_DIR/SCHEMA.md` first — the user's conventions govern.
+Use the `session: <id>` line inside the injected `<mehmory-memory>` frame; decode the
+id if JSON-quoted. Read `project_key` from `$HOME_DIR/.state/<sha256(session-id)>.json`,
+hashing the exact UTF-8 id with Node's `crypto.createHash('sha256')`.
+If the frame names a session but only
+`$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and
+`host` from that marker; it is the same session retired by the idle sweep.
+
+Legacy fallback only when the frame has no session line: the newest session-state file
+(`grep -l '"session_id"' "$HOME_DIR"/.state/*.json | grep -v '\.finalized\.json$' | xargs -r ls -t | head -1`)
+is a project hint to confirm with the user, not proof of identity. If no key is available,
+ask which of `$HOME_DIR/projects/*` to sweep. Lint one scope at a time; `global/` is a
+valid scope. Read `$HOME_DIR/SCHEMA.md` first — the user's conventions govern.
 
 ## 2. Sweep — report only, change nothing yet
 
@@ -27,7 +35,7 @@ Collect findings in these four categories:
 - **Staleness** — pages whose claims read as no longer true, judged against the codebase
   and the frontmatter `updated` date. A date alone is not staleness; an evergreen page
   can be years old and correct. Say what specifically looks wrong.
-- **Orphans** — pages with no inbound `[[slug]]` link anywhere in the scope *and* no
+- **Orphans** — pages with no inbound `[[slug]]` link anywhere in the scope _and_ no
   line in `index.md`. Derive both by grep; nothing is stored.
   ```bash
   grep -ro '\[\[[^]]*\]\]' "<scope>" | sort -u

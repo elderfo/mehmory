@@ -34,11 +34,13 @@ import {
   statSync,
   renameSync,
   unlinkSync,
-  writeFileSync
+  writeFileSync,
+  readdirSync,
+  utimesSync
 } from "fs";
-import { dirname } from "path";
+import { dirname, join as join2 } from "path";
 import { mkdirSync } from "fs";
-import { createHash } from "crypto";
+import { randomUUID } from "crypto";
 function shellQuote(value) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -164,82 +166,118 @@ function isWarningRecord(value) {
   return typeof v["code"] === "string" && typeof v["lastTime"] === "number" && typeof v["count"] === "number";
 }
 var WARN_RATE_LIMIT_MS = 60 * 60 * 1e3;
-var warningsCacheState = null;
-function hashFileContents(data) {
-  return createHash("sha256").update(data).digest("hex");
-}
-function getWarningsFromDisk(warningsPath) {
+var WARNING_CLAIM_STALE_MS = 60 * 1e3;
+function warningPaths() {
+  const paths = [];
+  const legacy = statePath("warnings.json");
+  if (existsSync(legacy)) paths.push(legacy);
+  const dir = statePath("warning-records");
   try {
-    const data = readFileSync(warningsPath, "utf-8");
-    const contentHash = hashFileContents(data);
-    if (warningsCacheState !== null && warningsCacheState.contentHash === contentHash) {
-      return warningsCacheState.warnings;
-    }
-    const parsed = JSON.parse(data);
-    const warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
-    warningsCacheState = { warnings, contentHash };
-    return warnings;
+    paths.push(
+      ...readdirSync(dir).filter((name) => name.endsWith(".json")).sort().map((name) => join2(dir, name))
+    );
   } catch {
-    return [];
   }
+  for (const claimDir of [statePath(), dir]) {
+    try {
+      for (const name of readdirSync(claimDir)) {
+        if (!/\.json(?:\.drain-[0-9a-f-]{36})+$/.test(name)) continue;
+        if (claimDir !== dir && !name.startsWith("warnings.json.drain-")) continue;
+        const path = join2(claimDir, name);
+        try {
+          if (Date.now() - statSync(path).mtimeMs > WARNING_CLAIM_STALE_MS) paths.push(path);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  return paths;
+}
+function readWarnings(consume = false) {
+  const records = [];
+  for (const path of warningPaths()) {
+    const claimed = consume ? `${path.replace(/(?:\.drain-[0-9a-f-]{36})+$/, "")}.drain-${randomUUID()}` : path;
+    let renamed = false;
+    if (consume) {
+      try {
+        renameSync(path, claimed);
+        renamed = true;
+        const now = /* @__PURE__ */ new Date();
+        utimesSync(claimed, now, now);
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+      }
+    }
+    const readPath = renamed ? claimed : path;
+    try {
+      const contents = readFileSync(readPath, "utf-8");
+      let parsed;
+      try {
+        parsed = JSON.parse(contents);
+      } catch {
+        if (renamed) {
+          try {
+            unlinkSync(claimed);
+          } catch {
+          }
+        }
+        continue;
+      }
+      records.push(
+        ...Array.isArray(parsed) ? parsed.filter(isWarningRecord) : isWarningRecord(parsed) ? [parsed] : []
+      );
+      if (renamed) unlinkSync(claimed);
+    } catch {
+      if (renamed) {
+        try {
+          renameSync(claimed, path);
+        } catch {
+        }
+      }
+    }
+  }
+  const warnings = /* @__PURE__ */ new Map();
+  for (const record of records.sort((a, b) => a.lastTime - b.lastTime)) {
+    const existing = warnings.get(record.code);
+    if (!existing) warnings.set(record.code, { ...record });
+    else if (record.lastTime - existing.lastTime >= WARN_RATE_LIMIT_MS) {
+      existing.lastTime = record.lastTime;
+      existing.count += record.count;
+    }
+  }
+  return [...warnings.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 function recordWarning(code) {
-  const warningsPath = statePath("warnings.json");
-  const warningsDir = dirname(warningsPath);
-  if (!existsSync(warningsDir)) {
-    mkdirSync(warningsDir, { recursive: true });
-  }
-  let warnings = [];
-  if (existsSync(warningsPath)) {
-    warnings = getWarningsFromDisk(warningsPath);
-  }
-  const now = Date.now();
-  const existingIndex = warnings.findIndex((w) => w.code === code);
-  if (existingIndex >= 0) {
-    const record = warnings[existingIndex];
-    if (!record) {
-      warnings.push({ code, lastTime: now, count: 1 });
-    } else if (now - record.lastTime < WARN_RATE_LIMIT_MS) {
-      return;
-    } else {
-      record.lastTime = now;
-      record.count++;
-    }
-  } else {
-    warnings.push({ code, lastTime: now, count: 1 });
-  }
+  const dir = statePath("warning-records");
+  const path = join2(dir, `${randomUUID()}.json`);
+  const temp = `${path}.tmp`;
   try {
-    const jsonStr = JSON.stringify(warnings, null, 2);
-    writeFileSync(warningsPath, jsonStr, "utf-8");
-    const contentHash = hashFileContents(jsonStr);
-    warningsCacheState = { warnings, contentHash };
+    const now = Date.now();
+    const existing = readWarnings().find((w) => w.code === code);
+    if (existing && now - existing.lastTime < WARN_RATE_LIMIT_MS) return;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(temp, JSON.stringify({ code, lastTime: now, count: 1 }), { flag: "wx" });
+    renameSync(temp, path);
   } catch {
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+    }
   }
 }
-function readWarningLines(warningsPath) {
-  if (!existsSync(warningsPath)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(warningsPath, "utf-8"));
-    const warnings = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : [];
-    return warnings.map((w) => {
-      const kind = ERROR_KINDS[w.code] ?? "informational";
-      return `${w.code} (${kind}, ${String(w.count)} occurrences): see ~/.mehmory/.state/errors.log`;
-    });
-  } catch {
-    return [];
-  }
+function warningLines(warnings) {
+  return warnings.map((w) => {
+    const kind = ERROR_KINDS[w.code] ?? "informational";
+    return `${w.code} (${kind}, ${String(w.count)} occurrences): see ${statePath("errors.log")}`;
+  });
+}
+function peekWarnings() {
+  return warningLines(readWarnings());
 }
 function pendingWarnings() {
-  const warningsPath = statePath("warnings.json");
-  const lines = readWarningLines(warningsPath);
-  if (!existsSync(warningsPath)) return lines;
-  try {
-    const emptyJson = JSON.stringify([], null, 2);
-    writeFileSync(warningsPath, emptyJson, "utf-8");
-    warningsCacheState = { warnings: [], contentHash: hashFileContents(emptyJson) };
-  } catch {
-  }
-  return lines;
+  return warningLines(readWarnings(true));
 }
 
 // src/core/fs.ts
@@ -256,11 +294,12 @@ import {
   lstatSync,
   renameSync as renameSync2,
   mkdirSync as mkdirSync2,
-  readdirSync,
+  readdirSync as readdirSync2,
   rmSync,
   unlinkSync as unlinkSync2,
   realpathSync,
   chmodSync,
+  fsyncSync,
   constants
 } from "fs";
 import { dirname as dirname2 } from "path";
@@ -336,7 +375,7 @@ function realpath(path) {
   }
 }
 function listDir(path) {
-  return readdirSync(path);
+  return readdirSync2(path);
 }
 function createLockExclusive(path, owner = "", onError) {
   try {
@@ -353,18 +392,42 @@ function atomicWrite(path, contents, mode) {
   const dir = dirname2(path);
   mkdir(dir);
   const tempPath = path + ".tmp-" + Math.random().toString(36).slice(2, 8);
-  const target = mode ?? existingMode(path);
-  if (target !== void 0) {
-    writeFileSync2(tempPath, contents, { encoding: "utf-8", mode: target });
-    chmodSync(tempPath, target);
-  } else {
-    writeFileSync2(tempPath, contents, "utf-8");
+  const targetMode = mode ?? existingMode(path);
+  let created = false;
+  try {
+    const fd = openSync(tempPath, "wx", targetMode);
+    created = true;
+    try {
+      writeFileSync2(fd, contents, "utf-8");
+      if (targetMode !== void 0) chmodSync(tempPath, targetMode);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync2(tempPath, path);
+    try {
+      const directoryFd = openSync(dir, "r");
+      try {
+        fsyncSync(directoryFd);
+      } finally {
+        closeSync(directoryFd);
+      }
+    } catch {
+    }
+  } catch (error) {
+    if (created) {
+      try {
+        unlinkSync2(tempPath);
+      } catch {
+      }
+    }
+    throw error;
   }
-  rename(tempPath, path);
 }
 function existingMode(path) {
   try {
-    return statSync2(path).mode & 511;
+    const info = lstatSync(path);
+    return info.isSymbolicLink() ? void 0 : info.mode & 511;
   } catch {
     return void 0;
   }
@@ -383,7 +446,10 @@ function appendRecord(path, record, key, lockPath) {
     try {
       lockPath(key, () => {
         mkdir(dirname2(path));
-        const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+        const fd = openSync(
+          path,
+          constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+        );
         try {
           writeSync(fd, escaped + "\n", null, "utf-8");
         } finally {
@@ -397,9 +463,12 @@ function appendRecord(path, record, key, lockPath) {
       return { ok: false, error: "append_failed_with_lock" };
     }
   } else {
-    mkdir(dirname2(path));
     try {
-      const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+      mkdir(dirname2(path));
+      const fd = openSync(
+        path,
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+      );
       try {
         writeSync(fd, escaped + "\n", null, "utf-8");
       } finally {
@@ -422,6 +491,7 @@ export {
   shellQuote,
   logError,
   failOpen,
+  peekWarnings,
   pendingWarnings,
   LOCK_RETRY_COUNT,
   LOCK_RETRY_INTERVAL_MS,

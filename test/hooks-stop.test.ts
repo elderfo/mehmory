@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createTempDir } from './helpers.js';
 import {
   additionalContext,
+  errorsLog,
   keyFor,
   outputJson,
   paths,
@@ -15,6 +16,8 @@ import {
 } from './hook-fixture.js';
 import { readSessionState, updateSessionState } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { statePath } from '../src/core/home.js';
 
 /** The Stop capture threshold now comes from config (`stop.capture_threshold`).
  * Read inside the test, not at import time — MEHMORY_HOME is only hermetic once
@@ -31,7 +34,7 @@ const TRANSCRIPT = [
 
 /** Put the session one Stop away from the capture threshold. */
 function primeCounter(sessionId: string): void {
-  updateSessionState(sessionId, state => ({
+  updateSessionState(sessionId, (state) => ({
     ...state,
     stop_count: stopThreshold() - 1,
   }));
@@ -50,17 +53,50 @@ describe('Stop hook', () => {
   });
 
   it('stays silent below the threshold but counts the stop', () => {
-    const run = runHook(
-      'stop',
-      { session_id: 's1', transcript_path: transcript },
-      { cwd }
-    );
+    const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(run.status).toBe(0);
     // `{}`, not silence: Codex parses Stop output on every Stop, and the
     // below-threshold Stop is the most frequent one (D9).
     expect(run.stdout).toBe('{}');
     expect(readSessionState('s1').stop_count).toBe(1);
+  });
+
+  it('keeps the threshold counter and cursor when the append fails', () => {
+    primeCounter('s1');
+    mkdirSync(statePath('locks'), { recursive: true });
+    const lock = statePath('locks', '__store__.lock');
+    writeFileSync(lock, String(process.pid));
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(readSessionState('s1').stop_count).toBe(stopThreshold());
+    expect(readSessionState('s1').cursor.offset).toBe(0);
+    rmSync(lock);
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
+  });
+
+  it('nudges once and backs off silent retries after persistent append failure', () => {
+    writeFileSync(
+      statePath('..', 'config.json'),
+      JSON.stringify({ stop: { capture_threshold: 3 } })
+    );
+    mkdirSync(paths(key).inbox);
+    const runs = Array.from({ length: 9 }, () =>
+      runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd })
+    );
+    expect(runs.filter((run) => additionalContext(run) !== '')).toHaveLength(1);
+    expect(
+      statsLines()
+        .filter((line) => line['captured_entries'] !== undefined)
+        .map((line) => line['stop_count'])
+    ).toEqual([3, 4, 7]);
+    expect(errorsLog().match(/Stop capture still failing/g)).toHaveLength(1);
+    expect(readSessionState('s1').cursor.offset).toBe(0);
+    rmSync(paths(key).inbox, { recursive: true });
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
   });
 
   it('captures and blocks once at the threshold', () => {

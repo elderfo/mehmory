@@ -65,7 +65,12 @@ A8 defines bounds for fail-open operations in one module so later runs can overr
   owner liveness (`LOCK_MAX_AGE_MS` in `lock.ts`)
 - Reclaim guard abandonment: after 30 s (`LOCK_STALE_MS`); a guard serializes the file
   identity/owner recheck and unlink, and abandoned guards use the same guarded protocol
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **Lock age-cap decision.** A PID can be reused after its original owner exits, so a liveness
 probe alone could protect an abandoned lock forever. The five-minute cap deliberately favors
@@ -158,10 +163,11 @@ gets the same deduplication without a dispatch layer).
 
 ### A13. Capture state is session-scoped
 
-One `.state/<session-id>.json` per session holds the transcript cursor, the Stop counter,
-the topic cache, the project key the session ran in, the generation (which run of a
-reused session id this is), and the pause flag. The public `./core/session` export records
-that origin through `rememberSessionOrigin(sessionId, transcriptPath, host, projectKey)`;
+One `.state/<sha256(session-id)>.json` per session holds the transcript cursor, the Stop
+counter, the topic cache, the project key and agent the session ran under, the generation
+(which run of a reused session id this is), and the pause flag. The public `./core/session`
+export records that origin through
+`rememberSessionOrigin(sessionId, transcriptPath, host, projectKey, agent)`;
 the former `setCachedProjectKey` export is removed. The project key is recorded as the
 session's origin rather than cached for speed: a deferred finalize runs inside another
 session's hook, so this file is the only surviving record of which project the transcript
@@ -169,6 +175,30 @@ belongs to. This **amends run 1's global
 `cursor.json` contract** (run-2 amendment 2); the global-cursor API is removed rather
 than kept alongside — one way to do it, and nothing shipped consumes it yet, so the break
 is free now and expensive after run 3.
+
+Capture holds the session lock across reading a delta and its durable append or enqueue.
+The cursor advances only after every append succeeds (dedup skips count as success) or the
+final-delta job is enqueued; failure leaves the delta and Stop counter available for retry.
+`distillDelta` is a preview and does not advance the cursor by itself.
+
+Finalized markers block unchanged trailing hooks, not a session's later work. SessionStart
+explicitly resumes the id before origin recording, clearing a retired session's saved pause
+and running injection and maintenance regardless of transcript timing. Ordinary capture and
+mutations also resume it under the session lock when its transcript exists and has grown beyond
+both the saved cursor offset and file size. Only without a real cursor (`file_id` is empty or
+absent) does modification after the marker count instead. An already-present incomplete tail,
+an mtime bump with a real cursor, or truncation is not new activity.
+Both paths restore the marker cursor and increment the generation rather than recreating
+state at offset zero. Markers retain the transcript path and origin so even
+mutations without a hook payload can detect later activity. Activity-detected resumes also
+preserve a session pause. No later activity means no resurrection. Deferred tails use the
+recorded origin agent, never the sweeping
+process's name. An unnamed origin is recorded as null; legacy or invalid names remain
+unattributed instead of being guessed.
+
+Stop nudges only at the first threshold crossing. A failed append leaves the cursor and
+counter intact, gets one immediate silent retry, then at most one silent retry per threshold
+window; persistent failure is reported once after that immediate retry.
 
 **Rejected:** Global cursor (spec blocker: interleaved sessions reset each other into a
 full re-distill); separate files per concern (`cursor.<id>`, `topics.<id>`, … — N files
@@ -188,7 +218,17 @@ human-readable-markdown premise, which is the product).
 ### A15. Transactional mutations from skills go through a bundled helper, never raw model edits
 
 `hooks/inbox-tx.mjs` wraps the inbox primitives; `integrate` and `remember` invoke it via
-Bash. It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
+Bash. `pause` and `resume` also use the helper with the session id from the `session: <id>`
+line inside SessionStart's `<mehmory-memory>` frame; the line takes a share of the memory
+budget. All six skills use that id to read `.state/<sha256(session-id)>.json`; recency is
+only a legacy project hint requiring user confirmation, never proof of session identity.
+When only that session's `.finalized.json` marker exists, skills read `project_key` and `host`
+from it; it records the same session retired by the idle sweep.
+The helper changes the flag under the session lock, not through raw state edits. The CLI
+`mehmory inbox-tx` shares these operations. A failed append is an error, including partial
+failure: retrying the same entries dedups those already written.
+
+It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
 the directory is not — but it is **not a hook**: it reports failures via stderr and a
 non-zero exit like the CLI it prefigures, and is exempt from the U2 no-stderr rule.
 
@@ -205,6 +245,16 @@ Injection, pointers and capture must complete. Decay, queue claims and sweeps ru
 when uncontended (first-attempt lock, ≤1 job) and skip silently otherwise — the next
 session retries.
 
+Atomic replacements fsync the temporary file before rename and the containing directory
+best-effort afterward. Budget approximately 1–2 ms per write on SSD, more on network or
+WSL mounts. Git add/commit/diff belong to SessionEnd, purge, or maintenance, not the
+response lane, so their 10 s timeout is deliberately larger than cheap read probes.
+Store git calls strip repository-location and pathspec-mode environment overrides,
+disable hooks and fsmonitor, suppress signature display in history reads, and use
+`LC_ALL=C`; discovery ceilings are retained.
+Project-identity reads retain the caller's repository environment because they name the
+user's repo rather than the store, but remain bounded by the cheap-probe timeout.
+
 **Rejected:** Maintenance on the response path (the spec's own bounds compose to a 5 s
 lock wait inside a <1 s budget); a background daemon (nothing in v1 owns a resident
 process, and the durable queue exists precisely so short-lived processes can hand work
@@ -220,7 +270,12 @@ protocol family. A8's bound list now reads:
 - Lock retry (default lane): 50 × 100 ms then proceed lock-free
 - **Lock retry (hook-maintenance lane): 1 attempt, then skip and defer to the next
   session** — the injection path must never sit inside a retry loop
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **WORLD_MODEL check.** A12 upholds A1/A3/A9/A11/U2; A13 amends the run-1 cursor contract
 (named amendment, raised at the gate); A14 extends A4; A15 upholds A2/A6; A16 upholds A2

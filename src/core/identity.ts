@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { loadConfig, type MehmoryConfig } from './config.js';
 import { realpath } from './fs.js';
+import { GIT_PROBE_TIMEOUT_MS } from './git.js';
 
 /**
  * Module-level cache for resolveProjectKey results, keyed by working directory.
@@ -160,6 +161,8 @@ function tryGetGitToplevel(cwd: string): string | undefined {
       cwd,
       encoding: 'utf-8',
       stdio: 'pipe',
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
     }).trim();
     return top || undefined;
   } catch {
@@ -174,13 +177,21 @@ function tryGetGitToplevel(cwd: string): string | undefined {
 function tryGetGitRemoteKey(cwd: string): string | undefined {
   try {
     // Check if we're in a git repository
-    execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'pipe' });
+    // Identity names the caller's repo, so intentional GIT_DIR/WORK_TREE overrides apply.
+    execFileSync('git', ['rev-parse', '--git-dir'], {
+      cwd,
+      stdio: 'pipe',
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
+    });
 
     // Get the origin remote URL
     const remoteUrl = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
       cwd,
       encoding: 'utf-8',
       stdio: 'pipe',
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
     }).trim();
 
     if (!remoteUrl) {

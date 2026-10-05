@@ -25,7 +25,7 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { mehmoryHome } from '../src/core/home.js';
-import { readSessionState, sessionStatePath } from '../src/core/session.js';
+import { freshSessionState, readSessionState, sessionStatePath, writeSessionState } from '../src/core/session.js';
 import { parseInboxEntries } from '../src/schema/format.js';
 
 /** The arguments `mehmory init --codex` writes: host first, ownership marker after. */
@@ -232,13 +232,15 @@ describe('finalization at the next session start (#24)', () => {
       { session_id: 'claude-a', transcript_path: transcript },
       { cwd, args: ['claude-code'] }
     );
-    // SessionEnd deletes its own state, so re-plant an aged one: the marker, not the
-    // absence of state, is what must make the second pass a no-op.
+    // A trailing Stop cannot recreate state. Simulate a pre-upgrade stale state file
+    // afterwards: the marker must still make the second pass a no-op.
     runHook(
       'stop',
       { session_id: 'claude-a', transcript_path: transcript },
       { cwd, args: ['claude-code'] }
     );
+    expect(existsSync(sessionStatePath('claude-a'))).toBe(false);
+    writeSessionState({ ...freshSessionState('claude-a'), transcript_path: transcript });
     abandon('claude-a');
 
     runHook(

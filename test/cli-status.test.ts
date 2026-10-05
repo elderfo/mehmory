@@ -2,11 +2,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { envelopeOf, runCli } from './cli-fixture.js';
-import { recordWarning } from '../src/core/errors.js';
+import { recordWarning, peekWarnings, pendingWarnings } from '../src/core/errors.js';
 
 function home(): string {
   return process.env.MEHMORY_HOME ?? '';
@@ -76,7 +76,10 @@ describe('mehmory status', () => {
     // `status` that used it would be the last place the user ever saw the warning.
     const cwd = populated();
     recordWarning('E_GIT_COMMIT');
-    const before = readFileSync(join(home(), '.state', 'warnings.json'), 'utf-8');
+    const before = [
+      `E_GIT_COMMIT (informational, 1 occurrences): see ${join(home(), '.state', 'errors.log')}`,
+    ];
+    expect(peekWarnings()).toEqual(before);
 
     for (let run = 0; run < 2; run++) {
       const result = runCli(['status', '--json'], { cwd });
@@ -85,7 +88,8 @@ describe('mehmory status', () => {
       expect(String((envelope['warnings'] as string[])[0])).toContain('E_GIT_COMMIT');
     }
 
-    expect(readFileSync(join(home(), '.state', 'warnings.json'), 'utf-8')).toBe(before);
+    expect(pendingWarnings()).toEqual(before);
+    expect(peekWarnings()).toEqual([]);
   });
 
   it('exits 2 with a runnable fix when there is no store', () => {

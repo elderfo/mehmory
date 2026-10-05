@@ -11,21 +11,24 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-ODLV4UIH.mjs";
+} from "./chunk-CC4E3AQB.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
+  currentAgentName,
   isPaused,
   loadConfig,
   pageAgeDays,
   parseIndexLine,
   readFrontmatter,
   readInboxEntries,
+  rememberSessionOrigin,
   resumeFinalizedSession,
+  runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-2IESAF5R.mjs";
-import "./chunk-YPED7F4N.mjs";
+} from "./chunk-CR4WRARC.mjs";
+import "./chunk-WVRKG4UX.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -41,11 +44,10 @@ import {
   rename,
   shellQuote,
   stat
-} from "./chunk-PZNSX44T.mjs";
+} from "./chunk-S7B7BPQR.mjs";
 
 // src/core/store.ts
 import { join } from "path";
-import { execFileSync } from "child_process";
 function initStore() {
   const home = mehmoryHome();
   try {
@@ -68,14 +70,8 @@ function initStore() {
     const gitDir = join(home, ".git");
     if (!pathExists(gitDir)) {
       try {
-        execFileSync("git", ["init", home], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
-        execFileSync("git", ["-C", home, "config", "commit.gpgsign", "false"], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
+        runStoreGit(["init", home], home);
+        runStoreGit(["config", "--local", "commit.gpgsign", "false"], home);
       } catch (err) {
         const error = {
           code: "E_STORE_INIT",
@@ -224,7 +220,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed \u2014 including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. \`\\\\\`, \`\\n\`, \`\\r\`, and \`--\\>\` are escape sequences in entry text (backslash, newline, carriage return, and \`-->\` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.
@@ -409,11 +405,19 @@ function maintenance(sessionId, project, host, config) {
   return finalized;
 }
 runHook("SessionStart", (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  if (!config.hooks.session_start.enabled) return {};
   resumeFinalizedSession(input.session_id);
+  rememberSessionOrigin(
+    input.session_id,
+    input.transcript_path,
+    host,
+    project,
+    currentAgentName(config)
+  );
+  if (isPaused(input.session_id)) return {};
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];

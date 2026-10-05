@@ -116,16 +116,30 @@ was not recorded*, *Failed to stage paths; commit aborted*, or *Commit failed; t
 staged for manual recovery*. No `Fix:` clause; `mehmory doctor` flags an uncommitted store so
 you don't have to notice on your own.
 
+Git probes have a 500 ms timeout; add, commit, diff, init, config, status, and log have
+10 s. A timeout sends SIGTERM so git can release its lock. A stale `.git/index.lock`
+left by an interrupted git (especially older builds using SIGKILL) can block every later
+commit. Mehmory never deletes an index lock: neither its age nor its creation during
+our call proves ownership. Timeouts log that the lock is left untouched and include the
+manual remedy. Deferral on a lock older than 30 s also logs that remedy and queues an
+`E_GIT_COMMIT` warning through the existing hourly rate limit; fresh contention is silent.
+If no git process is running, the manual remedy is `rm <store>/.git/index.lock`
+(replace `<store>` with the resolved store home), then retry. A timed-out repository
+probe is reported as a timeout, not a missing repo.
+
+Store operations assume git >= 2.37, which interprets `core.fsmonitor=false` as a boolean
+to disable fsmonitor rather than as the name of an executable hook.
+
 ## E_QUEUE_CLAIM (informational)
 
 A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fix:`.
 
 ## E_SESSION_STATE (informational)
 
-Either a session's state file (`.state/<session-id>.json`) was corrupt or unreadable and got
-reset, or a hook ran with no `session_id` at all. Consequence is one of: *Capture state reset
-to fresh; the transcript may be re-distilled once*, or *The invocation was skipped; no session
-state was read or written.* No `Fix:` — both are self-healing.
+Either a session's state file (`.state/<sha256(session-id)>.json`) was corrupt or unreadable and got
+reset, or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
+to fresh; the transcript may be re-distilled once_, or _The invocation was skipped; no session
+state was read or written._ No `Fix:` — both are self-healing.
 
 ## E_CURSOR_RESET (informational)
 
@@ -395,8 +409,20 @@ still on disk, has no finalization marker, and has sat untouched for 30 minutes 
 abandoned, and the next `SessionStart` in any project distills its remaining delta, files it,
 logs one `session-end` line, commits, and marks it finalized. The marker is what makes this safe
 to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
-is skipped, so nothing is written or committed twice. The 30-minute idle window is what keeps a
-second terminal from retiring a session that is merely quiet.
+is skipped while its transcript is unchanged, so nothing is written or committed twice.
+Both state and transcript must be idle for 30 minutes. A live session can still outwait
+that window. With a real cursor (`file_id` is non-empty), only byte growth beyond both its
+saved offset and size lets the next ordinary hook or mutation resume with a new generation;
+an mtime bump or truncation does not. Without a real cursor, including a fresh cursor with
+`file_id: ''`, only modification after the marker counts. No SessionStart is required, and
+old entries are not replayed.
+
+SessionStart explicitly resumes a retired session, clears its saved pause, and runs injection
+and maintenance whether or not the transcript was touched first. A live session without a
+marker keeps its pause. Skills can read `project_key` and `host` from the named session's
+`.state/<sha256(session-id)>.finalized.json` when its ordinary state file is absent; that marker
+belongs to the same session retired by the idle sweep. If pause/resume cannot change a retired
+session yet, retry after the next turn rather than waiting for another SessionStart.
 
 **Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
 the inbox when the next session starts, not when the session ended. If that session was the last

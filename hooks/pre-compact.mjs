@@ -1,16 +1,16 @@
 import {
   captureDelta,
   runHook
-} from "./chunk-ODLV4UIH.mjs";
+} from "./chunk-CC4E3AQB.mjs";
 import {
   isPaused,
   resetStopCount
-} from "./chunk-2IESAF5R.mjs";
-import "./chunk-YPED7F4N.mjs";
+} from "./chunk-CR4WRARC.mjs";
+import "./chunk-WVRKG4UX.mjs";
 import {
   logError,
   pathExists
-} from "./chunk-PZNSX44T.mjs";
+} from "./chunk-S7B7BPQR.mjs";
 
 // src/hooks/pre-compact.ts
 runHook("PreCompact", (input, project, host, config) => {
@@ -26,6 +26,6 @@ runHook("PreCompact", (input, project, host, config) => {
     return {};
   }
   const captured = captureDelta(input.session_id, transcript, project, host, config);
-  resetStopCount(input.session_id);
+  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
   return { stats: { captured_entries: captured.appended } };
 });

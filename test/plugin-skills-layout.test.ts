@@ -29,16 +29,17 @@ function frontmatter(body: string): Record<string, string> {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(body);
   if (!match?.[1]) throw new Error('no frontmatter block');
   const parsed: unknown = parseYaml(match[1], { strict: true, uniqueKeys: true });
-  if (typeof parsed !== 'object' || parsed === null) throw new Error('frontmatter is not a mapping');
+  if (typeof parsed !== 'object' || parsed === null)
+    throw new Error('frontmatter is not a mapping');
   return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value)]));
 }
 
 const bodies = new Map(
-  SKILLS.map(name => [name, readFileSync(resolve('skills', name, 'SKILL.md'), 'utf-8')])
+  SKILLS.map((name) => [name, readFileSync(resolve('skills', name, 'SKILL.md'), 'utf-8')])
 );
 
 describe('plugin skills layout', () => {
-  it.each(SKILLS)('skills/%s/SKILL.md has the required frontmatter', name => {
+  it.each(SKILLS)('skills/%s/SKILL.md has the required frontmatter', (name) => {
     const fields = frontmatter(bodies.get(name) as string);
     expect(fields['name']).toBe(name);
     expect(fields['name']).toMatch(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
@@ -49,6 +50,33 @@ describe('plugin skills layout', () => {
     expect(fields['allowed-tools']?.length).toBeGreaterThan(0);
     expect(fields['allowed-tools']).not.toContain(',');
   });
+
+  it.each(['pause', 'resume'])(
+    '%s uses a transactional helper with an explicit session id',
+    (name) => {
+      const body = bodies.get(name) as string;
+      expect(body).toContain(`mehmory inbox-tx ${name}`);
+      expect(body).toContain('session_id');
+      expect(body).not.toContain('xargs -r ls -t');
+      expect(frontmatter(body)['allowed-tools']).not.toContain('Edit');
+    }
+  );
+
+  it.each(SKILLS)('%s reads a swept session origin from its own finalized marker', (name) => {
+    const body = (bodies.get(name) as string).replace(/\s+/g, ' ');
+    expect(body).toContain(
+      'If the frame names a session but only `$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and `host` from that marker; it is the same session retired by the idle sweep.'
+    );
+  });
+
+  it.each(['pause', 'resume'])(
+    '%s advises retrying a retired session after the next turn',
+    (name) => {
+      const body = (bodies.get(name) as string).replace(/\s+/g, ' ');
+      expect(body).toContain('retry after the next turn');
+      expect(body).not.toContain('harness SessionStart/resume');
+    }
+  );
 
   it('remember names the `remember:` prompt prefix in its description', () => {
     // The only run-2 surface that can teach the zero-latency path (criterion 17).
@@ -102,16 +130,30 @@ describe('plugin skills layout', () => {
     }
   });
 
-  // Issue #17: the inbox helper is reachable through `mehmory inbox-tx`, so skills call
-  // the binary instead of resolving a path through the Claude-Code-specific plugin-root
-  // variable. Asserted with teeth (not a vacuous pass) — at least one skill must use it.
-  it('skills reach the inbox helper through the CLI, not a plugin-root variable', () => {
-    const usesCli = [...bodies.values()].some(body => body.includes('mehmory inbox-tx'));
-    expect(usesCli).toBe(true);
-    for (const [name, body] of bodies) {
-      expect(body, name).not.toContain('CLAUDE_PLUGIN_ROOT');
+  it.each(SKILLS)('%s identifies its session from the injected frame first', (name) => {
+    const body = bodies.get(name) as string;
+    expect(body).toContain('session:');
+    expect(body).toContain('<mehmory-memory>');
+    expect(body).toContain('sha256');
+    const recency = body.indexOf('ls -t');
+    if (recency >= 0) {
+      expect(body.indexOf('fallback')).toBeLessThan(recency);
+      expect(body.indexOf('session:')).toBeLessThan(recency);
     }
   });
+
+  it.each(['pause', 'resume', 'remember', 'integrate'])(
+    '%s prefers the CLI and gives executable host-specific bundle fallbacks',
+    (name) => {
+      const body = bodies.get(name) as string;
+      expect(body).toContain('mehmory inbox-tx');
+      expect(body).toContain('node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs"');
+      expect(body).toContain('CODEX_HOME');
+      expect(body).toContain('hooks.json');
+      expect(body).toContain('git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs');
+      expect(body).not.toContain('<installed-mehmory>');
+    }
+  );
 });
 
 describe('plugin manifest', () => {
@@ -130,9 +172,7 @@ describe('plugin manifest', () => {
     const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as { version: string };
     const version = readFileSync(resolve('VERSION'), 'utf-8').trim();
 
-    expect(manifest.$schema).toBe(
-      'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json'
-    );
+    expect(manifest.$schema).toBe('https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
     expect(manifest.name).toBe('mehmory');
     expect(manifest.version).toBe(version);
     expect(manifest.version).toBe(pkg.version);
@@ -187,7 +227,9 @@ describe('plugin manifest', () => {
   // shape Codex expects (a `plugins[].source` Codex can't resolve, a missing `name`)
   // fails here instead of silently in the field.
   it('doubles as the Codex plugin manifest — one marketplace.json, both harnesses', () => {
-    const marketplace = JSON.parse(readFileSync(resolve('.claude-plugin/marketplace.json'), 'utf-8')) as {
+    const marketplace = JSON.parse(
+      readFileSync(resolve('.claude-plugin/marketplace.json'), 'utf-8')
+    ) as {
       name: string;
       plugins: readonly { name: string; source: string; description: string }[];
     };

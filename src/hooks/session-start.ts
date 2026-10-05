@@ -11,7 +11,13 @@ import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
 import { logError, pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
-import { isPaused, resumeFinalizedSession, sweepSessionState } from '../core/session.js';
+import {
+  isPaused,
+  rememberSessionOrigin,
+  resumeFinalizedSession,
+  sweepSessionState,
+} from '../core/session.js';
+import { currentAgentName } from '../core/agent.js';
 import { readInboxEntries } from '../core/inbox.js';
 import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
@@ -74,17 +80,23 @@ function maintenance(
 }
 
 runHook('SessionStart', (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  if (!config.hooks.session_start.enabled) return {};
 
-  // A start for an id that already has a finalization marker is a resume: the harness
-  // reuses the id, so without this every later SessionEnd for it is a no-op and the whole
-  // resumed run is never captured. Runs before `maintenance`, whose sweep skips this
-  // session id anyway, so the two cannot contend.
+  // Explicit resume clears a retired session's pause before origin recording can
+  // detect activity and preserve it instead. An ordinary live session stays paused.
   resumeFinalizedSession(input.session_id);
+  rememberSessionOrigin(
+    input.session_id,
+    input.transcript_path,
+    host,
+    project,
+    currentAgentName(config)
+  );
+  if (isPaused(input.session_id)) return {};
 
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
 
