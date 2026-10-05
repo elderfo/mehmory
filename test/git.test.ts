@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node
 import { execFileSync, spawnSync } from 'node:child_process';
 import { statePath } from '../src/core/home.js';
 import { commitPaths, ensureGitBaseline } from '../src/core/git.js';
-import { peekWarnings, pendingWarnings } from '../src/core/errors.js';
+import { peekWarnings, pendingWarnings, shellQuote } from '../src/core/errors.js';
 
 // Setup a temporary git repo for testing
 function setupTestRepo(): { readonly dir: string; readonly cleanup: () => void } {
@@ -111,7 +111,7 @@ describe('commitPaths (done-when 8)', () => {
       const hookScript = join(hooksDir, 'post-index-change');
       writeFileSync(
         hookScript,
-        '#!/bin/sh\n' + 'touch "' + lockPath.replace(/"/g, '\\"') + '"\n' + 'exit 0\n'
+        `#!/bin/sh\ntouch ${shellQuote(lockPath)}\nexit 0\n`
       );
       execFileSync('chmod', ['+x', hookScript], { stdio: 'pipe' });
 
@@ -285,7 +285,7 @@ describe('git child isolation', () => {
       mkdirSync(hookDir);
       const marker = join(dir, 'hook-ran');
       for (const hook of ['pre-commit', 'post-commit']) {
-        writeFileSync(join(hookDir, hook), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, {
+        writeFileSync(join(hookDir, hook), `#!/bin/sh\ntouch ${shellQuote(marker)}\nexit 1\n`, {
           mode: 0o755,
         });
       }
