@@ -143,10 +143,34 @@ the fix — committing the pending removal is.
 
 ## E_CODEX_INSTALL (actionable)
 
-`mehmory init --host codex` could not read or write a file under `$CODEX_HOME`. Consequence:
-*the file was left exactly as it is, so no hook registration was changed.* Fix: `$EDITOR
-<the named file>` when it does not parse, `ls -l <its directory>` when the write itself
-failed.
+`mehmory init --host codex` could not safely edit configuration, install skills, or acquire
+its installation lock. Reasons and stable consequence sentences:
+
+- **Unsupported features shape or triple-quoted TOML:** _`<file>` was left exactly as it is,
+  so no hook registration was changed._ Fix: `$EDITOR <file>`; use a supported table,
+  dotted boolean key, or single-line boolean inline table. Triple-quoted strings are
+  conservatively unsupported, and `doctor` reads their hooks feature as unknown.
+- **Missing hook bundles:** _`<file>` was not modified, so the Codex integration is not in place._
+  Fix: `pnpm build` in a checkout, or reinstall a complete package. No configuration is written.
+- **Missing skill sources or symlinked skills paths:** _no mehmory skill was installed for Codex_
+  for missing sources; _`<path>` was not modified, so the Codex integration is not in place_
+  for unsafe destinations. Restore the shipped sources or replace the skill-path symlink
+  with a real directory. All targets are checked before configuration or backups are written.
+- **Lock contention:** _Codex configuration was not changed._ Retry after the other process
+  finishes; if no installation is running, remove the named `$CODEX_HOME/.mehmory-install.lock`.
+  Failure to create a lock when none exists is an immediate write failure, not contention.
+- **Staged-skill cleanup incomplete:** _Codex integration was removed, but staged skill cleanup is incomplete._
+  Hooks and discoverable skills stay removed. Run the error's `rm -r <staging directory>` fix.
+- **Symlinked configuration targets:** resolved `config.toml` and `hooks.json` symlinks are
+  supported; writes and backups go next to their real targets, including outside `$CODEX_HOME`.
+  A dangling or unresolvable target is refused: _`<path>` was not modified, so the Codex integration is not in place._
+  Repair the link and check target-directory permissions before retrying.
+- **Write failure during uninstall:** _`<path>` was not modified, so the Codex integration was not removed._
+  Fix: `ls -l <its directory>`. The same write failure during install ends with
+  _the Codex integration is not in place_ instead.
+
+Malformed JSON also reports _`<file>` was left exactly as it is, so no hook registration was changed._
+Fix: `$EDITOR <the named file>` when it does not parse, `ls -l <its directory>` when the write itself failed.
 
 The refusal is deliberate. `~/.codex/hooks.json` is shared with every other tool that
 registers a Codex hook, so a file mehmory cannot parse is left alone rather than replaced —

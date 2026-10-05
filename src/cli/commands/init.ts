@@ -202,11 +202,11 @@ function hostResult(result: CodexResult, host: InboxHost, uninstall: boolean): C
   const lines = uninstall
     ? [
         report.changed.length === 0
-          ? `no mehmory entries in ${report.hooksFile}`
+          ? `nothing to remove: no mehmory entries in ${report.hooksFile}`
           : `mehmory entries removed from ${report.hooksFile}`,
         // Never turned off: the flag is Codex's, and other tools' hooks depend on it.
         `Codex \`[features] hooks\` left as it is in ${report.configFile}`,
-        'skills removed',
+        report.changed.length === 0 ? 'no skills removed' : 'skills removed',
       ]
     : [
         report.changed.length === 0

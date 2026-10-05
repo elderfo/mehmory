@@ -157,6 +157,10 @@ nothing was removed. This is worth stating plainly, because a user's first assum
 unconditional: `--uninstall` never removes an entry it did not write, and the file is backed
 up (`<file>.mehmory.bak`, mode `0600`) before any change. Each modification replaces that
 backup with the immediately preceding contents, not the state before the first installation.
+Symlinked `config.toml` and `hooks.json` are resolved with realpath and edited at their real
+targets, preserving the symlinks. Their private backups live next to those targets, which
+may be outside `$CODEX_HOME` (for example, in a dotfiles repository). Unresolvable or dangling
+configuration symlinks are refused without replacement.
 But if `$CODEX_HOME/hooks.json` was not already in
 the canonical 2-space JSON Codex itself writes — hand-edited with different spacing, for
 example — uninstall's rewrite renders the whole file back out in that canonical form. Nothing
@@ -166,7 +170,10 @@ is added, removed, or reordered in the data; the bytes around it can still chang
 Uninstall stages skill directories before removing hooks. A staging or hook-edit failure
 restores the skills. If deletion of staged directories then fails, hooks and discoverable
 skills remain removed together; the error names the leftover directory under `$CODEX_HOME`
-for cleanup. The store is still untouched.
+for cleanup. The store is still untouched. An uninstall on a never-installed home creates
+neither `$CODEX_HOME` nor a hook registry; removing skills without an existing registry does
+not create one either. Install preflights skill sources and symlink-sensitive targets before
+editing configuration, so those refusals leave no partial installation or backups behind.
 
 ## Restoring from `purge --export`
 

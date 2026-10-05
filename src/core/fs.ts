@@ -175,13 +175,18 @@ export function listDir(path: string): string[] {
 }
 
 /** Create a lock file exclusively (fails if it already exists). Returns true on success. */
-export function createLockExclusive(path: string, owner = ''): boolean {
+export function createLockExclusive(
+  path: string,
+  owner = '',
+  onError?: (_error: unknown) => void
+): boolean {
   try {
     const fd = openSync(path, 'wx');
     if (owner !== '') writeSync(fd, owner);
     closeSync(fd);
     return true;
-  } catch {
+  } catch (err) {
+    onError?.(err);
     return false;
   }
 }

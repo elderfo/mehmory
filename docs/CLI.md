@@ -125,16 +125,22 @@ hook, so both edits are merges, never rewrites:
   second run with nothing to change writes no bytes at all.
 - Each configuration file is copied to `<file>.mehmory.bak` immediately before it is
   modified, replacing any previous backup with that immediately preceding state. Backups
-  have mode `0600`. A run that changes nothing takes no backup.
+  have mode `0600`. A run that changes nothing takes no backup. Symlinked `config.toml`
+  and `hooks.json` are resolved with realpath: edits update the real target without replacing
+  the symlink, and the backup is written next to that target (including outside `$CODEX_HOME`).
+  A dangling or unresolvable configuration symlink is refused, not replaced.
 - A `hooks.json` that does not parse is **refused**, not overwritten: exit **3** with
   `E_CODEX_INSTALL`, and the file is left byte-for-byte as it was. Overwriting a file
   mehmory could not read would silently unregister whoever else owns entries in it.
 - The `config.toml` edit is a line edit. `[features]` headers accept whitespace and trailing
   comments; existing `hooks` comments survive. Root-level `features.*` dotted keys and
   single-line inline tables of boolean feature flags are updated in place, without adding
-  another table. Other inline feature shapes are refused with `E_CODEX_INSTALL` before any
-  Codex file or backup is written. Your models, MCP servers, per-project trust levels and
-  Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
+  another table. Array continuation rows are never interpreted as headers or keys. Unsupported
+  feature shapes and files containing triple-quoted strings (`"""` or `'''`) are refused with
+  `E_CODEX_INSTALL` before any Codex file or backup is written; `doctor` reports the hooks
+  feature as unknown for those strings rather than reading their contents as settings.
+  Existing CRLF line endings are retained, including for appended configuration lines.
+  Your models, MCP servers, per-project trust levels and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
 - **`hooks.json` byte-identity holds only under one assumption: the file was already in
   canonical 2-space JSON, the shape Codex itself writes.** Content correctness (no entry
   mehmory did not write is ever touched) holds unconditionally either way. But
@@ -148,6 +154,13 @@ tools' hooks depend on it. Skill directories are staged outside `skills/` first 
 if staging or the hook edit fails. If deleting staged directories fails after the hook edit,
 the integration stays fully uninstalled (no live hooks or discoverable skills); exit 3 with
 `E_CODEX_INSTALL` names the leftover `$CODEX_HOME/.mehmory-uninstall-*` directory to clean up.
+
+Skill sources, the skills-root symlink check, and every skill target are preflighted before
+configuration edits, so a refusal creates no Codex configuration backups or partial skills.
+Uninstall with neither a hook registry nor mehmory skills reports “nothing to remove” and
+creates no files or `$CODEX_HOME` directory. Removing skills alone never creates `hooks.json`.
+An unwritable installation lock is reported immediately; actual contention names
+`$CODEX_HOME/.mehmory-install.lock` so a confirmed stale lock can be removed by hand.
 
 Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
 

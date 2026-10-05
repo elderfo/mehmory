@@ -20,11 +20,11 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-CU44STGN.mjs";
+} from "./chunk-OI5RI5RL.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-YZTNJJDP.mjs";
+} from "./chunk-3T2Z6INZ.mjs";
 import {
   INDEX_LOCK_RETRY_COUNT,
   INDEX_LOCK_RETRY_INTERVAL_MS,
@@ -50,7 +50,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-NTSIN6Z2.mjs";
+} from "./chunk-DMITHIMK.mjs";
 
 // src/core/stats.ts
 function statsPath() {

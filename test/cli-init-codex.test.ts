@@ -112,6 +112,31 @@ describe('mehmory init --host codex', () => {
       'features.hooks = false # note\nfeatures.web_search = true\n',
       'features.hooks = true # note\nfeatures.web_search = true\n',
     ],
+    [
+      'root key after a nested multiline array',
+      'notify = [\n  ["osascript", "hello"],\n]\n"features".hooks = false\n',
+      'notify = [\n  ["osascript", "hello"],\n]\n"features".hooks = true\n',
+    ],
+    [
+      'table key after a nested multiline array',
+      '[features]\nnotify = [\n  ["osascript", "hello"],\n]\nhooks = false\n',
+      '[features]\nnotify = [\n  ["osascript", "hello"],\n]\nhooks = true\n',
+    ],
+    [
+      'appended CRLF table',
+      'model = "gpt-5"\r\n',
+      'model = "gpt-5"\r\n\r\n[features]\r\nhooks = true\r\n',
+    ],
+    [
+      'CRLF dotted key without final newline',
+      'model = "gpt-5"\r\nfeatures.web_search = true',
+      'model = "gpt-5"\r\nfeatures.web_search = true\r\nfeatures.hooks = true',
+    ],
+    [
+      'CRLF header without final newline',
+      'model = "gpt-5"\r\n[features]',
+      'model = "gpt-5"\r\n[features]\r\nhooks = true',
+    ],
     ['empty inline table', 'features = {}\n', 'features = { hooks = true }\n'],
     [
       'inline table',
@@ -136,6 +161,11 @@ describe('mehmory init --host codex', () => {
     'features = {\n  web_search = true\n}\n',
     'features.hooks.enabled = false\n',
     '[ features ] # note\nhooks.enabled = false\n',
+    'notify = [\n  ["osascript", "hello"],\n]\nfeatures = { nested = { enabled = true } }\n',
+    'notify = [\n  ["osascript", "hello"],\n]\nfeatures.hooks.enabled = false\n',
+    'notify = [\n  ["osascript", "hello"],\n]\n\'features\' = false\n',
+    'notes = """\n[features]\nhooks = false\n"""\n',
+    "notes = '''\n[features]\nhooks = false\n'''\n",
   ])('refuses unsupported feature syntax before writing any Codex file: %s', config => {
     const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config });
     const before = treeDigest(fixture.codexHome);
@@ -145,6 +175,35 @@ describe('mehmory init --host codex', () => {
     expect(treeDigest(fixture.codexHome)).toBe(before);
     expect(readFileSync(fixture.configFile, 'utf-8')).toBe(config);
     expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(FOREIGN_HOOKS);
+  });
+
+  it.each(['"""', "'''"])('doctor ignores features inside %s multiline strings', delimiter => {
+    const fixture = codexFixture({
+      config: `notes = ${delimiter}\n[features]\nhooks = true\n${delimiter}\n`,
+    });
+    const run = runCli(['doctor', '--json'], { codexHome: fixture.codexHome });
+    const data = envelopeOf(run)['data'] as { findings: { check: string; level: string }[] };
+    expect(data.findings.find(finding => finding.check === 'codex.hooks_flag')?.level).toBe(
+      'error'
+    );
+  });
+
+  it.each(['existing', 'absent'])('uninstall leaves a never-installed %s home untouched', state => {
+    const fixture = codexFixture();
+    const home = state === 'absent' ? join(fixture.codexHome, 'absent') : fixture.codexHome;
+    const before = treeDigest(fixture.codexHome);
+    const run = runCli(['init', '--host', 'codex', '--uninstall'], { codexHome: home });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('nothing to remove');
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+  });
+
+  it('uninstall of skills alone does not create hooks.json', () => {
+    const fixture = codexFixture();
+    mkdirSync(join(fixture.codexHome, 'skills', 'mehmory-remember'), { recursive: true });
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(existsSync(fixture.hooksFile)).toBe(false);
+    expect(existsSync(fixture.configFile)).toBe(false);
   });
 
   it('creates a store that a Codex-only user can onboard into', () => {
@@ -372,6 +431,15 @@ describe('mehmory init --host codex', () => {
     expect(init(fixture).status).toBe(0);
     expect(init(fixture, '--uninstall').status).toBe(0);
     expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(FOREIGN_HOOKS);
+  });
+
+  it('preserves CRLF in hooks.json through install and uninstall', () => {
+    const hooks = FOREIGN_HOOKS.replace(/\n/g, '\r\n');
+    const fixture = codexFixture({ hooks });
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8').replace(/\r\n/g, '')).not.toContain('\n');
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(hooks);
   });
 
   it('byte-identical also when the file had no trailing newline — Codex writes it that way', () => {

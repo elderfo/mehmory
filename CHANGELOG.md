@@ -28,6 +28,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Codex TOML scanning distinguishes array continuations from table headers.** Root feature keys and table booleans after nested arrays are edited or refused without creating a duplicate table.
+- **Codex setup refuses triple-quoted TOML strings.** Install never rewrites string contents, and doctor never mistakes them for a hooks feature setting.
+- **Codex configuration symlinks survive setup and removal.** Edits and private backups follow the real target, including dotfiles outside `$CODEX_HOME`; dangling links are refused.
+- **Codex lock write failures are reported immediately.** Genuine contention identifies the lock path for stale-lock cleanup instead of hiding permission failures behind a five-second wait.
+- **Codex skill refusals write no configuration or backups.** All shipped sources and destination symlink checks run before any edit.
+- **Codex uninstall on a never-installed home is a no-op.** It creates neither the home nor a hook registry, including when only skills need removing.
+- **Codex configuration edits retain CRLF line endings.** Appended TOML lines and rewritten hook registries use the existing newline convention.
+- **Codex skill symlink checks have a filesystem-root bound.** An unreachable skills boundary cannot cause an infinite walk.
+- **Codex uninstall failures describe removal accurately.** Write failures no longer imply that an installation was attempted.
+- **Codex troubleshooting covers safe-edit refusals and cleanup failures.** Operator guidance now includes unsupported TOML, missing bundles, lock contention, staging cleanup, and symlink targets.
+
 - **Codex feature edits preserve valid TOML and comments.** Spaced or commented headers,
   dotted keys, and simple boolean inline tables are edited in place; unsupported shapes
   fail before any Codex file is written.
@@ -36,7 +47,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Codex setup refuses missing hook bundles.** It no longer registers commands pointing at nonexistent scripts.
 - **Codex setup accepts symlinked homes and ancestors.** Symlink checks cover only owned paths inside its skills tree in both directions.
 - **Codex setup recognizes hook entries from every supported host.** Pi-marked entries are replaced or removed instead of duplicated.
-- **Codex configuration backups reflect the last modification.** Each `.mehmory.bak` contains the immediately preceding contents, with private permissions.
+- **Codex configuration backups reflect the last modification.** Each `.mehmory.bak` contains the immediately preceding contents, with private permissions, deliberately replacing the pristine pre-mehmory backup so recovery preserves intervening user edits.
 - **Codex uninstall keeps hooks and skills consistent on failure.** Skill staging can be rolled back; deletion failures leave the integration uninstalled and identify leftover staging for cleanup.
 - **Unchanged Codex hook entries no longer trigger a re-approval note.** Already-approved hooks are mentioned only when their entries changed.
 

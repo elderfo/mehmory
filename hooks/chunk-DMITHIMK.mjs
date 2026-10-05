@@ -339,13 +339,14 @@ function realpath(path) {
 function listDir(path) {
   return readdirSync(path);
 }
-function createLockExclusive(path, owner = "") {
+function createLockExclusive(path, owner = "", onError) {
   try {
     const fd = openSync(path, "wx");
     if (owner !== "") writeSync(fd, owner);
     closeSync(fd);
     return true;
-  } catch {
+  } catch (err) {
+    onError?.(err);
     return false;
   }
 }
