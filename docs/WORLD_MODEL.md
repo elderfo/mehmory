@@ -154,13 +154,17 @@ final-delta job is enqueued; failure leaves the delta and Stop counter available
 `distillDelta` is a preview and does not advance the cursor by itself.
 
 Finalized markers block unchanged trailing hooks, not a session's later work. SessionStart
-explicitly resumes the id; ordinary capture and mutations also resume it under the session
-lock when its transcript exists and has grown beyond the saved cursor offset and file size,
-or was modified after the marker. An already-present incomplete tail is not new activity.
+explicitly resumes the id before origin recording, clearing a retired session's saved pause
+and running injection and maintenance regardless of transcript timing. Ordinary capture and
+mutations also resume it under the session lock when its transcript exists and has grown beyond
+both the saved cursor offset and file size. Only without a real cursor (`file_id` is empty or
+absent) does modification after the marker count instead. An already-present incomplete tail,
+an mtime bump with a real cursor, or truncation is not new activity.
 Both paths restore the marker cursor and increment the generation rather than recreating
 state at offset zero. Markers retain the transcript path and origin so even
 mutations without a hook payload can detect later activity. Activity-detected resumes also
-preserve a session pause. No later bytes or modification means no resurrection. Deferred tails use the recorded origin agent, never the sweeping
+preserve a session pause. No later activity means no resurrection. Deferred tails use the
+recorded origin agent, never the sweeping
 process's name. An unnamed origin is recorded as null; legacy or invalid names remain
 unattributed instead of being guessed.
 
@@ -190,6 +194,8 @@ Bash. `pause` and `resume` also use the helper with the session id from the `ses
 line inside SessionStart's `<mehmory-memory>` frame; the line takes a share of the memory
 budget. All six skills use that id to read `.state/<sha256(session-id)>.json`; recency is
 only a legacy project hint requiring user confirmation, never proof of session identity.
+When only that session's `.finalized.json` marker exists, skills read `project_key` and `host`
+from it; it records the same session retired by the idle sweep.
 The helper changes the flag under the session lock, not through raw state edits. The CLI
 `mehmory inbox-tx` shares these operations. A failed append is an error, including partial
 failure: retrying the same entries dedups those already written.

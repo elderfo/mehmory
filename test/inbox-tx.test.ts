@@ -181,6 +181,21 @@ describe('inbox-tx pause/resume', () => {
     });
   });
 
+  it.each(['pause', 'resume'])(
+    '%s tells an unchanged retired session to retry after the next turn',
+    (command) => {
+      writeFileSync(finalizedMarkerPath('done'), '{}');
+
+      const result = tx(command, { session_id: 'done' });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(
+        'inbox-tx: session is busy or finalized; retry after the next turn\n'
+      );
+      expect(existsSync(sessionStatePath('done'))).toBe(false);
+    }
+  );
+
   it('fails without changing state when the session is busy, missing, or finalized', () => {
     writeSessionState(freshSessionState('target'));
     mkdirSync(statePath('locks'), { recursive: true });
@@ -192,7 +207,7 @@ describe('inbox-tx pause/resume', () => {
     writeFileSync(finalizedMarkerPath('done'), '{}');
     const finalized = tx('resume', { session_id: 'done' });
     expect(finalized.status).toBe(1);
-    expect(finalized.stderr).toContain('finalized; retry after SessionStart');
+    expect(finalized.stderr).toContain('finalized; retry after the next turn');
     expect(finalized.stderr).not.toContain('unknown session_id');
     expect(existsSync(sessionStatePath('done'))).toBe(false);
   });

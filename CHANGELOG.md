@@ -33,6 +33,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Swept live sessions resume without SessionStart.** Later transcript activity restores the
   saved cursor and advances the generation without clearing a session pause; unchanged
   trailing hooks still cannot recreate state or replay old entries.
+- **Fresh cursors cannot prove growth.** Untouched transcripts stay retired after an idle sweep.
+- **Real cursors require new bytes.** Mtime bumps and truncation cannot resurrect swept sessions.
+- **Skills read retired session origins.** A named session's marker supplies project key and host.
+- **SessionStart resume is deterministic.** Retired pauses clear before injection and maintenance.
+- **Pause/resume recovery names the next turn.** Errors and skills no longer require SessionStart.
 - **Failed Stop captures back off.** The nudge fires only on the first crossing, followed by
   one immediate silent retry and at most one retry per threshold window. Persistent failure
   is logged once after the immediate retry.

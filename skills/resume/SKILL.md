@@ -12,6 +12,9 @@ Clear only the pause flag for the explicitly identified current session.
    the id if JSON-quoted. It identifies `$HOME_DIR/.state/<sha256(session-id)>.json`
    (`HOME_DIR` is `${MEHMORY_HOME:-$HOME/.mehmory}`). If unavailable, ask the user for
    the id; concurrent sessions make recency unsafe.
+   If the frame names a session but only
+   `$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and
+   `host` from that marker; it is the same session retired by the idle sweep.
 2. Pass that exact id as `session_id` in JSON on stdin:
 
    ```bash
@@ -28,9 +31,9 @@ Clear only the pause flag for the explicitly identified current session.
      For a project-local install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
 
 3. Confirm the returned `session_id` and `paused: false` only after exit 0. Report any
-   failure instead of promising capture is enabled. Busy sessions can be retried;
-   finalized sessions need a harness SessionStart/resume first. This operation unpauses
-   a live session, not a finalized generation. Never edit state files directly.
+   failure instead of promising capture is enabled. Busy sessions can be retried; for a
+   finalized session, retry after the next turn. This operation unpauses a live session,
+   not a finalized generation. Never edit state files directly.
 
 The helper preserves every other state field under the session lock. It leaves
 `config.json` unchanged: a hook disabled there remains disabled. If memory still looks

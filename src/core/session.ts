@@ -328,8 +328,11 @@ function resumeFinalizedSessionUnlocked(
       if (info?.isFile() !== true) return false;
       // The saved size may include an incomplete tail beyond the consumed offset.
       // Those pre-existing bytes are not evidence that this session is still alive.
-      const grew = cursor !== undefined && info.size > Math.max(cursor.offset, cursor.size);
-      if (!grew && info.mtimeMs <= (stat(marker)?.mtimeMs ?? Infinity)) return false;
+      const active =
+        cursor !== undefined && cursor.file_id !== ''
+          ? info.size > Math.max(cursor.offset, cursor.size)
+          : info.mtimeMs > (stat(marker)?.mtimeMs ?? Infinity);
+      if (!active) return false;
     } catch {
       return false;
     }

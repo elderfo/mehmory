@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendFileSync, existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { captureDelta, finalizePendingSessions, finalizeSession } from '../src/core/capture.js';
 import { statePath } from '../src/core/home.js';
 import { readInboxEntries } from '../src/core/inbox.js';
@@ -8,7 +16,9 @@ import * as fsModule from '../src/core/fs.js';
 import {
   advanceSessionCursorUnlocked,
   finalizedMarkerPath,
+  freshSessionState,
   incrementStopCount,
+  markSessionFinalized,
   readSessionState,
   rememberTopic,
   resetStopCount,
@@ -124,6 +134,48 @@ describe('capture durability', () => {
     expect(existsSync(sessionStatePath('durable'))).toBe(false);
     expect(readInboxEntries(paths(key).inbox)).toEqual([]);
   });
+
+  it('a fresh cursor with an old transcript does not resurrect a swept session', () => {
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(transcript, old, old);
+    const origin = {
+      ...freshSessionState('durable'),
+      transcript_path: transcript,
+      project_key: key,
+      host: 'claude-code' as const,
+    };
+    markSessionFinalized('durable', origin.cursor, 0, origin);
+    writeFileSync(
+      statePath('..', 'config.json'),
+      JSON.stringify({ stop: { capture_threshold: 1 } })
+    );
+
+    runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
+
+    expect(existsSync(sessionStatePath('durable'))).toBe(false);
+    expect(existsSync(finalizedMarkerPath('durable'))).toBe(true);
+    expect(readInboxEntries(paths(key).inbox)).toEqual([]);
+  });
+
+  it.each(['mtime bump', 'truncation'] as const)(
+    'a real cursor does not resurrect a swept session after %s without byte growth',
+    (change) => {
+      captureDelta('durable', transcript, key, 'claude-code');
+      writeFileSync(paths(key).inbox, '# Inbox\n');
+      finalizeSession('durable', transcript, key, 'claude-code');
+      const marker = fsModule.readFile(finalizedMarkerPath('durable'));
+      if (change === 'truncation') truncateSync(transcript, 10);
+      const later = new Date(Date.now() + 1000);
+      utimesSync(transcript, later, later);
+
+      runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
+      incrementStopCount('durable');
+
+      expect(existsSync(sessionStatePath('durable'))).toBe(false);
+      expect(fsModule.readFile(finalizedMarkerPath('durable'))).toBe(marker);
+      expect(readInboxEntries(paths(key).inbox)).toEqual([]);
+    }
+  );
 
   it('keeps a swept live session paused when its transcript grows', () => {
     writeFileSync(
@@ -246,15 +298,24 @@ describe('capture durability', () => {
     }
   );
 
-  it('ordinary mutations resume from a saved transcript modified after finalization', () => {
-    runHook('stop', { session_id: 'durable', transcript_path: transcript }, { cwd });
-    finalizeSession('durable', transcript, key, 'claude-code');
-    const later = new Date(Date.now() + 1000);
-    utimesSync(transcript, later, later);
-    expect(incrementStopCount('durable')).toBe(1);
-    expect(readSessionState('durable').generation).toBe(1);
-    expect(captureDelta('durable', transcript, key, 'claude-code').entries).toEqual([]);
-  });
+  it.each([undefined, { file_id: '', size: 0, offset: 0 }])(
+    'ordinary mutations use mtime after finalization when there is no real cursor (%j)',
+    (cursor) => {
+      markSessionFinalized('durable', cursor, 0, {
+        ...freshSessionState('durable'),
+        transcript_path: transcript,
+        project_key: key,
+        host: 'claude-code',
+      });
+      const later = new Date(Date.now() + 1000);
+      utimesSync(transcript, later, later);
+      expect(incrementStopCount('durable')).toBe(1);
+      expect(readSessionState('durable').generation).toBe(1);
+      expect(
+        captureDelta('durable', transcript, key, 'claude-code').entries.map((e) => e.text)
+      ).toEqual(['We decided to keep durable capture retries.']);
+    }
+  );
 
   it('SessionStart explicitly resumes from the saved cursor and records the returning agent', () => {
     finalizeSession('durable', transcript, key, 'claude-code');

@@ -62,6 +62,22 @@ describe('plugin skills layout', () => {
     }
   );
 
+  it.each(SKILLS)('%s reads a swept session origin from its own finalized marker', (name) => {
+    const body = (bodies.get(name) as string).replace(/\s+/g, ' ');
+    expect(body).toContain(
+      'If the frame names a session but only `$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and `host` from that marker; it is the same session retired by the idle sweep.'
+    );
+  });
+
+  it.each(['pause', 'resume'])(
+    '%s advises retrying a retired session after the next turn',
+    (name) => {
+      const body = (bodies.get(name) as string).replace(/\s+/g, ' ');
+      expect(body).toContain('retry after the next turn');
+      expect(body).not.toContain('harness SessionStart/resume');
+    }
+  );
+
   it('remember names the `remember:` prompt prefix in its description', () => {
     // The only run-2 surface that can teach the zero-latency path (criterion 17).
     expect(frontmatter(bodies.get('remember') as string)['description']).toContain('remember:');

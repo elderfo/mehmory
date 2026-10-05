@@ -940,8 +940,8 @@ function resumeFinalizedSessionUnlocked(sessionId, requireActivity = false, tran
       if (!transcript || !pathExists(transcript)) return false;
       const info = stat(transcript);
       if (info?.isFile() !== true) return false;
-      const grew = cursor !== void 0 && info.size > Math.max(cursor.offset, cursor.size);
-      if (!grew && info.mtimeMs <= (stat(marker)?.mtimeMs ?? Infinity)) return false;
+      const active = cursor !== void 0 && cursor.file_id !== "" ? info.size > Math.max(cursor.offset, cursor.size) : info.mtimeMs > (stat(marker)?.mtimeMs ?? Infinity);
+      if (!active) return false;
     } catch {
       return false;
     }

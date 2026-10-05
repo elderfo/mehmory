@@ -19,11 +19,13 @@ import {
   runHook,
   seedStore,
   statsLines,
+  writeTranscript,
 } from './hook-fixture.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { recordWarning } from '../src/core/errors.js';
 import { enqueueJob } from '../src/core/queue.js';
-import { setPaused, sessionStatePath } from '../src/core/session.js';
+import { readSessionState, setPaused, sessionStatePath } from '../src/core/session.js';
+import { finalizeSession } from '../src/core/capture.js';
 import { estimateTokens } from '../src/core/tokens.js';
 import { inboxEntryId } from '../src/schema/format.js';
 
@@ -157,6 +159,50 @@ describe('SessionStart hook', () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('');
   });
+
+  it.each(['before', 'after'] as const)(
+    'resumes a retired paused session and runs injection and maintenance when bytes arrive %s SessionStart',
+    (order) => {
+      seedStore(key, {
+        pages: { 'ancient.md': AGED_PAGE },
+        index: '# Index\n\n- [[ancient]]\n',
+      });
+      const records = [{ text: 'We decided to keep the original session context.' }];
+      const transcript = writeTranscript(records, 's1');
+      const input = { session_id: 's1', transcript_path: transcript };
+      runHook('stop', input, { cwd });
+      setPaused('s1', true);
+      const old = new Date(Date.now() - 60 * 60 * 1000);
+      utimesSync(transcript, old, old);
+      finalizeSession('s1', transcript, key, 'claude-code');
+      const touch = (): void => {
+        writeTranscript(
+          [...records, { text: 'We decided to resume this session with new work.' }],
+          's1'
+        );
+        const later = new Date(Date.now() + 1000);
+        utimesSync(transcript, later, later);
+      };
+      if (order === 'before') touch();
+
+      const run = runHook(
+        'session-start',
+        { ...input, source: 'resume' },
+        { cwd, env: { MEHMORY_AGENT: 'returning' } }
+      );
+
+      expect(run.status).toBe(0);
+      expect(additionalContext(run)).toContain('\nsession: s1\n');
+      expect(readSessionState('s1').paused).toBe(false);
+      expect(readSessionState('s1').generation).toBe(1);
+      expect(readSessionState('s1').agent).toBe('returning');
+      expect(existsSync(join(paths(key).projectDir, 'archive', 'ancient.md'))).toBe(true);
+      if (order === 'after') touch();
+      runHook('stop', input, { cwd });
+      expect(readSessionState('s1').paused).toBe(false);
+      expect(readSessionState('s1').generation).toBe(1);
+    }
+  );
 
   it('emits nothing when the hook is disabled in config', () => {
     seedStore(key);

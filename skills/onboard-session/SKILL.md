@@ -21,6 +21,9 @@ there. Use the `session: <id>` line inside the injected `<mehmory-memory>` frame
 decode the id if JSON-quoted. Read `project_key` from
 `$HOME_DIR/.state/<sha256(session-id)>.json`, hashing the exact UTF-8 id with Node's
 `crypto.createHash('sha256')`.
+If the frame names a session but only
+`$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and
+`host` from that marker; it is the same session retired by the idle sweep.
 
 Legacy fallback only when the frame has no session line: the newest session-state file
 (`grep -l '"session_id"' "$HOME_DIR"/.state/*.json | grep -v '\.finalized\.json$' | xargs -r ls -t | head -1`)

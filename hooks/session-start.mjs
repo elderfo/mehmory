@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-74YCRQC4.mjs";
+} from "./chunk-IKIZJ6FX.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -26,7 +26,7 @@ import {
   resumeFinalizedSession,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-YSHKMS6Y.mjs";
+} from "./chunk-7BF3DE7J.mjs";
 import "./chunk-YZTNJJDP.mjs";
 import {
   atomicWrite,
@@ -411,16 +411,16 @@ function maintenance(sessionId, project, host, config) {
   return finalized;
 }
 runHook("SessionStart", (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
-  if (resumeFinalizedSession(input.session_id)) {
-    rememberSessionOrigin(
-      input.session_id,
-      input.transcript_path,
-      host,
-      project,
-      currentAgentName(config)
-    );
-  }
+  if (!config.hooks.session_start.enabled) return {};
+  resumeFinalizedSession(input.session_id);
+  rememberSessionOrigin(
+    input.session_id,
+    input.transcript_path,
+    host,
+    project,
+    currentAgentName(config)
+  );
+  if (isPaused(input.session_id)) return {};
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
   const injection = buildScopeInjection(project, config, input.session_id);

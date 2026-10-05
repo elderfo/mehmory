@@ -12,6 +12,9 @@ Pause the explicitly identified current session through the transactional helper
    the id if JSON-quoted. It identifies `$HOME_DIR/.state/<sha256(session-id)>.json`
    (`HOME_DIR` is `${MEHMORY_HOME:-$HOME/.mehmory}`). If the line is unavailable, ask the
    user for the id. A recent state file is not proof of identity when sessions run concurrently.
+   If the frame names a session but only
+   `$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and
+   `host` from that marker; it is the same session retired by the idle sweep.
 2. Pass that exact id as `session_id` in JSON on stdin:
 
    ```bash
@@ -28,8 +31,8 @@ Pause the explicitly identified current session through the transactional helper
      For a project-local install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
 
 3. Confirm the returned `session_id` and `paused: true` only after exit 0. On failure,
-   report the error; a busy session can be retried, and a finalized session needs its
-   harness SessionStart/resume before changing the flag. Never edit state files directly.
+   report the error; a busy session can be retried. For a finalized session, retry after
+   the next turn. Never edit state files directly.
 
 Paused sessions emit no capture, injection, or pointers. The helper changes only the
 session flag under the session lock; it preserves the cursor, counter, topic, and origin.

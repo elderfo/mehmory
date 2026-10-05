@@ -12,7 +12,7 @@ import {
   redact,
   sessionStatePath,
   setPaused
-} from "./chunk-YSHKMS6Y.mjs";
+} from "./chunk-7BF3DE7J.mjs";
 import {
   atomicWrite,
   lstat,
@@ -172,7 +172,7 @@ function doPause(input, paused) {
     throw new TxError("unknown session_id; use the current live session id");
   }
   if (!setPaused(sessionId, paused)) {
-    throw new TxError("session is busy or finalized; retry after SessionStart resumes it");
+    throw new TxError("session is busy or finalized; retry after the next turn");
   }
   return { session_id: sessionId, paused };
 }

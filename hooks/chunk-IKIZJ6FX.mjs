@@ -20,7 +20,7 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-YSHKMS6Y.mjs";
+} from "./chunk-7BF3DE7J.mjs";
 import {
   readPiSession,
   readTranscript
@@ -161,7 +161,11 @@ function runHook(event, body) {
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
-  const suppressed = suppression(host, config, resolveActiveHost(process.env["MEHMORY_ACTIVE_HOST"]));
+  const suppressed = suppression(
+    host,
+    config,
+    resolveActiveHost(process.env["MEHMORY_ACTIVE_HOST"])
+  );
   let result = {};
   let project = "unknown";
   try {
@@ -176,13 +180,15 @@ function runHook(event, body) {
           consequence: "The invocation was skipped; no session state was read or written"
         });
       } else {
-        rememberSessionOrigin(
-          input.session_id,
-          input.transcript_path,
-          host,
-          project,
-          currentAgentName(config)
-        );
+        if (event !== "SessionStart") {
+          rememberSessionOrigin(
+            input.session_id,
+            input.transcript_path,
+            host,
+            project,
+            currentAgentName(config)
+          );
+        }
         result = body(input, project, host, config);
       }
     }

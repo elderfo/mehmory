@@ -134,7 +134,11 @@ export function runHook(
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
-  const suppressed = suppression(host, config, resolveActiveHost(process.env['MEHMORY_ACTIVE_HOST']));
+  const suppressed = suppression(
+    host,
+    config,
+    resolveActiveHost(process.env['MEHMORY_ACTIVE_HOST'])
+  );
   let result: HookResult = {};
   let project = 'unknown';
 
@@ -155,13 +159,16 @@ export function runHook(
       } else {
         // Where this session's material lives and who wrote it, so the next session start
         // can finalize it even if this session never reports an end (issue #24).
-        rememberSessionOrigin(
-          input.session_id,
-          input.transcript_path,
-          host,
-          project,
-          currentAgentName(config)
-        );
+        // SessionStart owns its explicit resume, which clears a retired session's pause.
+        if (event !== 'SessionStart') {
+          rememberSessionOrigin(
+            input.session_id,
+            input.transcript_path,
+            host,
+            project,
+            currentAgentName(config)
+          );
+        }
         result = body(input, project, host, config);
       }
     }

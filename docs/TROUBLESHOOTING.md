@@ -338,9 +338,18 @@ logs one `session-end` line, commits, and marks it finalized. The marker is what
 to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
 is skipped while its transcript is unchanged, so nothing is written or committed twice.
 Both state and transcript must be idle for 30 minutes. A live session can still outwait
-that window; later transcript bytes beyond the saved cursor, or a modification after the
-marker, let its next ordinary hook or mutation resume from that cursor with a new generation.
-No SessionStart is required, and old entries are not replayed.
+that window. With a real cursor (`file_id` is non-empty), only byte growth beyond both its
+saved offset and size lets the next ordinary hook or mutation resume with a new generation;
+an mtime bump or truncation does not. Without a real cursor, including a fresh cursor with
+`file_id: ''`, only modification after the marker counts. No SessionStart is required, and
+old entries are not replayed.
+
+SessionStart explicitly resumes a retired session, clears its saved pause, and runs injection
+and maintenance whether or not the transcript was touched first. A live session without a
+marker keeps its pause. Skills can read `project_key` and `host` from the named session's
+`.state/<sha256(session-id)>.finalized.json` when its ordinary state file is absent; that marker
+belongs to the same session retired by the idle sweep. If pause/resume cannot change a retired
+session yet, retry after the next turn rather than waiting for another SessionStart.
 
 **Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
 the inbox when the next session starts, not when the session ended. If that session was the last
