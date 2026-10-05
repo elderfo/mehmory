@@ -10,6 +10,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { statePath } from '../src/core/home.js';
+import {
+  finalizedMarkerPath,
+  freshSessionState,
+  readSessionState,
+  sessionStatePath,
+  writeSessionState,
+} from '../src/core/session.js';
 import { hermeticEnv } from './helpers.js';
 
 const HELPER = resolve('hooks/inbox-tx.mjs');
@@ -20,11 +28,7 @@ interface TxResult {
   stderr: string;
 }
 
-function tx(
-  subcommand: string,
-  input: unknown,
-  extraEnv: Record<string, string> = {}
-): TxResult {
+function tx(subcommand: string, input: unknown, extraEnv: Record<string, string> = {}): TxResult {
   if (!existsSync(HELPER)) {
     throw new Error(`${HELPER} is missing — run \`pnpm build\` before \`pnpm test\`.`);
   }
@@ -136,15 +140,17 @@ describe('inbox-tx snapshot/clear', () => {
       snapshotId: string;
       entries: { text: string }[];
     };
-    expect(snap.entries.map(e => e.text)).toEqual(['entry one', 'entry two']);
-    expect(existsSync(join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`))).toBe(true);
+    expect(snap.entries.map((e) => e.text)).toEqual(['entry one', 'entry two']);
+    expect(
+      existsSync(
+        join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`)
+      )
+    ).toBe(true);
 
     // Racing capture between snapshot and clear — the whole reason this is not a raw Edit.
     tx('append', { inbox, key, entries: [{ text: 'entry three', src: 'sess-b' }] });
 
-    const cleared = json(
-      tx('clear', { inbox, key, snapshotId: snap.snapshotId })
-    );
+    const cleared = json(tx('clear', { inbox, key, snapshotId: snap.snapshotId }));
     expect(cleared).toEqual({ removed: 2 });
 
     const body = readFileSync(inbox, 'utf-8');
@@ -159,7 +165,68 @@ describe('inbox-tx snapshot/clear', () => {
   });
 });
 
+describe('inbox-tx pause/resume', () => {
+  it('changes only the explicitly named session pause flag', () => {
+    writeSessionState({ ...freshSessionState('target'), stop_count: 7 });
+    writeSessionState(freshSessionState('other'));
+    expect(json(tx('pause', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: true,
+    });
+    expect(readSessionState('target').stop_count).toBe(7);
+    expect(readSessionState('other').paused).toBe(false);
+    expect(json(tx('resume', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: false,
+    });
+  });
+
+  it.each(['pause', 'resume'])(
+    '%s tells an unchanged retired session to retry after the next turn',
+    (command) => {
+      writeFileSync(finalizedMarkerPath('done'), '{}');
+
+      const result = tx(command, { session_id: 'done' });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(
+        'inbox-tx: session is busy or finalized; retry after the next turn\n'
+      );
+      expect(existsSync(sessionStatePath('done'))).toBe(false);
+    }
+  );
+
+  it('fails without changing state when the session is busy, missing, or finalized', () => {
+    writeSessionState(freshSessionState('target'));
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', 'sessions_target.lock'), String(process.pid));
+    expect(tx('pause', { session_id: 'target' }).stderr).toContain('busy');
+    expect(readSessionState('target').paused).toBe(false);
+    expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
+    expect(existsSync(sessionStatePath('missing'))).toBe(false);
+    writeFileSync(finalizedMarkerPath('done'), '{}');
+    const finalized = tx('resume', { session_id: 'done' });
+    expect(finalized.status).toBe(1);
+    expect(finalized.stderr).toContain('finalized; retry after the next turn');
+    expect(finalized.stderr).not.toContain('unknown session_id');
+    expect(existsSync(sessionStatePath('done'))).toBe(false);
+  });
+});
+
 describe('inbox-tx failure paths', () => {
+  it('exits 1 and reports a failed append instead of reporting success', () => {
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'retry this fact', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('retry');
+    expect(readFileSync(inbox, 'utf-8')).toBe('# Inbox\n');
+  });
   it('exits 1 with one stderr line and leaves the inbox untouched on bad JSON', () => {
     tx('append', { inbox, key, entries: [{ text: 'survivor', src: 'sess-a' }] });
     const before = readFileSync(inbox, 'utf-8');

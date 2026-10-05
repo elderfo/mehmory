@@ -13,7 +13,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, type CliRun } from './cli-fixture.js';
-import { sessionStatePath } from '../src/core/session.js';
+import {
+  freshSessionState,
+  readSessionState,
+  sessionStatePath,
+  writeSessionState,
+} from '../src/core/session.js';
+import { statePath } from '../src/core/home.js';
 
 /** `mehmory inbox-tx` with a JSON body piped to stdin — the CLI has no other way in. */
 function tx(
@@ -62,7 +68,39 @@ function seed(): void {
   writeFileSync(inbox, '# Inbox\n');
 }
 
+describe('mehmory inbox-tx pause/resume', () => {
+  it('changes only the explicitly named session pause flag', () => {
+    seed();
+    writeSessionState({ ...freshSessionState('target'), stop_count: 7 });
+    writeSessionState(freshSessionState('other'));
+    expect(json(tx('pause', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: true,
+    });
+    expect(readSessionState('target').stop_count).toBe(7);
+    expect(readSessionState('other').paused).toBe(false);
+    expect(json(tx('resume', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: false,
+    });
+  });
+});
+
 describe('mehmory inbox-tx append', () => {
+  it('exits 1 and reports a failed append instead of reporting success', () => {
+    seed();
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'retry this fact', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('retry');
+    expect(readFileSync(inbox, 'utf-8')).toBe('# Inbox\n');
+  });
   it('appends redacted entries and dedups by id — same output shape as the bundled helper', () => {
     seed();
     const first = json(

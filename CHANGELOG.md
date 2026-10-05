@@ -58,6 +58,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reclaimed after a minute.
 - **Append and warning directory failures stay fail-open.** An unusable parent directory
   returns an append failure or skips warning storage instead of throwing into the harness.
+- **Capture retries keep their delta.** Cursors advance only after a successful inbox append
+  or durable enqueue, and failed captures retain the Stop counter.
+- **Swept live sessions resume without SessionStart.** Later transcript activity restores the
+  saved cursor and advances the generation without clearing a session pause; unchanged
+  trailing hooks still cannot recreate state or replay old entries.
+- **Fresh cursors cannot prove growth.** Untouched transcripts stay retired after an idle sweep.
+- **Real cursors require new bytes.** Mtime bumps and truncation cannot resurrect swept sessions.
+- **Skills read retired session origins.** A named session's marker supplies project key and host.
+- **SessionStart resume is deterministic.** Retired pauses clear before injection and maintenance.
+- **Pause/resume recovery names the next turn.** Errors and skills no longer require SessionStart.
+- **Failed Stop captures back off.** The nudge fires only on the first crossing, followed by
+  one immediate silent retry and at most one retry per threshold window. Persistent failure
+  is logged once after the immediate retry.
+- **Deferred tails retain their origin agent.** Session state records the agent so another
+  process's sweep cannot misattribute its entries.
+- **Failed inbox appends report failure.** Both transactional entry points return stderr and
+  a non-zero exit, including partial failures that can be safely retried.
+- **Pause and resume use locked transactions.** Skills pass an explicit session id to new
+  inbox-tx operations instead of guessing a state filename and hand-editing it.
+- **Skills know their current session.** SessionStart injects the id inside the memory frame;
+  all six skills use its hashed state filename, leaving recency only as a legacy project hint.
+- **Skill helper fallbacks name the installed bundle.** Claude Code uses its plugin root,
+  Codex uses the path registered in hooks.json, and Pi names its git package directory.
+- **Finalized session errors explain recovery.** Pause/resume report the marker before a
+  missing state file, so an unchanged finalized session is not mistaken for an unknown id.
+- **State-file documentation matches disk.** Config, troubleshooting, and the session module
+  describe SHA-256 filenames rather than raw session ids.
 - **Page purges remove catalog summaries too.** Matching normative `- [[slug]] — summary`
   lines are previewed and removed, preventing deleted summaries from remaining in
   SessionStart's catalog. Freeform references and lines without the summary separator stay.

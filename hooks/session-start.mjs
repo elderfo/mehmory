@@ -11,21 +11,23 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-TWVKLHRU.mjs";
+} from "./chunk-VCWTJUIX.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
+  currentAgentName,
   isPaused,
   loadConfig,
   pageAgeDays,
   parseIndexLine,
   readFrontmatter,
   readInboxEntries,
+  rememberSessionOrigin,
   resumeFinalizedSession,
   runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-RMANWE5C.mjs";
+} from "./chunk-6E6AUIDR.mjs";
 import "./chunk-MQAFAKX4.mjs";
 import {
   atomicWrite,
@@ -403,11 +405,19 @@ function maintenance(sessionId, project, host, config) {
   return finalized;
 }
 runHook("SessionStart", (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  if (!config.hooks.session_start.enabled) return {};
   resumeFinalizedSession(input.session_id);
+  rememberSessionOrigin(
+    input.session_id,
+    input.transcript_path,
+    host,
+    project,
+    currentAgentName(config)
+  );
+  if (isPaused(input.session_id)) return {};
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];

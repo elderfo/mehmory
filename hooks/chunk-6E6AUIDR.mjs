@@ -321,6 +321,39 @@ function deepClone(obj) {
   return cloned;
 }
 
+// src/core/agent.ts
+function resolveAgentName(envValue, configValue) {
+  if (envValue) return validated(envValue, "MEHMORY_AGENT");
+  if (isAbsent(configValue)) return void 0;
+  return validated(configValue, "config.identity.agent");
+}
+function isAbsent(value) {
+  return value === void 0 || value === null || value === "";
+}
+function currentAgentName(config) {
+  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
+}
+function validated(value, source) {
+  if (typeof value === "string" && isSafeAgentName(value)) return value;
+  const shown = describe(value);
+  logError({
+    code: "E_AGENT_NAME_INVALID",
+    kind: "actionable",
+    what: `${source} is ${shown}, which is not a safe agent name`,
+    consequence: "This agent is treated as unnamed and gets no agent scope",
+    // Names every rule the value will actually be judged against: a fix a user can
+    // follow and still be refused is worse than none.
+    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
+  });
+  return void 0;
+}
+function describe(value) {
+  if (typeof value === "string") return `"${value}"`;
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return typeof value === "object" ? "an object" : `a ${typeof value}`;
+}
+
 // src/core/lock.ts
 import { createHash as createHash3, randomBytes } from "crypto";
 import { join as join3 } from "path";
@@ -1027,6 +1060,7 @@ function parseSessionState(raw, sessionId) {
     ...typeof v["project_key"] === "string" && isContainedProjectKey(v["project_key"]) ? { project_key: v["project_key"] } : {},
     ...typeof v["transcript_path"] === "string" ? { transcript_path: v["transcript_path"] } : {},
     ...host !== void 0 ? { host } : {},
+    ...v["agent"] === null || typeof v["agent"] === "string" && isSafeAgentName(v["agent"]) ? { agent: v["agent"] } : {},
     paused: v["paused"] === true
   };
 }
@@ -1050,11 +1084,13 @@ function writeSessionState(state) {
   atomicWrite(sessionStatePath(state.session_id), JSON.stringify(state));
 }
 function tryUpdateSessionState(sessionId, mutate) {
-  return withSessionLock(sessionId, () => {
-    const next = mutate(readSessionState(sessionId));
-    writeSessionState(next);
-    return next;
-  });
+  return withSessionLock(sessionId, () => updateSessionStateUnlocked(sessionId, mutate));
+}
+function updateSessionStateUnlocked(sessionId, mutate) {
+  if (!ensureSessionActiveUnlocked(sessionId)) return void 0;
+  const next = mutate(readSessionState(sessionId));
+  writeSessionState(next);
+  return next;
 }
 function updateSessionState(sessionId, mutate) {
   return tryUpdateSessionState(sessionId, mutate) ?? readSessionState(sessionId);
@@ -1073,10 +1109,19 @@ function finalizedMarkerPath(sessionId) {
 function isSessionFinalized(sessionId) {
   return pathExists(finalizedMarkerPath(sessionId));
 }
-function markSessionFinalized(sessionId, cursor, generation = 0) {
+function markSessionFinalized(sessionId, cursor, generation = 0, origin) {
   atomicWrite(
     finalizedMarkerPath(sessionId),
-    JSON.stringify({ session_id: sessionId, generation, ...cursor ? { cursor } : {} })
+    JSON.stringify({
+      session_id: sessionId,
+      generation,
+      ...cursor ? { cursor } : {},
+      transcript_path: origin?.transcript_path,
+      host: origin?.host,
+      project_key: origin?.project_key,
+      agent: origin?.agent,
+      paused: origin?.paused
+    })
   );
 }
 function sessionGeneration(sessionId) {
@@ -1085,11 +1130,15 @@ function sessionGeneration(sessionId) {
 function resumeFinalizedSession(sessionId) {
   return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
 }
-function resumeFinalizedSessionUnlocked(sessionId) {
+function ensureSessionActiveUnlocked(sessionId, transcriptPath) {
+  return !isSessionFinalized(sessionId) || resumeFinalizedSessionUnlocked(sessionId, true, transcriptPath);
+}
+function resumeFinalizedSessionUnlocked(sessionId, requireActivity = false, transcriptPath) {
   const marker = finalizedMarkerPath(sessionId);
   if (!pathExists(marker)) return false;
   let cursor;
   let generation = 0;
+  let savedState = freshSessionState(sessionId);
   try {
     const parsed = JSON.parse(readFile(marker));
     if (typeof parsed === "object" && parsed !== null) {
@@ -1097,12 +1146,34 @@ function resumeFinalizedSessionUnlocked(sessionId) {
       if (isCursorState(raw)) cursor = raw;
       const gen = parsed["generation"];
       if (typeof gen === "number" && Number.isInteger(gen)) generation = gen;
+      savedState = parseSessionState(
+        JSON.stringify({
+          ...parsed,
+          session_id: sessionId,
+          cursor: cursor ?? freshCursor(),
+          stop_count: 0,
+          paused: requireActivity && parsed["paused"] === true
+        }),
+        sessionId
+      ) ?? savedState;
     }
   } catch {
   }
+  if (requireActivity) {
+    const transcript = transcriptPath ?? savedState.transcript_path;
+    try {
+      if (!transcript || !pathExists(transcript)) return false;
+      const info = stat(transcript);
+      if (info?.isFile() !== true) return false;
+      const active = cursor !== void 0 && cursor.file_id !== "" ? info.size > Math.max(cursor.offset, cursor.size) : info.mtimeMs > (stat(marker)?.mtimeMs ?? Infinity);
+      if (!active) return false;
+    } catch {
+      return false;
+    }
+  }
   const current = readSessionState(sessionId);
   const next = Math.max(generation, current.generation ?? 0) + 1;
-  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...freshSessionState(sessionId), ...cursor ? { cursor } : {}, generation: next };
+  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...savedState, generation: next };
   let markerRemoved = false;
   try {
     remove(marker);
@@ -1111,7 +1182,7 @@ function resumeFinalizedSessionUnlocked(sessionId) {
   } catch {
     if (markerRemoved) {
       try {
-        markSessionFinalized(sessionId, cursor, generation);
+        markSessionFinalized(sessionId, cursor, generation, savedState);
       } catch {
       }
     }
@@ -1119,19 +1190,20 @@ function resumeFinalizedSessionUnlocked(sessionId) {
   }
   return true;
 }
-function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey) {
+function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey, agent) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
   withSessionLock(sessionId, () => {
-    if (isSessionFinalized(sessionId)) return;
+    if (!ensureSessionActiveUnlocked(sessionId, transcriptPath)) return;
     const state = readSessionState(sessionId);
-    if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey) {
+    if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey && state.agent === (agent ?? null)) {
       return;
     }
     writeSessionState({
       ...state,
       transcript_path: transcriptPath,
       host,
-      project_key: projectKey
+      project_key: projectKey,
+      agent: agent ?? null
     });
   });
 }
@@ -1198,13 +1270,10 @@ function sweepSessionState(maxAgeDays) {
   return deleted;
 }
 function advanceSessionCursorUnlocked(sessionId, filepath, recordHash, newOffset) {
-  const state = readSessionState(sessionId);
-  const next = {
+  return updateSessionStateUnlocked(sessionId, (state) => ({
     ...state,
     cursor: advanceCursor(state.cursor, filepath, recordHash, newOffset)
-  };
-  writeSessionState(next);
-  return next.cursor;
+  }))?.cursor;
 }
 function incrementStopCount(sessionId) {
   return updateSessionState(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
@@ -1224,41 +1293,11 @@ function topicCacheHit(state, tokens, now = Date.now(), thresholds) {
 function rememberTopic(sessionId, tokens, now = Date.now()) {
   updateSessionState(sessionId, (s) => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
 }
+function setPaused(sessionId, paused) {
+  return tryUpdateSessionState(sessionId, (s) => ({ ...s, paused })) !== void 0;
+}
 function isPaused(sessionId) {
   return readSessionState(sessionId).paused;
-}
-
-// src/core/agent.ts
-function resolveAgentName(envValue, configValue) {
-  if (envValue) return validated(envValue, "MEHMORY_AGENT");
-  if (isAbsent(configValue)) return void 0;
-  return validated(configValue, "config.identity.agent");
-}
-function isAbsent(value) {
-  return value === void 0 || value === null || value === "";
-}
-function currentAgentName(config) {
-  return resolveAgentName(process.env["MEHMORY_AGENT"], config.identity.agent);
-}
-function validated(value, source) {
-  if (typeof value === "string" && isSafeAgentName(value)) return value;
-  const shown = describe(value);
-  logError({
-    code: "E_AGENT_NAME_INVALID",
-    kind: "actionable",
-    what: `${source} is ${shown}, which is not a safe agent name`,
-    consequence: "This agent is treated as unnamed and gets no agent scope",
-    // Names every rule the value will actually be judged against: a fix a user can
-    // follow and still be refused is worse than none.
-    fix: `set ${source} to 1-64 chars of [a-z0-9._-], not starting with a dot, and not one of: ${RESERVED_AGENT_NAMES.join(", ")}`
-  });
-  return void 0;
-}
-function describe(value) {
-  if (typeof value === "string") return `"${value}"`;
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "an array";
-  return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
 // src/core/redact.ts
@@ -1392,12 +1431,14 @@ export {
   redact,
   tokenize,
   matchPages,
+  sessionStatePath,
   readSessionState,
   deleteSessionState,
   isSessionFinalized,
   markSessionFinalized,
   sessionGeneration,
   resumeFinalizedSession,
+  ensureSessionActiveUnlocked,
   rememberSessionOrigin,
   listPendingSessions,
   sweepSessionState,
@@ -1406,5 +1447,6 @@ export {
   resetStopCount,
   topicCacheHit,
   rememberTopic,
+  setPaused,
   isPaused
 };

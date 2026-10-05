@@ -3,14 +3,16 @@ import {
   runHook,
   scopePaths,
   skillRef
-} from "./chunk-TWVKLHRU.mjs";
+} from "./chunk-VCWTJUIX.mjs";
 import {
   incrementStopCount,
   isPaused,
   resetStopCount
-} from "./chunk-RMANWE5C.mjs";
+} from "./chunk-6E6AUIDR.mjs";
 import "./chunk-MQAFAKX4.mjs";
-import "./chunk-PL4QONDN.mjs";
+import {
+  logError
+} from "./chunk-PL4QONDN.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";
@@ -48,11 +50,22 @@ runHook("Stop", (input, project, host, config) => {
   if (input.stop_hook_active === true) return {};
   if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
   const count = incrementStopCount(input.session_id);
-  if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
+  const threshold = Math.max(1, Math.ceil(config.stop.capture_threshold));
+  const firstCrossing = count === threshold;
+  const retry = count > threshold && (count - threshold - 1) % threshold === 0;
+  if (!firstCrossing && !retry) return { stats: { stop_count: count } };
   const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
-  resetStopCount(input.session_id);
+  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
+  else if (count === threshold + 1) {
+    logError({
+      code: "E_APPEND_FAILED",
+      kind: "informational",
+      what: `Stop capture still failing for session ${input.session_id}`,
+      consequence: "The delta is retained; silent retries now wait one threshold window"
+    });
+  }
   return {
-    ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
+    ...firstCrossing ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host)) : {},
     stats: { stop_count: count, captured_entries: captured.appended }
   };
 });

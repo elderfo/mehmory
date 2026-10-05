@@ -229,12 +229,12 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - The Codex surface, four checks, each carrying a real error code documented in
   `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
 
-  | Check | Code | What it means |
-  |---|---|---|
-  | `codex.harness` | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing |
-  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED` | Codex's `[features] hooks` is off or unset, so no hook fires at all |
-  | `codex.hooks` | `E_CODEX_HOOKS_UNWIRED` | one or more Codex events carry no mehmory entry, so those events capture nothing |
-  | `codex.skills` | `E_CODEX_SKILLS_MISSING` | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+  | Check              | Code                      | What it means                                                                                                           |
+  | ------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+  | `codex.harness`    | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing             |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED`  | Codex's `[features] hooks` is off or unset, so no hook fires at all                                                     |
+  | `codex.hooks`      | `E_CODEX_HOOKS_UNWIRED`   | one or more Codex events carry no mehmory entry, so those events capture nothing                                        |
+  | `codex.skills`     | `E_CODEX_SKILLS_MISSING`  | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
 
   All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
   a Claude-Code-only user gets no findings about a harness they don't run. They appear as
@@ -280,13 +280,13 @@ plain `mehmory stats` in that project counts it. The text line appends `N suppre
 
 Deletes. Preview-first, then a typed confirmation token **scaled to the blast radius**:
 
-| Form | Token you must type |
-|---|---|
-| `--all` | the literal `DELETE ALL` |
-| `--project [<key>]` | the **resolved** project key (never the substring you typed) |
-| `--session <id>` | the last 8 characters of the session id, as shown in the preview |
-| `--global` | `global` |
-| a page slug | the page's slug |
+| Form                | Token you must type                                              |
+| ------------------- | ---------------------------------------------------------------- |
+| `--all`             | the literal `DELETE ALL`                                         |
+| `--project [<key>]` | the **resolved** project key (never the substring you typed)     |
+| `--session <id>`    | the last 8 characters of the session id, as shown in the preview |
+| `--global`          | `global`                                                         |
+| a page slug         | the page's slug                                                  |
 
 **Confirmation is two invocations, not an interactive prompt.** The first run prints the
 preview and the required token and exits **4**, having touched nothing. You then re-run the
@@ -350,7 +350,7 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
   would otherwise be in. Session ids are unique, and a session that touched two projects is
   exactly the case where a scoped purge would silently leave a copy behind.
 
-### `mehmory inbox-tx <append|snapshot|clear> [--json]`
+### `mehmory inbox-tx <append|snapshot|clear|pause|resume> [--json]`
 
 The transactional inbox helper (A15), reachable through the CLI so a skill can call the
 `mehmory` binary directly instead of resolving a path through a Claude-Code-specific
@@ -371,14 +371,30 @@ echo '{"inbox":"<path>/inbox.md","key":"<project key>"}' \
   | mehmory inbox-tx snapshot   # -> {"snapshotId":"...","entries":[...]}
 echo '{"inbox":"<path>/inbox.md","key":"<project key>","snapshotId":"<id>"}' \
   | mehmory inbox-tx clear      # -> {"removed":n}
+echo '{"session_id":"<current harness session id>"}' \
+  | mehmory inbox-tx pause      # -> {"session_id":"...","paused":true}
+echo '{"session_id":"<current harness session id>"}' \
+  | mehmory inbox-tx resume     # -> {"session_id":"...","paused":false}
 ```
+
+`pause` and `resume` require an explicit, existing live `session_id`, not an inbox path
+or project key. They change only the pause flag under the session lock and preserve the
+cursor, Stop counter, topic cache, and origin. Use a reliably identified harness session
+id from the `session: <id>` line inside the injected `<mehmory-memory>` frame; selecting
+the newest state file is unsafe with concurrent sessions. State filenames are SHA-256 hashes
+of ids, not the ids themselves. These operations never edit config or re-enable hooks disabled
+there. Busy sessions fail without changing state. A finalized session resumes from its saved
+cursor only after SessionStart or evidence of later transcript activity; otherwise it reports
+`session is busy or finalized; retry after the next turn`, not an unknown id.
 
 Without `--json`, stdout is exactly the result object above on one line — identical to
 `hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the
 other. With `--json`, the result is wrapped in the standard envelope as `data`.
 
 - Bad or missing input (unparseable stdin, a missing field, an unknown subcommand, a
-  malformed or already-cleared `snapshotId`) is a usage error: exit **1**, code `E_USAGE`.
+  malformed or already-cleared `snapshotId`), failed appends, and busy or unavailable
+  session state are usage errors: exit **1**, code `E_USAGE`. An append failure reports
+  stderr and no success object; retry the same entries (already-written ids are deduped).
   This departs from `hooks/inbox-tx.mjs`'s own convention (a bare `inbox-tx: <message>`
   line on stderr, no code) — the CLI reports the same failures through its own envelope
   and exit-code conventions instead.
