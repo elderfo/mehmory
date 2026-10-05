@@ -111,5 +111,8 @@ What else needs to change when you touch these files:
 
 Conventional commits (`<type>(<scope>): <subject>`; types: `feat`, `fix`, `docs`, `chore`,
 `refactor`, `test`, `ci`). One logical unit of work per PR, branched off `main`. No AI/bot
-attribution in commit messages, trailers, or PR bodies. Run `pnpm lint && pnpm test &&
-pnpm typecheck && pnpm build` before pushing — the pre-commit hook already runs lint and test.
+attribution in commit messages, trailers, or PR bodies. Run `pnpm build && pnpm lint &&
+pnpm typecheck && pnpm test` before pushing — the pre-commit hook runs lint, test and typecheck.
+Vitest global setup builds when `dist/cli.mjs` is missing or older than `src/`, so tests never
+run against a stale build and CI's explicit build is not repeated. After source changes, include
+the rebuilt `hooks/*.mjs` in the commit.

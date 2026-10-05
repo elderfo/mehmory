@@ -20,6 +20,12 @@ Any error in memory operations returns a fallback (defaults for config, empty fo
 
 All file I/O is mediated through `src/core/fs.ts` so the module dependency graph is controllable and testable. Errors are an exception: errors.ts must be able to log to disk before fs.ts exists, so it has its own bounded append.
 
+The five custom ESLint rules normalize both slash styles and scope filenames relative to
+ESLint's working directory. A3's `test/` exception applies only to the checkout's test
+subtree, not to a checkout whose parent directory is named `test`. A3 and A17 check
+static imports, re-exports, dynamic imports and unshadowed `require` calls, including
+module specifiers written as template literals without expressions.
+
 **Rejected:** Scattered fs calls (defeats the purpose of a fs layer).
 
 ### A4. Format constants are code, not data
@@ -51,15 +57,28 @@ Distill patterns and the error registry are established at run 1 and are a contr
 ### A8. All fail-open bounds are one protocol
 
 A8 defines bounds for fail-open operations in one module so later runs can override them together:
+
 - Log rotation: 5 MB, keeping 1 prior generation
 - Warning rate limit: 1 per hour per error code
 - Lock retry: 50 × 100 ms then proceed lock-free
+- Lock reclamation: after 30 s only if the owner has exited; after 5 min regardless of
+  owner liveness (`LOCK_MAX_AGE_MS` in `lock.ts`)
+- Reclaim guard abandonment: after 30 s (`LOCK_STALE_MS`); a guard serializes the file
+  identity/owner recheck and unlink, and abandoned guards use the same guarded protocol
 - Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
 - Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
   mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
 - `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
   the existing rate-limited warning with the manual remedy
 - Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
+
+**Lock age-cap decision.** A PID can be reused after its original owner exits, so a liveness
+probe alone could protect an abandoned lock forever. The five-minute cap deliberately favors
+recovery over indefinite exclusivity: a live critical section longer than five minutes, such
+as a huge `purge --export`, can lose exclusivity to a reclaimer. A live owner younger than or
+exactly at the cap is protected. Release checks the owner token so a superseded holder does
+not normally remove its successor's lock. Reclaim guards are short-lived, not renewed leases;
+a guard holder stalled beyond the 30-second abandonment bound can likewise be superseded.
 
 **Rejected:** Hardcoded bounds (scattered magic numbers make overrides fragile).
 
@@ -79,6 +98,10 @@ Exported functions from `src/core/` are synchronous. No Promises, no async/await
 
 Exported functions return values or typed errors via `MehmoryError`. `process.exit()` and `process.abort()` are banned in `src/core/` by ESLint rule. This makes A2's fail-open promise enforceable rather than aspirational—a library that can exit can kill the user's session.
 
+The lint rule also rejects exit/abort access through identifiers initialized from
+`process` or `globalThis.process`, declaration and assignment destructuring, and
+computed property keys written as template literals without expressions.
+
 **Rejected:** Exit on unrecoverable (there is no error worth killing a user's session over).
 
 ---
@@ -93,7 +116,7 @@ These items resolve findings from the spec-stage and plan-stage design reviews:
 
 3. **`index.lock` defer bound.** Retry once after 100 ms; then leave staged and return `deferred: true`. The next `commitPaths` commits accumulated paths—bounded because deferral accumulates no queue.
 
-4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; stale claims reclaimable by mtime; 3 failed claims → `queue/failed/`.
+4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; new claims carry their claim time in the rename destination; legacy claims remain reclaimable by mtime; 3 failed claims → `queue/failed/`.
 
 5. **Concurrent-session decay race.** Index rewrites and decay run under `withProjectLock`; lock acquisition is itself fail-open after bounded wait.
 
@@ -265,8 +288,8 @@ Established in run 3 (CLI, search, docs, CI). Binding on run 4.
 `src/cli/` owns argument parsing, exit codes, stdout/stderr and the `--json` envelope;
 every behavior lives in `src/core|schema|distill`. Extends A12 to the run's second
 consumer, upholding A1. The core's `no-process-exit` and `no-stderr` rules gate on
-`filename.includes('src/core/')` (`eslint-rules/index.js`), so the CLI needs no rule
-change to exit or write stderr; a new import-boundary rule (`custom/no-cli-imports`)
+normalized, checkout-relative `src/core/` paths (`eslint-rules/index.js`), so the CLI
+needs no rule change to exit or write stderr; an import-boundary rule (`custom/no-cli-imports`)
 keeps the dependency edge from inverting — `src/core/**` and `src/hooks/**` may never
 import `src/cli/**`.
 
@@ -360,7 +383,7 @@ the layout it owns just grows by two files.
 
 **Note on A12's enforcement claim.** A12 (run 2) states the eslint boundary rules
 `no-exported-promise`, `no-process-exit`, and `no-stderr` "extend to `src/hooks/`." In
-practice, all three gate on `filename.includes('src/core/')` in
+practice, all three gate on normalized, checkout-relative `src/core/` paths in
 `eslint-rules/index.js` and **never fire in `src/hooks/`** — only the
 `fs`/`no-cli-imports` boundary rules genuinely extend there. Consequently
 `eslint.config.js`'s rule exemption carved out for `inbox-tx.ts` (A15's bundled helper,

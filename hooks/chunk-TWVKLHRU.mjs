@@ -21,11 +21,11 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-XTMLEQZP.mjs";
+} from "./chunk-RMANWE5C.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-66YSTZHA.mjs";
+} from "./chunk-MQAFAKX4.mjs";
 import {
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
@@ -49,7 +49,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-B37S7SCY.mjs";
+} from "./chunk-PL4QONDN.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -209,6 +209,10 @@ function runHook(event, body) {
 // src/core/queue.ts
 import { randomBytes } from "crypto";
 import { join } from "path";
+function claimAge(claim, claimPath) {
+  const timestamp = /^\w+\.\d+\.[0-9a-f]{32}\.(\d+)\.json$/.exec(claim)?.[1];
+  return Date.now() - (timestamp === void 0 ? Number(stat(claimPath)?.mtimeMs ?? Date.now()) : Number(timestamp));
+}
 function enqueueJob(jobData, jobType) {
   const jobId = randomBytes(8).toString("hex");
   const queueDir = join(statePath("queue"));
@@ -244,8 +248,7 @@ function claimJob(jobType) {
       if (!claim.endsWith(".json")) continue;
       const claimPath = join(claimedDir, claim);
       try {
-        const s = stat(claimPath);
-        const age = s ? Date.now() - Number(s.mtimeMs) : 0;
+        const age = claimAge(claim, claimPath);
         if (age <= QUEUE_STALE_MS) continue;
         const jobId = claim.slice(0, claim.indexOf("."));
         const pendingPath = join(queueDir, `${jobId}.json`);
@@ -254,7 +257,10 @@ function claimJob(jobType) {
         } else {
           const raw = readFile(claimPath);
           const parsed = JSON.parse(raw);
-          const payload = typeof parsed === "object" && parsed !== null ? { ...parsed, _attempts: Number(parsed["_attempts"] ?? 0) + 1 } : { _attempts: 1 };
+          const payload = typeof parsed === "object" && parsed !== null ? {
+            ...parsed,
+            _attempts: Number(parsed["_attempts"] ?? 0) + 1
+          } : { _attempts: 1 };
           atomicWrite(pendingPath, JSON.stringify(payload, null, 2));
           remove(claimPath);
         }
@@ -291,10 +297,7 @@ function claimJob(jobType) {
     jobClaims.forEach((claim) => {
       const claimPath = join(claimedDir, claim);
       try {
-        const s = stat(claimPath);
-        if (!s) return;
-        const mtime = typeof s.mtimeMs === "number" ? s.mtimeMs : 0;
-        const age = Date.now() - mtime;
+        const age = claimAge(claim, claimPath);
         if (age > QUEUE_STALE_MS) {
           remove(claimPath);
         }
@@ -312,10 +315,11 @@ function claimJob(jobType) {
     }
     mkdir(claimedDir);
     const claimToken = randomBytes(16).toString("hex");
-    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.${claimToken}.json`);
+    const claimFile = `${jobId}.${String(process.pid)}.${claimToken}.${String(Date.now())}.json`;
+    const claimedPath = join(claimedDir, claimFile);
     try {
       rename(jobPath, claimedPath);
-      return { id: jobId, data: jobData, claimFile: `${jobId}.${String(process.pid)}.${claimToken}.json` };
+      return { id: jobId, data: jobData, claimFile };
     } catch {
       continue;
     }
@@ -327,7 +331,8 @@ function completeJob(jobId, claimFile) {
   if (!pathExists(claimedDir)) return;
   const files = claimFile === void 0 ? [] : [claimFile];
   for (const file of files) {
-    if (!file.startsWith(jobId + ".") || !/^\d+\.[0-9a-f]{32}\.json$/.test(file.slice(jobId.length + 1))) continue;
+    if (!file.startsWith(jobId + ".") || !/^\d+\.[0-9a-f]{32}(?:\.\d+)?\.json$/.test(file.slice(jobId.length + 1)))
+      continue;
     try {
       remove(join(claimedDir, file));
     } catch {

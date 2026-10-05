@@ -18,11 +18,10 @@ import {
   readFile,
   realpath,
   remove,
-  removeDir,
   shellQuote,
   stat,
   statePath
-} from "./chunk-B37S7SCY.mjs";
+} from "./chunk-PL4QONDN.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -636,19 +635,43 @@ function normalizeRemoteUrl(url) {
 }
 
 // src/core/lock.ts
+var LOCK_MAX_AGE_MS = 5 * 60 * 1e3;
+var retryWait = new Int32Array(new SharedArrayBuffer(4));
 var SESSION_LOCK_RETRY_COUNT = 10;
 var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
   const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
   return join3(statePath("locks"), name + ".lock");
 }
+function reclaimLock(path, observed, marker, owner) {
+  const guardPath = `${path}.reclaim`;
+  if (!createLockExclusive(guardPath, owner)) {
+    const guardStat = stat(guardPath);
+    if (!guardStat || Date.now() - Number(guardStat.mtimeMs) <= LOCK_STALE_MS) return false;
+    if (!reclaimLock(guardPath, guardStat, readFile(guardPath), owner)) return false;
+    if (!createLockExclusive(guardPath, owner)) return false;
+  }
+  try {
+    const current = stat(path);
+    if (!current || current.dev !== observed.dev || current.ino !== observed.ino || current.mtimeMs !== observed.mtimeMs || readFile(path) !== marker) {
+      return false;
+    }
+    remove(path);
+    return true;
+  } finally {
+    try {
+      if (readFile(guardPath) === owner) remove(guardPath);
+    } catch {
+    }
+  }
+}
 function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
   const lockPath = lockFilePath(key);
-  mkdir(join3(mehmoryHome(), ".state", "locks"));
   let acquired = false;
   const owner = `${String(process.pid)}:${randomBytes(16).toString("hex")}`;
   try {
     for (let attempt = 0; attempt <= retryCount; attempt++) {
+      mkdir(statePath("locks"));
       if (createLockExclusive(lockPath, owner)) {
         acquired = true;
         break;
@@ -656,40 +679,28 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
       if (pathExists(lockPath)) {
         try {
           const lockStat = stat(lockPath);
-          if (!lockStat) {
-            if (attempt < retryCount) {
-              const end = Date.now() + retryIntervalMs;
-              while (Date.now() < end) {
-              }
-            }
-            continue;
-          }
           const now = Date.now();
-          const mtime = typeof lockStat.mtimeMs === "number" ? lockStat.mtimeMs : 0;
+          const mtime = Number(lockStat?.mtimeMs ?? now);
           const age = now - mtime;
-          if (age > LOCK_STALE_MS) {
+          if (lockStat && age > LOCK_STALE_MS) {
             const marker = readFile(lockPath);
             const ownerPid = Number(marker.split(":", 1)[0]);
-            if (Number.isInteger(ownerPid) && ownerPid > 0) {
+            let alive = false;
+            if (age <= LOCK_MAX_AGE_MS && Number.isInteger(ownerPid) && ownerPid > 0) {
               try {
                 process.kill(ownerPid, 0);
-                continue;
-              } catch {
+                alive = true;
+              } catch (error) {
+                alive = !(error instanceof Error && "code" in error && error.code === "ESRCH");
               }
             }
-            try {
-              remove(lockPath);
-              continue;
-            } catch {
-            }
+            if (!alive && reclaimLock(lockPath, lockStat, marker, owner)) continue;
           }
         } catch {
         }
       }
       if (attempt < retryCount) {
-        const end = Date.now() + retryIntervalMs;
-        while (Date.now() < end) {
-        }
+        Atomics.wait(retryWait, 0, 0, retryIntervalMs);
       }
     }
     if (!acquired) {
@@ -710,16 +721,11 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
       } catch {
       }
     }
-    try {
-      const locksDir = join3(mehmoryHome(), ".state", "locks");
-      if (pathExists(locksDir) && listDir(locksDir).length === 0) removeDir(locksDir);
-    } catch {
-    }
   }
 }
 function tryProjectLock(key, fn) {
   const lockPath = lockFilePath(key);
-  mkdir(join3(mehmoryHome(), ".state", "locks"));
+  mkdir(statePath("locks"));
   const owner = `${String(process.pid)}:${randomBytes(16).toString("hex")}`;
   if (!createLockExclusive(lockPath, owner)) return void 0;
   try {

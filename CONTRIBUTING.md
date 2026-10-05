@@ -21,14 +21,19 @@ pnpm test
 
 ## Local checks
 
-Run all four before you push — the pre-commit hook runs lint and test, and CI runs everything:
+Run all four before you push — the pre-commit hook runs lint, test and typecheck, and CI runs
+everything:
 
 ```bash
-pnpm lint       # ESLint + Prettier check
-pnpm test       # vitest
-pnpm typecheck  # tsc strict mode
 pnpm build      # tsup → dist/ and hooks/*.mjs
+pnpm lint       # ESLint + Prettier check
+pnpm typecheck  # tsc strict mode
+pnpm test       # vitest; builds if dist/ is missing or older than src/
 ```
+
+Plain `pnpm test` works in a fresh checkout, and rebuilds when `src/` is newer than
+`dist/cli.mjs`, so tests never run against stale code. Commit the rebuilt `hooks/*.mjs` after
+source changes (ADR A25).
 
 ## Conventions
 
