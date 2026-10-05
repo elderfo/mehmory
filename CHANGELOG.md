@@ -28,9 +28,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Queue claims start their stale window at claim time, so jobs pending for hours are not immediately claimed twice.
-- Stale-lock reclamation rechecks the owner and file identity; live and permission-protected owners receive retry delays, and a five-minute age cap allows recovery from PID reuse. Lock release retains the shared directory.
-- `pnpm test` builds runtime artifacts first, so a fresh checkout can run the suite without a separate build.
+- **Queue claims start their stale window at claim time.** Jobs pending for hours are not
+  immediately claimed twice.
+- **Stale-lock reclamation is serialized.** A reclaim guard protects the owner/file-identity
+  recheck and unlink, including recovery of abandoned guards. Live and permission-protected
+  owners receive retry delays; a five-minute age cap allows recovery from PID reuse but can
+  supersede a longer-running live holder. Lock release retains the shared directory.
+- **`pnpm test` builds only when runtime artifacts are missing.** Vitest global setup builds
+  when `dist/cli.mjs` is absent, so a fresh checkout works without a separate build while CI
+  and pre-commit tests reuse existing artifacts without rebuilding `hooks/*.mjs`.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

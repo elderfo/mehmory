@@ -51,10 +51,23 @@ Distill patterns and the error registry are established at run 1 and are a contr
 ### A8. All fail-open bounds are one protocol
 
 A8 defines bounds for fail-open operations in one module so later runs can override them together:
+
 - Log rotation: 5 MB, keeping 1 prior generation
 - Warning rate limit: 1 per hour per error code
 - Lock retry: 50 × 100 ms then proceed lock-free
+- Lock reclamation: after 30 s only if the owner has exited; after 5 min regardless of
+  owner liveness (`LOCK_MAX_AGE_MS` in `lock.ts`)
+- Reclaim guard abandonment: after 30 s (`LOCK_STALE_MS`); a guard serializes the file
+  identity/owner recheck and unlink, and abandoned guards use the same guarded protocol
 - `index.lock` defer: retry 1 × then defer with no queue
+
+**Lock age-cap decision.** A PID can be reused after its original owner exits, so a liveness
+probe alone could protect an abandoned lock forever. The five-minute cap deliberately favors
+recovery over indefinite exclusivity: a live critical section longer than five minutes, such
+as a huge `purge --export`, can lose exclusivity to a reclaimer. A live owner younger than or
+exactly at the cap is protected. Release checks the owner token so a superseded holder does
+not normally remove its successor's lock. Reclaim guards are short-lived, not renewed leases;
+a guard holder stalled beyond the 30-second abandonment bound can likewise be superseded.
 
 **Rejected:** Hardcoded bounds (scattered magic numbers make overrides fragile).
 

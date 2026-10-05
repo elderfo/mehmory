@@ -36,6 +36,44 @@ function lockFilePath(key: string): string {
   return join(statePath('locks'), name + '.lock');
 }
 
+/** Serialize the identity check and unlink, including recovery of abandoned guards. */
+function reclaimLock(
+  path: string,
+  observed: NonNullable<ReturnType<typeof stat>>,
+  marker: string,
+  owner: string
+): boolean {
+  const guardPath = `${path}.reclaim`;
+  if (!createLockExclusive(guardPath, owner)) {
+    const guardStat = stat(guardPath);
+    if (!guardStat || Date.now() - Number(guardStat.mtimeMs) <= LOCK_STALE_MS) return false;
+    // A guard's reclamation needs its own guard for the same check/unlink race.
+    if (!reclaimLock(guardPath, guardStat, readFile(guardPath), owner)) return false;
+    if (!createLockExclusive(guardPath, owner)) return false;
+  }
+
+  try {
+    const current = stat(path);
+    if (
+      !current ||
+      current.dev !== observed.dev ||
+      current.ino !== observed.ino ||
+      current.mtimeMs !== observed.mtimeMs ||
+      readFile(path) !== marker
+    ) {
+      return false;
+    }
+    remove(path);
+    return true;
+  } finally {
+    try {
+      if (readFile(guardPath) === owner) remove(guardPath);
+    } catch {
+      // A failed cleanup leaves a guard recoverable after the staleness bound.
+    }
+  }
+}
+
 /**
  * Acquire exclusive access to a project, execute fn, then release.
  * Lock is acquired via open(..., 'wx'), which is atomic across processes.
@@ -104,19 +142,7 @@ export function withProjectLock<T>(
                 alive = !(error instanceof Error && 'code' in error && error.code === 'ESRCH');
               }
             }
-            if (!alive) {
-              const current = stat(lockPath);
-              if (
-                current &&
-                current.dev === lockStat.dev &&
-                current.ino === lockStat.ino &&
-                current.mtimeMs === lockStat.mtimeMs &&
-                readFile(lockPath) === marker
-              ) {
-                remove(lockPath);
-                continue;
-              }
-            }
+            if (!alive && reclaimLock(lockPath, lockStat, marker, owner)) continue;
           }
         } catch {
           // Could not stat, retry normally

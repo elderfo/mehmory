@@ -424,6 +424,28 @@ function lockFilePath(key) {
   const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
   return join2(statePath("locks"), name + ".lock");
 }
+function reclaimLock(path, observed, marker, owner) {
+  const guardPath = `${path}.reclaim`;
+  if (!createLockExclusive(guardPath, owner)) {
+    const guardStat = stat(guardPath);
+    if (!guardStat || Date.now() - Number(guardStat.mtimeMs) <= LOCK_STALE_MS) return false;
+    if (!reclaimLock(guardPath, guardStat, readFile(guardPath), owner)) return false;
+    if (!createLockExclusive(guardPath, owner)) return false;
+  }
+  try {
+    const current = stat(path);
+    if (!current || current.dev !== observed.dev || current.ino !== observed.ino || current.mtimeMs !== observed.mtimeMs || readFile(path) !== marker) {
+      return false;
+    }
+    remove(path);
+    return true;
+  } finally {
+    try {
+      if (readFile(guardPath) === owner) remove(guardPath);
+    } catch {
+    }
+  }
+}
 function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs = LOCK_RETRY_INTERVAL_MS, failOpen2 = true) {
   const lockPath = lockFilePath(key);
   let acquired = false;
@@ -453,13 +475,7 @@ function withProjectLock(key, fn, retryCount = LOCK_RETRY_COUNT, retryIntervalMs
                 alive = !(error instanceof Error && "code" in error && error.code === "ESRCH");
               }
             }
-            if (!alive) {
-              const current = stat(lockPath);
-              if (current && current.dev === lockStat.dev && current.ino === lockStat.ino && current.mtimeMs === lockStat.mtimeMs && readFile(lockPath) === marker) {
-                remove(lockPath);
-                continue;
-              }
-            }
+            if (!alive && reclaimLock(lockPath, lockStat, marker, owner)) continue;
           }
         } catch {
         }
