@@ -5,8 +5,8 @@ import customRules from '../eslint-rules/index.js';
 
 type RuleName = keyof typeof customRules.rules;
 
-function lint(rule: RuleName, code: string, filename = 'src/core/example.ts') {
-  return new Linter().verify(
+function lint(rule: RuleName, code: string, filename = 'src/core/example.ts', cwd = process.cwd()) {
+  return new Linter({ cwd }).verify(
     code,
     {
       files: ['**/*.ts'],
@@ -18,10 +18,10 @@ function lint(rule: RuleName, code: string, filename = 'src/core/example.ts') {
   );
 }
 
-function expectViolation(rule: RuleName, code: string, filename?: string) {
-  expect(lint(rule, code, filename).map(({ ruleId, severity }) => ({ ruleId, severity }))).toEqual([
-    { ruleId: `custom/${rule}`, severity: 2 },
-  ]);
+function expectViolation(rule: RuleName, code: string, filename?: string, cwd?: string) {
+  expect(
+    lint(rule, code, filename, cwd).map(({ ruleId, severity }) => ({ ruleId, severity }))
+  ).toEqual([{ ruleId: `custom/${rule}`, severity: 2 }]);
 }
 
 const moduleForms = [
@@ -31,6 +31,8 @@ const moduleForms = [
   (source: string) => `export * as value from '${source}';`,
   (source: string) => `const value = require('${source}');`,
   (source: string) => `const value = import('${source}');`,
+  (source: string) => `const value = require(\`${source}\`);`,
+  (source: string) => `const value = import(\`${source}\`);`,
 ];
 
 describe('A9: no-exported-promise through ESLint', () => {
@@ -75,7 +77,7 @@ describe('A9: no-exported-promise through ESLint', () => {
 
   it('allows async exports outside core', () => {
     expect(
-      lint('no-exported-promise', 'export const f = async () => 1;', 'src/hooks/example.ts')
+      lint('no-exported-promise', 'export const f = async () => 1;', 'src/cli/example.ts')
     ).toEqual([]);
   });
 });
@@ -132,6 +134,17 @@ describe('A11: no-process-exit through ESLint', () => {
     'const { exit: quit } = process; quit(1);',
     "const { ['exit']: quit } = process; quit(1);",
     'const { exit } = globalThis.process; exit(1);',
+    'const p = process; p.exit(1);',
+    'const p = globalThis.process; p.abort();',
+    'const p = process; const q = p; q.exit(1);',
+    'const p = process; const { exit } = p; exit(1);',
+    'let exit; ({ exit } = process); exit(1);',
+    'let quit; ({ exit: quit } = globalThis.process); quit(1);',
+    'process[`exit`](1);',
+    'process[`abort`]();',
+    'globalThis[`process`][`exit`](1);',
+    'const { [`exit`]: quit } = process; quit(1);',
+    'let quit; ({ [`exit`]: quit } = process); quit(1);',
   ])('rejects %s', (code) => {
     expectViolation('no-process-exit', code);
   });
@@ -142,6 +155,10 @@ describe('A11: no-process-exit through ESLint', () => {
     'const { cwd } = process; cwd();',
     'const object = { exit() {} }; object.exit();',
     "const exit = 'cwd'; process[exit]();",
+    'const p = process; p.cwd();',
+    'const p = process; function f(p: { exit(): void }) { p.exit(); }',
+    'let exit; ({ exit } = { exit() {} }); exit();',
+    'const method = "cwd"; process[`${method}`]();',
   ])('allows %s', (code) => {
     expect(lint('no-process-exit', code)).toEqual([]);
   });
@@ -198,6 +215,39 @@ describe('U2: no-stderr through ESLint', () => {
 
   it('allows stdout in core', () => {
     expect(lint('no-stderr', 'process.stdout.write("ok");')).toEqual([]);
+  });
+});
+
+describe('architecture rule paths through ESLint', () => {
+  const violations: [RuleName, string][] = [
+    ['no-fs-imports', "import fs from 'node:fs';"],
+    ['no-process-exit', 'process.exit(1);'],
+    ['no-exported-promise', 'export async function f() {}'],
+    ['no-stderr', 'console.error("failed");'],
+    ['no-cli-imports', "import '../cli/index.js';"],
+  ];
+
+  it.each(violations)('enforces %s with backslash core paths', (rule, code) => {
+    expectViolation(rule, code, 'src\\core\\x.ts');
+    expectViolation(rule, code, 'C:\\p\\src\\core\\x.ts', 'C:\\p');
+  });
+
+  it.each(violations)('enforces %s under a checkout named test', (rule, code) => {
+    expectViolation(rule, code, '/project/test/src/core/x.ts', '/project/test');
+  });
+
+  it.each(['src\\core\\fs.ts', 'src\\core\\errors.ts', 'test\\example.test.ts'])(
+    'allows fs in backslash boundary path %s',
+    (filename) => {
+      expect(lint('no-fs-imports', "import fs from 'node:fs';", filename)).toEqual([]);
+      expect(
+        lint('no-fs-imports', "import fs from 'node:fs';", `C:\\p\\${filename}`, 'C:\\p')
+      ).toEqual([]);
+    }
+  );
+
+  it('enforces the CLI boundary in backslash hook paths', () => {
+    expectViolation('no-cli-imports', "import '../cli/index.js';", 'src\\hooks\\x.ts');
   });
 });
 

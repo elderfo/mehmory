@@ -1,6 +1,21 @@
 // Custom ESLint rules for mehmory architecture decisions
 
-import { dirname, resolve, sep } from 'node:path';
+import { posix } from 'node:path';
+
+function relativeFilename(context) {
+  const filename = context.filename.replace(/\\/g, '/');
+  const cwd = context.cwd.replace(/\\/g, '/');
+  return posix.isAbsolute(filename) || /^[a-z]:\//i.test(filename)
+    ? posix.relative(cwd, filename)
+    : posix.normalize(filename);
+}
+
+function staticString(node) {
+  if (typeof node?.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0].value.cooked;
+  }
+}
 
 function findVariable(context, node, name) {
   for (let scope = context.sourceCode.getScope(node); scope; scope = scope.upper) {
@@ -11,7 +26,8 @@ function findVariable(context, node, name) {
 
 function moduleSourceListeners(context, checkSource) {
   const check = (node, source) => {
-    if (typeof source?.value === 'string') checkSource(node, source.value);
+    const value = staticString(source);
+    if (typeof value === 'string') checkSource(node, value);
   };
 
   return {
@@ -29,11 +45,12 @@ function moduleSourceListeners(context, checkSource) {
 }
 
 function propertyName(node) {
-  return node.computed ? node.property.value : node.property.name;
+  return node.computed ? staticString(node.property) : node.property.name;
 }
 
-function isProcess(node) {
+function isProcess(node, context, aliases) {
   return node?.name === 'process' ||
+    (node?.type === 'Identifier' && aliases.has(findVariable(context, node, node.name))) ||
     (node?.type === 'MemberExpression' && node.object.name === 'globalThis' &&
       propertyName(node) === 'process');
 }
@@ -47,11 +64,11 @@ const noFsImports = {
     }
   },
   create(context) {
-    const filename = context.filename.split(sep).join('/');
+    const filename = relativeFilename(context);
     // Test fixtures may use fs directly; production I/O goes through the two exact files.
     const isAllowed =
-      /(?:^|\/)src\/core\/(?:fs|errors)\.ts$/.test(filename) ||
-      /(?:^|\/)test\//.test(filename);
+      /^src\/core\/(?:fs|errors)\.ts$/.test(filename) ||
+      filename.startsWith('test/');
 
     return moduleSourceListeners(context, (node, source) => {
       if (!isAllowed && ['fs', 'fs/promises', 'node:fs', 'node:fs/promises'].includes(source)) {
@@ -73,8 +90,9 @@ const noProcessExit = {
     }
   },
   create(context) {
-    const filename = context.filename;
-    const isCore = filename.includes('src/core/');
+    const isCore = relativeFilename(context).startsWith('src/core/');
+    const aliases = new Set();
+    const isProcessObject = (node) => isProcess(node, context, aliases);
 
     const checkProperty = (node, name) => {
       if (name === 'exit' || name === 'abort') {
@@ -85,18 +103,28 @@ const noProcessExit = {
       }
     };
 
+    const checkPattern = (pattern, object) => {
+      if (pattern.type !== 'ObjectPattern' || !isProcessObject(object)) return;
+      for (const property of pattern.properties) {
+        if (property.type === 'Property') {
+          checkProperty(property, property.computed ? staticString(property.key) : property.key.name ?? property.key.value);
+        }
+      }
+    };
+
     return {
       MemberExpression(node) {
-        if (isCore && isProcess(node.object)) checkProperty(node, propertyName(node));
+        if (isCore && isProcessObject(node.object)) checkProperty(node, propertyName(node));
       },
       VariableDeclarator(node) {
-        if (!isCore || node.id.type !== 'ObjectPattern' || !isProcess(node.init)) return;
-
-        for (const property of node.id.properties) {
-          if (property.type === 'Property') {
-            checkProperty(property, property.computed ? property.key.value : property.key.name ?? property.key.value);
-          }
+        if (!isCore) return;
+        if (node.id.type === 'Identifier' && isProcessObject(node.init)) {
+          aliases.add(findVariable(context, node, node.id.name));
         }
+        checkPattern(node.id, node.init);
+      },
+      AssignmentExpression(node) {
+        if (isCore) checkPattern(node.left, node.right);
       }
     };
   }
@@ -111,8 +139,7 @@ const noExportedPromise = {
     }
   },
   create(context) {
-    const filename = context.filename;
-    const isCore = filename.includes('src/core/');
+    const isCore = relativeFilename(context).startsWith('src/core/');
 
     const checkFunction = (node, decl) => {
       if (decl?.async === true) {
@@ -170,8 +197,7 @@ const noStderr = {
     }
   },
   create(context) {
-    const filename = context.filename;
-    const isCore = filename.includes('src/core/');
+    const isCore = relativeFilename(context).startsWith('src/core/');
 
     return {
       CallExpression(node) {
@@ -213,20 +239,16 @@ const noCliImports = {
     }
   },
   create(context) {
-    // Scoped to exactly the two directories A17 names. Deliberately NOT reusing the
-    // `filename.includes('src/core/')` shape of the older rules as a single check —
-    // those claim to cover src/hooks/ and do not (see docs/WORLD_MODEL.md A12); this
-    // rule names both paths explicitly so it cannot inherit that gap.
-    const filename = context.filename.split(sep).join('/');
+    const filename = relativeFilename(context);
     const isGuarded =
-      filename.includes('src/core/') || filename.includes('src/hooks/');
+      filename.startsWith('src/core/') || filename.startsWith('src/hooks/');
 
     return moduleSourceListeners(context, (node, source) => {
       if (!isGuarded) return;
 
       // Resolve relative specifiers against the importer, not against the lint cwd.
       const target = source.startsWith('.')
-        ? resolve(dirname(filename), source).split(sep).join('/')
+        ? posix.resolve(posix.dirname(filename), source)
         : source;
 
       if (target.includes('src/cli/') || target.endsWith('src/cli')) {
