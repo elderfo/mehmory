@@ -88,7 +88,7 @@ These items resolve findings from the spec-stage and plan-stage design reviews:
 
 3. **`index.lock` defer bound.** Retry once after 100 ms; then leave staged and return `deferred: true`. The next `commitPaths` commits accumulated paths—bounded because deferral accumulates no queue.
 
-4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; stale claims reclaimable by mtime; 3 failed claims → `queue/failed/`.
+4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; new claims carry their claim time in the rename destination; legacy claims remain reclaimable by mtime; 3 failed claims → `queue/failed/`.
 
 5. **Concurrent-session decay race.** Index rewrites and decay run under `withProjectLock`; lock acquisition is itself fail-open after bounded wait.
 

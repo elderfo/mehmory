@@ -106,6 +106,8 @@ export function treeDigest(dir: string): string {
     for (const name of readdirSync(current).sort()) {
       if (name === '.git') continue;
       const path = join(current, name);
+      // Lock bookkeeping, not store content: the shared locks dir outlives every lock.
+      if (relative(dir, path) === join('.state', 'locks')) continue;
       if (statSync(path).isDirectory()) {
         hash.update(`d:${relative(dir, path)}\n`);
         walk(path);

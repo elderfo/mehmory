@@ -69,6 +69,7 @@
     "clean:hooks": "node -e \"const fs=require('node:fs');for(const f of fs.readdirSync('hooks'))if(f.endsWith('.mjs'))fs.rmSync('hooks/'+f)\"",
     "build": "pnpm run clean:hooks && tsup",
     "lint": "eslint .",
+    "pretest": "pnpm build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "docs:dev": "vitepress dev site",

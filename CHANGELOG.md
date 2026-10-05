@@ -28,6 +28,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Queue claims start their stale window at claim time, so jobs pending for hours are not immediately claimed twice.
+- Stale-lock reclamation rechecks the owner and file identity; live and permission-protected owners receive retry delays, and a five-minute age cap allows recovery from PID reuse. Lock release retains the shared directory.
+- `pnpm test` builds runtime artifacts first, so a fresh checkout can run the suite without a separate build.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the
