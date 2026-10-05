@@ -21,21 +21,39 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createTempDir } from './helpers.js';
-import { envelopeOf, runCli } from './cli-fixture.js';
+import { envelopeOf, runCli, treeDigest } from './cli-fixture.js';
 
 /** A `hooks.json` owned entirely by another tool, formatted the way Codex writes it. */
 const FOREIGN_HOOKS = `${JSON.stringify(
   {
     hooks: {
       SessionStart: [
-        { hooks: [{ command: '/usr/local/bin/other-tool hook codex sessionstart', type: 'command' }] },
-        { hooks: [{ command: "bash '/home/u/.codex/herdr-agent-state.sh' session", timeout: 10, type: 'command' }] },
+        {
+          hooks: [
+            { command: '/usr/local/bin/other-tool hook codex sessionstart', type: 'command' },
+          ],
+        },
+        {
+          hooks: [
+            {
+              command: "bash '/home/u/.codex/herdr-agent-state.sh' session",
+              timeout: 10,
+              type: 'command',
+            },
+          ],
+        },
       ],
-      PreToolUse: [{ hooks: [{ command: '/usr/local/bin/other-tool hook codex pretooluse', type: 'command' }] }],
+      PreToolUse: [
+        {
+          hooks: [{ command: '/usr/local/bin/other-tool hook codex pretooluse', type: 'command' }],
+        },
+      ],
     },
   },
   null,
@@ -62,7 +80,9 @@ function init(fixture: Fixture, ...args: readonly string[]): ReturnType<typeof r
 }
 
 function hooksDoc(fixture: Fixture): { hooks: Record<string, unknown[]> } {
-  return JSON.parse(readFileSync(fixture.hooksFile, 'utf-8')) as { hooks: Record<string, unknown[]> };
+  return JSON.parse(readFileSync(fixture.hooksFile, 'utf-8')) as {
+    hooks: Record<string, unknown[]>;
+  };
 }
 
 /** Every command string in the file, flattened out of the event → group → hook nesting. */
@@ -80,6 +100,389 @@ const mehmoryCommands = (fixture: Fixture): string[] =>
   commands(fixture).filter(c => c.split(/\s+/).includes('--mehmory'));
 
 describe('mehmory init --host codex', () => {
+  it.each([
+    [
+      'commented header',
+      '[features] # note\nweb_search = true\n',
+      '[features] # note\nhooks = true\nweb_search = true\n',
+    ],
+    [
+      'commented CRLF header',
+      '[features] # note\r\nweb_search = true\r\n',
+      '[features] # note\r\nhooks = true\r\nweb_search = true\r\n',
+    ],
+    [
+      'spaced header',
+      '[ features ]\nweb_search = true\n',
+      '[ features ]\nhooks = true\nweb_search = true\n',
+    ],
+    [
+      'commented boolean',
+      '[features]\n  hooks = false # note\n',
+      '[features]\n  hooks = true # note\n',
+    ],
+    [
+      'dotted keys',
+      'features.web_search = true\n',
+      'features.web_search = true\nfeatures.hooks = true\n',
+    ],
+    [
+      'dotted boolean',
+      'features.hooks = false # note\nfeatures.web_search = true\n',
+      'features.hooks = true # note\nfeatures.web_search = true\n',
+    ],
+    [
+      'root key after a nested multiline array',
+      'notify = [\n  ["osascript", "hello"],\n]\n"features".hooks = false\n',
+      'notify = [\n  ["osascript", "hello"],\n]\n"features".hooks = true\n',
+    ],
+    [
+      'table key after a nested multiline array',
+      '[features]\nnotify = [\n  ["osascript", "hello"],\n]\nhooks = false\n',
+      '[features]\nnotify = [\n  ["osascript", "hello"],\n]\nhooks = true\n',
+    ],
+    [
+      'appended CRLF table',
+      'model = "gpt-5"\r\n',
+      'model = "gpt-5"\r\n\r\n[features]\r\nhooks = true\r\n',
+    ],
+    [
+      'CRLF dotted key without final newline',
+      'model = "gpt-5"\r\nfeatures.web_search = true',
+      'model = "gpt-5"\r\nfeatures.web_search = true\r\nfeatures.hooks = true',
+    ],
+    [
+      'CRLF header without final newline',
+      'model = "gpt-5"\r\n[features]',
+      'model = "gpt-5"\r\n[features]\r\nhooks = true',
+    ],
+    ['empty inline table', 'features = {}\n', 'features = { hooks = true }\n'],
+    [
+      'inline table',
+      'features = { web_search = true } # note\n',
+      'features = { web_search = true, hooks = true } # note\n',
+    ],
+    [
+      'inline boolean',
+      'features = { hooks = false, web_search = true } # note\n',
+      'features = { hooks = true, web_search = true } # note\n',
+    ],
+  ])('edits %s without changing unrelated TOML bytes', (_shape, before, after) => {
+    const fixture = codexFixture({ config: before });
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(after);
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(after);
+  });
+
+  it.each([
+    'features = { web_search = "# literal", nested = { enabled = true } }\n',
+    'features = {\n  web_search = true\n}\n',
+    'features.hooks.enabled = false\n',
+    '[ features ] # note\nhooks.enabled = false\n',
+    'notify = [\n  ["osascript", "hello"],\n]\nfeatures = { nested = { enabled = true } }\n',
+    'notify = [\n  ["osascript", "hello"],\n]\nfeatures.hooks.enabled = false\n',
+    'notify = [\n  ["osascript", "hello"],\n]\n\'features\' = false\n',
+  ])('refuses unsupported feature syntax before writing any Codex file: %s', config => {
+    const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config });
+    const before = treeDigest(fixture.codexHome);
+    const run = init(fixture, '--json');
+    expect(run.status).toBe(3);
+    expect((envelopeOf(run)['errors'] as { code: string }[])[0]?.code).toBe('E_CODEX_INSTALL');
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(config);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(FOREIGN_HOOKS);
+  });
+
+  it.each(['"""', "'''"])('doctor ignores features inside %s multiline strings', delimiter => {
+    const fixture = codexFixture({
+      config: `notes = ${delimiter}\n[features]\nhooks = true\n${delimiter}\n`,
+    });
+    const run = runCli(['doctor', '--json'], { codexHome: fixture.codexHome });
+    const data = envelopeOf(run)['data'] as { findings: { check: string; level: string }[] };
+    expect(data.findings.find(finding => finding.check === 'codex.hooks_flag')?.level).toBe(
+      'error'
+    );
+  });
+
+  it.each([
+    ['basic', '"""\n[features]\nhooks = false\n"""'],
+    ['literal', "'''\n[features]\nhooks = false\n'''"],
+    [
+      'escaped basic delimiter',
+      String.raw`"""\n\"""\n[features]\nhooks = false\n"""`.replaceAll('\\n', '\n'),
+    ],
+    ['adjacent basic quotes', '""""\n[features]\nhooks = false\n"""""'],
+    ['adjacent literal quotes', "''''\n[features]\nhooks = false\n'''''"],
+    ['same-line string', '"""[features] hooks = false"""'],
+    ['escaped backslash before closing delimiter', String.raw`"""backslash: \\"""`],
+    ['empty multiline string', '""""""'],
+    ['CRLF string content', '"""\r\n[features]\r\nhooks = false\r\n"""'],
+    ['quoted and commented delimiters', `'"""' # '''`],
+  ])('preserves %s multiline strings while installing and probing hooks', (_shape, value) => {
+    const before = `notes = ${value}\n`;
+    const fixture = codexFixture({ config: before });
+    expect(init(fixture).status).toBe(0);
+    const newline = before.includes('\r\n') ? '\r\n' : '\n';
+    const expected = `${before}${newline}[features]${newline}hooks = true${newline}`;
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(expected);
+    const parsed = spawnSync(
+      'python3',
+      ['-c', 'import json,sys,tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))'],
+      {
+        input: readFileSync(fixture.configFile, 'utf-8'),
+        encoding: 'utf-8',
+      }
+    );
+    expect(parsed.status, parsed.stderr).toBe(0);
+    expect(JSON.parse(parsed.stdout)).toMatchObject({ features: { hooks: true } });
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.configFile, 'utf-8')).toBe(expected);
+    const doctor = envelopeOf(runCli(['doctor', '--json'], { codexHome: fixture.codexHome }))[
+      'data'
+    ] as {
+      findings: { check: string; level: string; message: string }[];
+    };
+    expect(doctor.findings.find(f => f.check === 'codex.hooks_flag')).toMatchObject({
+      level: 'ok',
+      message: 'Codex `[features] hooks` is on',
+    });
+  });
+
+  it.each(['"""', "'''"])(
+    'keeps a healthy install with unrelated %s string content on',
+    delimiter => {
+      const fixture = codexFixture({ config: '[features]\nhooks = true\n' });
+      expect(init(fixture).status).toBe(0);
+      const expected = `[features]\nhooks = true\n[other]\nnotes = ${delimiter}\n[features]\nhooks = false\n${delimiter}\n`;
+      writeFileSync(fixture.configFile, expected);
+      expect(init(fixture).status).toBe(0);
+      expect(readFileSync(fixture.configFile, 'utf-8')).toBe(expected);
+      const data = envelopeOf(runCli(['doctor', '--json'], { codexHome: fixture.codexHome }))[
+        'data'
+      ] as {
+        findings: { check: string; level: string; message: string }[];
+      };
+      expect(data.findings.find(f => f.check === 'codex.hooks_flag')).toMatchObject({
+        level: 'ok',
+        message: 'Codex `[features] hooks` is on',
+      });
+    }
+  );
+
+  it.each(['\n', '\r\n'])(
+    'inserts dotted hooks after a complete multiline features array (%j)',
+    newline => {
+      const before = [
+        'features.other = true',
+        'features.allow = [',
+        '  "a",',
+        ']',
+        '[other]',
+        'enabled = true',
+        '',
+      ].join(newline);
+      const expected = [
+        'features.other = true',
+        'features.allow = [',
+        '  "a",',
+        ']',
+        'features.hooks = true',
+        '[other]',
+        'enabled = true',
+        '',
+      ].join(newline);
+      const fixture = codexFixture({ config: before });
+      expect(init(fixture).status).toBe(0);
+      expect(readFileSync(fixture.configFile, 'utf-8')).toBe(expected);
+      const parsed = spawnSync(
+        'python3',
+        ['-c', 'import json,sys,tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))'],
+        {
+          input: readFileSync(fixture.configFile, 'utf-8'),
+          encoding: 'utf-8',
+        }
+      );
+      expect(parsed.status, parsed.stderr).toBe(0);
+      expect(JSON.parse(parsed.stdout)).toEqual({
+        features: { other: true, allow: ['a'], hooks: true },
+        other: { enabled: true },
+      });
+    }
+  );
+
+  it.each([
+    ['[[features]]\nhooks = false\n', 'features is an array of tables, not a feature-flag table'],
+    ['notes = """\nunclosed\n', 'unterminated multi-line basic string'],
+    ["notes = '''\nunclosed\n", 'unterminated multi-line literal string'],
+  ])(
+    'refuses unsafe TOML with a specific reason and warns about an indeterminate flag: %s',
+    (config, reason) => {
+      const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config });
+      const before = treeDigest(fixture.codexHome);
+      const result = init(fixture, '--json');
+      expect(result.status).toBe(3);
+      expect(envelopeOf(result)['errors']).toMatchObject([
+        { code: 'E_CODEX_INSTALL', what: reason },
+      ]);
+      expect(treeDigest(fixture.codexHome)).toBe(before);
+      const data = envelopeOf(runCli(['doctor', '--json'], { codexHome: fixture.codexHome }))[
+        'data'
+      ] as {
+        findings: { check: string; level: string; message: string; fix?: string }[];
+      };
+      expect(data.findings.find(f => f.check === 'codex.hooks_flag')).toEqual({
+        check: 'codex.hooks_flag',
+        level: 'warn',
+        message: `Codex \`[features] hooks\` could not be determined in ${fixture.configFile}`,
+        fix: `$EDITOR '${fixture.configFile}'`,
+      });
+    }
+  );
+
+  it.each([
+    JSON.stringify(JSON.parse(FOREIGN_HOOKS)),
+    JSON.stringify(JSON.parse(FOREIGN_HOOKS), null, 4),
+  ])('uninstall preserves noncanonical foreign JSON without a backup: %s', hooks => {
+    const fixture = codexFixture({ hooks });
+    const before = treeDigest(fixture.codexHome);
+    const result = init(fixture, '--uninstall');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('nothing to remove');
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(hooks);
+    expect(JSON.parse(readFileSync(fixture.hooksFile, 'utf-8'))).toEqual(JSON.parse(FOREIGN_HOOKS));
+    expect(existsSync(`${fixture.hooksFile}.mehmory.bak`)).toBe(false);
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+  });
+
+  it.each([
+    '{"hooks":{"Stop":[]}}\n',
+    '{"hooks":{"Stop":[{"hooks":[]}]}}\n',
+    '{"hooks": {"Stop": [{"hooks": []}], "SessionStart": [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}\n',
+  ])('uninstall keeps empty foreign events and groups untouched: %s', hooks => {
+    const fixture = codexFixture({ hooks });
+    const before = treeDigest(fixture.codexHome);
+    const result = init(fixture, '--uninstall');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('nothing to remove');
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(hooks);
+    expect(existsSync(`${fixture.hooksFile}.mehmory.bak`)).toBe(false);
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+  });
+
+  it.each(['existing', 'absent'])('uninstall leaves a never-installed %s home untouched', state => {
+    const fixture = codexFixture();
+    const home = state === 'absent' ? join(fixture.codexHome, 'absent') : fixture.codexHome;
+    const before = treeDigest(fixture.codexHome);
+    const run = runCli(['init', '--host', 'codex', '--uninstall'], { codexHome: home });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('nothing to remove');
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+  });
+
+  it('uninstall of skills alone does not create hooks.json', () => {
+    const fixture = codexFixture();
+    mkdirSync(join(fixture.codexHome, 'skills', 'mehmory-remember'), { recursive: true });
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(existsSync(fixture.hooksFile)).toBe(false);
+    expect(existsSync(fixture.configFile)).toBe(false);
+  });
+
+  it('creates a store that a Codex-only user can onboard into', () => {
+    const fixture = codexFixture();
+    const mehmoryHome = join(createTempDir('mehmory-store-parent'), 'store');
+    const options = { codexHome: fixture.codexHome, mehmoryHome };
+    expect(runCli(['init', '--host', 'codex'], options).status).toBe(0);
+    expect(existsSync(join(mehmoryHome, '.git'))).toBe(true);
+    expect(readFileSync(join(mehmoryHome, 'config.json'), 'utf-8')).toBe('{}\n');
+    expect(runCli(['onboard', '--json'], options).status).toBe(0);
+  });
+
+  it('uninstalls without creating or modifying the memory store', () => {
+    const fixture = codexFixture();
+    const mehmoryHome = join(createTempDir('mehmory-store-parent'), 'store');
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], {
+        codexHome: fixture.codexHome,
+        mehmoryHome,
+      }).status
+    ).toBe(0);
+    expect(existsSync(mehmoryHome)).toBe(false);
+    expect(
+      runCli(['init', '--host', 'codex'], { codexHome: fixture.codexHome, mehmoryHome }).status
+    ).toBe(0);
+    const before = treeDigest(mehmoryHome);
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], {
+        codexHome: fixture.codexHome,
+        mehmoryHome,
+      }).status
+    ).toBe(0);
+    expect(treeDigest(mehmoryHome)).toBe(before);
+  });
+
+  it('allows a symlinked Codex home and a symlinked ancestor', () => {
+    const fixture = codexFixture();
+    const parent = createTempDir('mehmory-codex-links');
+    const homeLink = join(parent, 'codex');
+    symlinkSync(fixture.codexHome, homeLink);
+    expect(runCli(['init', '--host', 'codex'], { codexHome: homeLink }).status).toBe(0);
+    expect(
+      readFileSync(join(fixture.codexHome, 'skills', 'mehmory-remember', 'SKILL.md'), 'utf-8')
+    ).toBe(readFileSync(resolve('skills/remember/SKILL.md'), 'utf-8'));
+    const ancestorLink = join(createTempDir('mehmory-codex-ancestor'), 'parent');
+    symlinkSync(parent, ancestorLink);
+    expect(
+      runCli(['init', '--host', 'codex', '--uninstall'], { codexHome: join(ancestorLink, 'codex') })
+        .status
+    ).toBe(0);
+    expect(readdirSync(join(fixture.codexHome, 'skills'))).toEqual([]);
+  });
+
+  it('recognizes stale Pi hook entries on reinstall and uninstall', () => {
+    const hooks =
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                hooks: [{ type: 'command', command: 'node /gone/session-start.mjs pi --mehmory' }],
+              },
+            ],
+          },
+        },
+        null,
+        2
+      ) + '\n';
+    const fixture = codexFixture({ hooks });
+    expect(init(fixture).status).toBe(0);
+    expect(mehmoryCommands(fixture)).toHaveLength(5);
+    expect(commands(fixture).some(command => command.includes('/gone/'))).toBe(false);
+    writeFileSync(fixture.hooksFile, hooks);
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe('{\n  "hooks": {}\n}\n');
+  });
+
+  it('does not claim trusted entries changed on an unchanged install', () => {
+    const fixture = codexFixture();
+    expect(init(fixture).status).toBe(0);
+    const approved = ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end']
+      .map(
+        event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`
+      )
+      .join('\n');
+    writeFileSync(fixture.configFile, readFileSync(fixture.configFile, 'utf-8') + '\n' + approved);
+    const run = init(fixture);
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain('now that the entries changed');
+    expect(run.stdout).not.toContain('re-approve');
+    writeFileSync(
+      join(fixture.codexHome, 'skills', 'mehmory-remember', 'SKILL.md'),
+      'stale skill\n'
+    );
+    expect(init(fixture).stdout).not.toContain('re-approve');
+  });
+
   it('writes the five Codex hooks and turns the hooks feature on', () => {
     const fixture = codexFixture({ config: 'model = "gpt-5"\n' });
     const run = init(fixture);
@@ -160,16 +563,18 @@ describe('mehmory init --host codex', () => {
     expect(statSync(`${fixture.hooksFile}.mehmory.bak`).mode & 0o777).toBe(0o600);
   });
 
-  it('keeps the pristine pre-mehmory backup across a re-install (F3-5)', () => {
+  it('refreshes the backup to the state immediately before each modification', () => {
     const fixture = codexFixture({ hooks: FOREIGN_HOOKS, config: 'model = "gpt-5"\n' });
     expect(init(fixture).status).toBe(0);
 
     // A re-install is routine — a version bump moves the bundle path, so the hook
     // commands change and the file is rewritten a second time.
-    writeFileSync(fixture.hooksFile, readFileSync(fixture.hooksFile, 'utf-8').replace(/mehmory/g, 'mehmory2'));
-    expect(init(fixture).status).toBe(0);
-
-    expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(FOREIGN_HOOKS);
+    const before = readFileSync(fixture.hooksFile, 'utf-8').replace(/mehmory/g, 'mehmory2');
+    writeFileSync(fixture.hooksFile, before);
+    const run = init(fixture);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(`backed up to ${fixture.hooksFile}.mehmory.bak`);
+    expect(readFileSync(`${fixture.hooksFile}.mehmory.bak`, 'utf-8')).toBe(before);
   });
 
   it('is idempotent — a second install writes nothing and leaves one set of entries', () => {
@@ -192,7 +597,14 @@ describe('mehmory init --host codex', () => {
         {
           hooks: {
             SessionStart: [
-              { hooks: [{ type: 'command', command: 'node /gone/v1/hooks/session-start.mjs codex --mehmory' }] },
+              {
+                hooks: [
+                  {
+                    type: 'command',
+                    command: 'node /gone/v1/hooks/session-start.mjs codex --mehmory',
+                  },
+                ],
+              },
             ],
           },
         },
@@ -211,6 +623,15 @@ describe('mehmory init --host codex', () => {
     expect(init(fixture).status).toBe(0);
     expect(init(fixture, '--uninstall').status).toBe(0);
     expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(FOREIGN_HOOKS);
+  });
+
+  it('preserves CRLF in hooks.json through install and uninstall', () => {
+    const hooks = FOREIGN_HOOKS.replace(/\n/g, '\r\n');
+    const fixture = codexFixture({ hooks });
+    expect(init(fixture).status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8').replace(/\r\n/g, '')).not.toContain('\n');
+    expect(init(fixture, '--uninstall').status).toBe(0);
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(hooks);
   });
 
   it('byte-identical also when the file had no trailing newline — Codex writes it that way', () => {
@@ -244,15 +665,13 @@ describe('mehmory init --host codex', () => {
     expect(commands(fixture)).toEqual([]);
   });
 
-  it('uninstall reformats a foreign hooks.json that is not already canonical 2-space JSON, but keeps every entry (D11)', () => {
-    // The byte-identical guarantee above holds only under the documented assumption that
-    // Codex itself wrote the file, which means canonical 2-space JSON. A hand-edited file
-    // (here: 4-space indent) is content-correct after uninstall — nothing removed, nothing
-    // invented — but is NOT byte-identical: renderHooksDoc() always re-serializes at 2-space,
-    // so the file gets backed up and reformatted around a removal that touched nothing of
-    // its own. See docs/CLI.md and docs/TROUBLESHOOTING.md for the user-facing note.
+  it('uninstall preserves foreign 4-space JSON and reports no changes or backups (D11)', () => {
     const fourSpace = JSON.stringify(
-      { hooks: { PreToolUse: [{ hooks: [{ command: '/usr/local/bin/other-tool hook', type: 'command' }] }] } },
+      {
+        hooks: {
+          PreToolUse: [{ hooks: [{ command: '/usr/local/bin/other-tool hook', type: 'command' }] }],
+        },
+      },
       null,
       4
     );
@@ -260,13 +679,11 @@ describe('mehmory init --host codex', () => {
     const run = init(fixture, '--uninstall', '--json');
     expect(run.status).toBe(0);
     const data = envelopeOf(run)['data'] as Record<string, unknown>;
-    expect(data['changed']).toEqual([fixture.hooksFile]);
-    expect(data['backups']).toEqual([`${fixture.hooksFile}.mehmory.bak`]);
-    // Content correctness: the foreign entry is untouched.
+    expect(data['changed']).toEqual([]);
+    expect(data['backups']).toEqual([]);
     expect(hooksDoc(fixture)).toEqual(JSON.parse(fourSpace));
-    // Byte identity does not hold: the file was rewritten at 2-space indent.
-    expect(readFileSync(fixture.hooksFile, 'utf-8')).not.toBe(fourSpace);
-    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(JSON.stringify(JSON.parse(fourSpace), null, 2));
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(fourSpace);
+    expect(existsSync(`${fixture.hooksFile}.mehmory.bak`)).toBe(false);
   });
 
   it('uninstall never turns the Codex hooks feature off — other tools depend on it', () => {
@@ -352,7 +769,9 @@ describe('mehmory init --host codex', () => {
     expect(init(fixture, '--uninstall').status).toBe(0);
 
     expect(readdirSync(skillsDir(fixture))).toEqual(['gstack-review']);
-    expect(readFileSync(join(skillsDir(fixture), 'gstack-review', 'SKILL.md'), 'utf-8')).toBe('not mehmory\n');
+    expect(readFileSync(join(skillsDir(fixture), 'gstack-review', 'SKILL.md'), 'utf-8')).toBe(
+      'not mehmory\n'
+    );
   });
 
   it('uninstall removes every mehmory-* skill directory and nothing else', () => {
@@ -383,17 +802,30 @@ describe('mehmory init --host codex', () => {
 
 describe('mehmory doctor — the Codex surface', () => {
   /** Findings of one doctor run against a Codex home, keyed by check id. */
-  function findings(codexHome: string): Map<string, { level: string; message: string; code?: string; fix?: string }> {
+  function findings(
+    codexHome: string
+  ): Map<string, { level: string; message: string; code?: string; fix?: string }> {
     const run = runCli(['doctor', '--json'], { codexHome });
     const data = envelopeOf(run)['data'] as Record<string, unknown>;
-    const list = data['findings'] as { check: string; level: string; message: string; code?: string }[];
+    const list = data['findings'] as {
+      check: string;
+      level: string;
+      message: string;
+      code?: string;
+    }[];
     return new Map(list.map(f => [f.check, f]));
   }
 
   it('says nothing about Codex when neither Codex nor the install is present', () => {
     const fixture = codexFixture();
     const found = findings(fixture.codexHome);
-    for (const check of ['codex.harness', 'codex.hooks_flag', 'codex.hooks', 'codex.hooks_trust', 'codex.skills']) {
+    for (const check of [
+      'codex.harness',
+      'codex.hooks_flag',
+      'codex.hooks',
+      'codex.hooks_trust',
+      'codex.skills',
+    ]) {
       expect(found.has(check), check).toBe(false);
     }
   });
@@ -411,7 +843,9 @@ describe('mehmory doctor — the Codex surface', () => {
     }
 
     const approved = ['session_start', 'user_prompt_submit', 'stop', 'pre_compact', 'session_end']
-      .map(event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`)
+      .map(
+        event => `[hooks.state."${fixture.hooksFile}:${event}:0:0"]\ntrusted_hash = "sha256:abc"\n`
+      )
       .join('\n');
     writeFileSync(fixture.configFile, `${readFileSync(fixture.configFile, 'utf-8')}\n${approved}`);
 
@@ -451,6 +885,10 @@ describe('mehmory doctor — the Codex surface', () => {
     // The diagnostic still produces its envelope instead of dying on E_APPEND_FAILED.
     expect(envelopeOf(run)['command']).toBe('doctor');
     expect(findings(codexHome).get('codex.harness')).toMatchObject({ level: 'ok' });
+    expect(findings(codexHome).get('codex.hooks_flag')).toMatchObject({
+      level: 'warn',
+      message: `Codex \`[features] hooks\` could not be determined in ${join(codexHome, 'config.toml')}`,
+    });
   });
 
   it('reports the flag as on when it is on, and as off when it is explicitly false', () => {
@@ -482,7 +920,11 @@ describe('mehmory doctor — the Codex surface', () => {
 
     const orphan = codexFixture({
       hooks: `${JSON.stringify(
-        { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node /x/stop.mjs codex --mehmory' }] }] } },
+        {
+          hooks: {
+            Stop: [{ hooks: [{ type: 'command', command: 'node /x/stop.mjs codex --mehmory' }] }],
+          },
+        },
         null,
         2
       )}\n`,

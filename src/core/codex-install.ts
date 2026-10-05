@@ -18,14 +18,31 @@
  * out the tools that own the rest of it.
  */
 
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWrite, listDir, lstat, pathExists, readFile, remove, removeDir } from './fs.js';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  atomicWrite,
+  createLockExclusive,
+  listDir,
+  lstat,
+  mkdir,
+  pathExists,
+  readFile,
+  realpath,
+  remove,
+  removeDir,
+  rename,
+  stat,
+  LOCK_RETRY_COUNT,
+  LOCK_RETRY_INTERVAL_MS,
+  LOCK_STALE_MS,
+} from './fs.js';
 import { codexHome } from './home.js';
-import { withProjectLock } from './lock.js';
 import { HOOK_EVENTS, type HookConfigKey } from './environment.js';
 import { failOpen, shellQuote, type MehmoryError } from './errors.js';
-import type { InboxHost } from '../schema/format.js';
+import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 
 /**
  * Trailing argv token marking a `hooks.json` command entry as mehmory's own.
@@ -87,15 +104,22 @@ export function codexConfigFile(): string {
  * `<pkg>/hooks/session-start.mjs`, `<pkg>/skills/<name>/SKILL.md`), so the binary the
  * user just ran is always the right anchor, whether it came from npm or a checkout.
  */
-function resolvePackageDir(name: string, valid: (_candidate: string) => boolean): string {
+function resolvePackageDir(
+  name: string,
+  valid: (_candidate: string) => boolean
+): string | undefined {
   const start = dirname(fileURLToPath(import.meta.url));
   let dir = start;
   for (let up = 0; up < 4; up++) {
     dir = dirname(dir);
     const candidate = join(dir, name);
-    if (valid(candidate)) return candidate;
+    try {
+      if (valid(candidate)) return candidate;
+    } catch {
+      // An unreadable candidate is not a usable package directory.
+    }
   }
-  return join(dirname(start), name);
+  return undefined;
 }
 
 /**
@@ -104,15 +128,21 @@ function resolvePackageDir(name: string, valid: (_candidate: string) => boolean)
  * The `.mjs` probe matters: `src/hooks/` holds the TypeScript sources under the same
  * name, and pointing Codex at those would register commands node cannot run.
  */
-export function codexHookBundlesDir(): string {
+export function codexHookBundlesDir(): string | undefined {
   return resolvePackageDir('hooks', candidate =>
-    CODEX_HOOK_KEYS.every(key => pathExists(join(candidate, bundleName(key))))
+    CODEX_HOOK_KEYS.every(key => {
+      const bundle = join(candidate, bundleName(key));
+      return pathExists(bundle) && stat(bundle)?.isFile() === true;
+    })
   );
 }
 
 /** Directory holding the shipped skill sources (`skills/<name>/SKILL.md`). */
-function codexSkillSourceDir(): string {
-  return resolvePackageDir('skills', candidate => pathExists(candidate) && listDir(candidate).length > 0);
+function codexSkillSourceDir(): string | undefined {
+  return resolvePackageDir(
+    'skills',
+    candidate => pathExists(candidate) && listDir(candidate).length > 0
+  );
 }
 
 /** `$CODEX_HOME/skills` — where Codex looks for flat, prefix-named skill directories. */
@@ -163,8 +193,22 @@ interface FileSnapshot {
   readonly contents: string | undefined;
 }
 
+function configTarget(path: string): string {
+  try {
+    const linked = lstat(path)?.isSymbolicLink();
+    const target = realpath(path);
+    if (linked && target === path)
+      throw new Error(`cannot resolve symlinked config target ${path}`);
+    return target;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    return join(realpath(dirname(path)), basename(path));
+  }
+}
+
 function snapshotFile(path: string): FileSnapshot {
-  return { path, contents: pathExists(path) ? readFile(path) : undefined };
+  const target = configTarget(path);
+  return { path: target, contents: pathExists(target) ? readFile(target) : undefined };
 }
 
 function restoreSnapshot(snapshot: FileSnapshot): void {
@@ -175,22 +219,79 @@ function restoreSnapshot(snapshot: FileSnapshot): void {
   }
 }
 
-export function installCodex(host: InboxHost): CodexResult {
-  return (
-    withProjectLock('__codex__', () => installCodexUnlocked(host), 50, 100, false) ?? {
+function withCodexLock(fn: () => CodexResult, uninstall = false): CodexResult {
+  const home = codexHome();
+  const lock = join(home, '.mehmory-install.lock');
+  const owner = `${String(process.pid)}:${randomUUID()}`;
+  let acquired = false;
+  try {
+    mkdir(home);
+    for (let attempt = 0; attempt <= LOCK_RETRY_COUNT; attempt++) {
+      let lockError: unknown = 'could not create Codex installation lock';
+      if (
+        createLockExclusive(lock, owner, err => {
+          lockError = err;
+        })
+      ) {
+        acquired = true;
+        return fn();
+      }
+      if (!pathExists(lock)) {
+        return { ok: false, error: writeFailed(lock, lockError, uninstall) };
+      }
+      try {
+        const mtime = stat(lock)?.mtimeMs;
+        if (typeof mtime === 'number' && Date.now() - mtime > LOCK_STALE_MS) {
+          const previous = readFile(lock);
+          const pid = Number(previous.split(':')[0]);
+          if (Number.isInteger(pid) && pid > 0) {
+            try {
+              process.kill(pid, 0);
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code === 'ESRCH' && readFile(lock) === previous) {
+                remove(lock);
+                continue;
+              }
+            }
+          }
+        }
+      } catch {
+        // The lock may have been released while we waited.
+      }
+      if (attempt < LOCK_RETRY_COUNT) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_INTERVAL_MS);
+      }
+    }
+    return {
       ok: false,
       error: {
         code: 'E_CODEX_INSTALL',
         kind: 'actionable',
         what: 'another Codex installation is in progress',
         consequence: 'Codex configuration was not changed',
-        fix: 'retry the install after the other process finishes',
+        fix: `retry after the other process finishes; if stale, remove ${lock}`,
       },
+    };
+  } catch (err) {
+    return { ok: false, error: writeFailed(lock, err, uninstall) };
+  } finally {
+    if (acquired) {
+      try {
+        if (readFile(lock) === owner) remove(lock);
+      } catch {
+        // A dead owner's stale lock can be reclaimed by the next invocation.
+      }
     }
-  );
+  }
+}
+
+export function installCodex(host: InboxHost): CodexResult {
+  return withCodexLock(() => installCodexUnlocked(host));
 }
 
 function installCodexUnlocked(host: InboxHost): CodexResult {
+  const prepared = preflightCodexSkills();
+  if (!prepared.ok) return prepared;
   let snapshots: readonly FileSnapshot[];
   try {
     snapshots = [snapshotFile(codexHooksFile()), snapshotFile(codexConfigFile())];
@@ -200,7 +301,7 @@ function installCodexUnlocked(host: InboxHost): CodexResult {
   const wired = editCodex(doc => withMehmoryHooks(doc, host), true);
   if (!wired.ok) return wired;
 
-  const skills = writeCodexSkills();
+  const skills = writeCodexSkills(prepared.skills);
   if (!skills.ok) {
     try {
       for (const snapshot of snapshots) restoreSnapshot(snapshot);
@@ -225,38 +326,47 @@ function installCodexUnlocked(host: InboxHost): CodexResult {
  * entries, the feature flag, and any foreign `skills/` directory alone.
  */
 export function uninstallCodex(): CodexResult {
-  return (
-    withProjectLock('__codex__', () => uninstallCodexUnlocked(), 50, 100, false) ?? {
-      ok: false,
-      error: {
-        code: 'E_CODEX_INSTALL',
-        kind: 'actionable',
-        what: 'another Codex installation is in progress',
-        consequence: 'Codex configuration was not changed',
-        fix: 'retry the uninstall after the other process finishes',
+  if (!pathExists(codexHooksFile()) && !hasCodexSkills(codexHome())) {
+    return {
+      ok: true,
+      report: {
+        hooksFile: codexHooksFile(),
+        configFile: codexConfigFile(),
+        events: [],
+        changed: [],
+        backups: [],
+        featureFlag: 'untouched',
+        skills: [],
       },
-    }
-  );
+    };
+  }
+  return withCodexLock(uninstallCodexUnlocked, true);
 }
 
 function uninstallCodexUnlocked(): CodexResult {
-  let snapshots: readonly FileSnapshot[];
-  try {
-    snapshots = [snapshotFile(codexHooksFile()), snapshotFile(codexConfigFile())];
-  } catch (err) {
-    return { ok: false, error: writeFailed(codexHome(), err) };
-  }
-  const wired = editCodex(withoutMehmoryHooks, false);
-  if (!wired.ok) return wired;
-
   const removed = removeCodexSkills();
-  if (!removed.ok) {
-    try {
-      for (const snapshot of snapshots) restoreSnapshot(snapshot);
-    } catch {
-      // Preserve the removal error; the backups remain available.
-    }
-    return removed;
+  if (!removed.ok) return removed;
+  const wired = editCodex(withoutMehmoryHooks, false);
+  if (!wired.ok) {
+    restoreCodexSkills(removed);
+    return wired;
+  }
+
+  // Only delete after all skills are outside Codex's discovery tree and hooks are gone.
+  // Cleanup failure must not restore hooks pointing at already-deleted skills.
+  try {
+    for (const skill of removed.staged) removeDir(skill.to);
+    if (removed.stagingDir !== undefined) removeDir(removed.stagingDir);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        ...writeFailed(codexHome(), err, true),
+        kind: 'actionable',
+        consequence: 'Codex integration was removed, but staged skill cleanup is incomplete',
+        fix: `rm -r ${shellQuote(removed.stagingDir ?? codexSkillsDir())}`,
+      },
+    };
   }
 
   return {
@@ -275,8 +385,9 @@ interface SkillWriteResult {
 
 interface SkillRemoveResult {
   readonly ok: true;
-  /** Directories actually removed. */
   readonly changed: readonly string[];
+  readonly staged: readonly { from: string; to: string }[];
+  readonly stagingDir?: string;
 }
 
 type SkillResult = SkillWriteResult | { readonly ok: false; readonly error: MehmoryError };
@@ -293,54 +404,76 @@ type SkillResult = SkillWriteResult | { readonly ok: false; readonly error: Mehm
 function assertNoSymlinkComponents(path: string): void {
   let current = path;
   for (;;) {
+    if (dirname(current) === current)
+      throw new Error('skill path is outside the Codex skills directory');
     try {
-      if (lstat(current)?.isSymbolicLink()) throw new Error(`refusing symlink component ${current}`);
+      if (lstat(current)?.isSymbolicLink())
+        throw new Error(`refusing symlink component ${current}`);
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith('refusing symlink')) throw err;
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
-    const parent = dirname(current);
-    if (parent === current) return;
-    current = parent;
+    if (current === codexSkillsDir()) return;
+    current = dirname(current);
   }
 }
 
-function writeCodexSkills(): SkillResult {
+interface PreparedSkill {
+  readonly name: string;
+  readonly target: string;
+  readonly body: string;
+  readonly previous: string | undefined;
+}
+
+function preflightCodexSkills():
+  | { readonly ok: true; readonly skills: readonly PreparedSkill[] }
+  | { readonly ok: false; readonly error: MehmoryError } {
   const sourceDir = codexSkillSourceDir();
-  if (!pathExists(sourceDir)) {
+  if (sourceDir === undefined) {
     return {
       ok: false,
       error: {
         code: 'E_CODEX_INSTALL',
         kind: 'actionable',
-        what: `no skill sources found at ${sourceDir}`,
+        what: 'no shipped skill sources found',
         consequence: 'no mehmory skill was installed for Codex',
         fix: 'pnpm build',
       },
     };
   }
 
-  const skillNames = listDir(sourceDir).filter(name => pathExists(join(sourceDir, name, 'SKILL.md')));
-  const changed: string[] = [];
-  const names: string[] = [];
-  const originals = new Map<string, string | undefined>();
-
   try {
     assertNoSymlinkComponents(codexSkillsDir());
-    const sources = skillNames.map(skillName => ({
-      skillName,
-      body: readFile(join(sourceDir, skillName, 'SKILL.md')),
-    }));
-    for (const { skillName, body } of sources) {
-      const dirName = codexSkillDirName(skillName);
-      const target = join(codexSkillsDir(), dirName, 'SKILL.md');
+    const skillNames = listDir(sourceDir).filter(name =>
+      pathExists(join(sourceDir, name, 'SKILL.md'))
+    );
+    const skills = skillNames.map(skillName => {
+      const name = codexSkillDirName(skillName);
+      const target = join(codexSkillsDir(), name, 'SKILL.md');
       assertNoSymlinkComponents(target);
-      const previous = pathExists(target) ? readFile(target) : undefined;
+      return {
+        name,
+        target,
+        body: readFile(join(sourceDir, skillName, 'SKILL.md')),
+        previous: pathExists(target) ? readFile(target) : undefined,
+      };
+    });
+    return { ok: true, skills };
+  } catch (err) {
+    return { ok: false, error: writeFailed(codexSkillsDir(), err) };
+  }
+}
+
+function writeCodexSkills(skills: readonly PreparedSkill[]): SkillResult {
+  const changed: string[] = [];
+  const originals = new Map<string, string | undefined>();
+  try {
+    for (const { target, body, previous } of skills) {
+      assertNoSymlinkComponents(target);
       if (previous !== body) {
         originals.set(target, previous);
         atomicWrite(target, body);
         changed.push(target);
       }
-      names.push(dirName);
     }
   } catch (err) {
     for (const [target, previous] of originals) {
@@ -354,7 +487,7 @@ function writeCodexSkills(): SkillResult {
     return { ok: false, error: writeFailed(codexSkillsDir(), err) };
   }
 
-  return { ok: true, names, changed };
+  return { ok: true, names: skills.map(skill => skill.name), changed };
 }
 
 /**
@@ -365,30 +498,58 @@ function writeCodexSkills(): SkillResult {
  * changed. Anything not matching the reserved prefix — a foreign skill directory —
  * survives untouched, the same property `uninstallCodex()` holds for `hooks.json`.
  */
-function removeCodexSkills(): SkillRemoveResult | { readonly ok: false; readonly error: MehmoryError } {
+function removeCodexSkills():
+  SkillRemoveResult | { readonly ok: false; readonly error: MehmoryError } {
   const dir = codexSkillsDir();
-  if (!pathExists(dir)) return { ok: true, changed: [] };
-
-  const changed: string[] = [];
+  const staged: { from: string; to: string }[] = [];
+  let stagingDir: string | undefined;
   try {
-    for (const name of listDir(dir)) {
-      if (!isMehmorySkillDirName(name)) continue;
-      const target = join(dir, name);
-      removeDir(target);
-      changed.push(target);
+    assertNoSymlinkComponents(dir);
+    if (!pathExists(dir)) return { ok: true, changed: [], staged };
+    const targets = listDir(dir).filter(isMehmorySkillDirName);
+    for (const name of targets) assertNoSymlinkComponents(join(dir, name));
+    if (targets.length === 0) return { ok: true, changed: [], staged };
+    stagingDir = join(codexHome(), `.mehmory-uninstall-${randomUUID()}`);
+    mkdir(stagingDir);
+    for (const name of targets) {
+      const from = join(dir, name);
+      const to = join(stagingDir, name);
+      rename(from, to);
+      staged.push({ from, to });
     }
   } catch (err) {
-    return { ok: false, error: writeFailed(dir, err) };
+    restoreCodexSkills({
+      ok: true,
+      changed: [],
+      staged,
+      ...(stagingDir === undefined ? {} : { stagingDir }),
+    });
+    return { ok: false, error: writeFailed(dir, err, true) };
   }
-  return { ok: true, changed };
+  return { ok: true, changed: staged.map(skill => skill.from), staged, stagingDir };
+}
+
+function restoreCodexSkills(removed: SkillRemoveResult): void {
+  try {
+    for (const skill of [...removed.staged].reverse()) rename(skill.to, skill.from);
+    if (removed.stagingDir !== undefined) removeDir(removed.stagingDir);
+  } catch {
+    // Do not delete staging if restoration fails; it holds the user's original bytes.
+  }
 }
 
 function editCodex(
   transform: (_doc: JsonObject) => JsonObject,
   enableFeature: boolean
 ): CodexResult {
-  const hooksFile = codexHooksFile();
-  const configFile = codexConfigFile();
+  let hooksFile: string;
+  let configFile: string;
+  try {
+    hooksFile = configTarget(codexHooksFile());
+    configFile = enableFeature ? configTarget(codexConfigFile()) : codexConfigFile();
+  } catch (err) {
+    return { ok: false, error: writeFailed(codexHome(), err, !enableFeature) };
+  }
   const changed: string[] = [];
   const backups: string[] = [];
 
@@ -404,26 +565,33 @@ function editCodex(
     }
   }
 
+  const featureEdit = enableFeature ? enableHooksFeature(originalConfig ?? '') : undefined;
+  if (typeof featureEdit === 'object') return featureEdit;
+
   let rendered: string;
   try {
-    rendered = renderHooksDoc(transform(existing.value), existing.raw);
+    const transformed = transform(existing.value);
+    rendered =
+      existing.raw !== undefined && isDeepStrictEqual(transformed, existing.value)
+        ? existing.raw
+        : renderHooksDoc(transformed, existing.raw);
   } catch (err) {
-    return { ok: false, error: writeFailed(hooksFile, err) };
+    return { ok: false, error: writeFailed(hooksFile, err, !enableFeature) };
   }
   try {
-    if (existing.raw !== rendered) {
+    if ((enableFeature || existing.raw !== undefined) && existing.raw !== rendered) {
       const saved = backupFile(hooksFile);
       if (saved !== undefined) backups.push(saved);
       atomicWrite(hooksFile, rendered);
       changed.push(hooksFile);
     }
   } catch (err) {
-    return { ok: false, error: writeFailed(hooksFile, err) };
+    return { ok: false, error: writeFailed(hooksFile, err, !enableFeature) };
   }
 
   let featureFlag: CodexReport['featureFlag'] = 'untouched';
   if (enableFeature) {
-    const next = enableHooksFeature(originalConfig ?? '');
+    const next = featureEdit;
     if (next === undefined) {
       featureFlag = 'already-on';
     } else {
@@ -461,12 +629,12 @@ function editCodex(
   };
 }
 
-function writeFailed(path: string, err: unknown): MehmoryError {
+function writeFailed(path: string, err: unknown, uninstall = false): MehmoryError {
   return {
     code: 'E_CODEX_INSTALL',
     kind: 'actionable',
     what: err instanceof Error ? err.message : String(err),
-    consequence: `${path} was not modified, so the Codex integration is not in place`,
+    consequence: `${path} was not modified, so the Codex integration ${uninstall ? 'was not removed' : 'is not in place'}`,
     fix: `ls -l ${shellQuote(dirname(path))}`,
   };
 }
@@ -474,18 +642,12 @@ function writeFailed(path: string, err: unknown): MehmoryError {
 /**
  * Copy a file to `<path>.mehmory.bak` before it is modified. No file, no backup.
  *
- * Written once and never again: the backup's job is to hold the *pre-mehmory* state, and
- * a re-install — routine after a version bump moves the bundle path — would otherwise
- * overwrite it with a mehmory-modified copy, destroying the one file a user reaches for
- * after a bad merge. An existing backup is returned as-is.
- *
  * Forced to 0600 because it is a verbatim duplicate of a file that may be 0600 itself:
  * `config.toml` carries `[mcp_servers.*.env]` API keys, and `~/.codex` is 0755.
  */
 function backupFile(path: string): string | undefined {
   if (!pathExists(path)) return undefined;
   const destination = path + CODEX_BACKUP_SUFFIX;
-  if (pathExists(destination)) return destination;
   atomicWrite(destination, readFile(path), 0o600);
   return destination;
 }
@@ -554,8 +716,9 @@ function readJsonObjectOrEmpty(path: string): JsonObject {
  * repository every time mehmory was installed and removed.
  */
 function renderHooksDoc(doc: JsonObject, previous: string | undefined): string {
-  const json = JSON.stringify(doc, null, 2);
-  return previous !== undefined && !previous.endsWith('\n') ? json : json + '\n';
+  const newline = previous?.includes('\r\n') === true ? '\r\n' : '\n';
+  const json = JSON.stringify(doc, null, 2).replace(/\n/g, newline);
+  return previous !== undefined && !previous.endsWith('\n') ? json : json + newline;
 }
 
 /** Built bundle file for one hook: `session_start` → `session-start.mjs`. */
@@ -582,12 +745,11 @@ function isMehmoryHook(entry: unknown): boolean {
   if (!isJsonObject(entry) || entry['type'] !== 'command') return false;
   const command = entry['command'];
   if (typeof command !== 'string') return false;
-  const match = /^node\s+(.+)\s+(claude-code|codex)\s+--mehmory$/.exec(command);
+  const match = /^node\s+(.+)\s+(\S+)\s+--mehmory$/.exec(command);
+  if (!(INBOX_HOSTS as readonly string[]).includes(match?.[2] ?? '')) return false;
   if (!match) return false;
   const rawPath = match[1] ?? '';
-  const bundle = rawPath.startsWith("'")
-    ? rawPath.slice(1, -1).replace(/'\\''/g, "'")
-    : rawPath;
+  const bundle = rawPath.startsWith("'") ? rawPath.slice(1, -1).replace(/'\\''/g, "'") : rawPath;
   return CODEX_HOOK_KEYS.some(key => basename(bundle) === bundleName(key));
 }
 
@@ -608,13 +770,22 @@ function withoutMehmoryHooks(doc: JsonObject): JsonObject {
       kept[event] = groups;
       continue;
     }
+    const removedHere = (groups as readonly unknown[]).some(
+      group =>
+        isJsonObject(group) &&
+        Array.isArray(group['hooks']) &&
+        (group['hooks'] as readonly unknown[]).some(e => isMehmoryHook(e))
+    );
     const survivors = (groups as readonly unknown[]).flatMap(group => {
       if (!isJsonObject(group) || !Array.isArray(group['hooks'])) return [group];
-      const entries = (group['hooks'] as readonly unknown[]).filter(e => !isMehmoryHook(e));
+      const original = group['hooks'] as readonly unknown[];
+      const entries = original.filter(e => !isMehmoryHook(e));
+      if (entries.length === original.length) return [group];
       if (entries.length === 0) return [];
       return [{ ...group, hooks: entries }];
     });
-    if (survivors.length > 0) kept[event] = survivors;
+    // Prune only what lost a mehmory entry; empty foreign events and groups are not ours.
+    if (survivors.length > 0 || !removedHere) kept[event] = survivors;
   }
   return { ...doc, hooks: kept };
 }
@@ -635,6 +806,7 @@ function withMehmoryHooks(doc: JsonObject, host: InboxHost): JsonObject {
   const existing = stripped['hooks'];
   const hooks: JsonObject = isJsonObject(existing) ? { ...existing } : {};
   const bundlesDir = codexHookBundlesDir();
+  if (bundlesDir === undefined) throw new Error('no built hook bundles found; run pnpm build');
 
   for (const key of CODEX_HOOK_KEYS) {
     const event = HOOK_EVENTS[key];
@@ -666,6 +838,8 @@ function mehmoryEvents(doc: JsonObject): readonly string[] {
 
 // ─── config.toml `[features] hooks` ───
 
+type FeatureEdit = string | undefined | { readonly ok: false; readonly error: MehmoryError };
+
 /**
  * Turn `[features] hooks` on, returning the new file text — or `undefined` when it is
  * already on and nothing needs writing.
@@ -674,34 +848,219 @@ function mehmoryEvents(doc: JsonObject): readonly string[] {
  * MCP servers, per-project trust levels and Codex's own hook-trust hashes; round-tripping
  * it through a TOML library would reformat all of that to change one boolean.
  */
-export function enableHooksFeature(toml: string): string | undefined {
-  if (readHooksFeature(toml) === true) return undefined;
-
+export function enableHooksFeature(toml: string): FeatureEdit {
   const lines = toml.split('\n');
-  const section = featuresSection(lines);
+  const scan = scanTomlLines(toml);
+  if (!scan.ok) return unsupportedFeatures(scan.reason);
+  const scanned = scan.lines;
+  if (scanned.some(line => /^\s*\[\[\s*(?:features|"features"|'features')\s*\]\]/.test(line))) {
+    return unsupportedFeatures('features is an array of tables, not a feature-flag table');
+  }
+  const roots = rootFeatureLines(scanned);
+  const section = featuresSection(scanned);
+  const next = [...lines];
+  if (roots.length > 0) {
+    if (section !== undefined)
+      return unsupportedFeatures('features is defined by both root keys and a table');
+    const inline = roots.find(i =>
+      /^\s*(?:features|"features"|'features')\s*=/.test(lines[i] ?? '')
+    );
+    if (inline !== undefined) {
+      if (roots.length !== 1)
+        return unsupportedFeatures('features inline table is mixed with dotted keys');
+      const edited = editInlineFeatures(lines[inline] ?? '');
+      if (typeof edited !== 'string') return edited;
+      next[inline] = edited;
+      return next.join('\n');
+    }
+    const hook = roots.find(i =>
+      /^\s*(?:features|"features"|'features')\s*\.\s*(?:hooks|"hooks"|'hooks')\s*(?:=|\.)/.test(
+        lines[i] ?? ''
+      )
+    );
+    if (hook !== undefined) {
+      const edited = enableBooleanLine(lines[hook] ?? '');
+      if (typeof edited !== 'string') return edited;
+      next[hook] = edited;
+    } else {
+      const start = roots.at(-1) ?? 0;
+      const last = scan.statementEnds[start] ?? start;
+      const carriage = toml.includes('\r\n') ? '\r' : '';
+      if (last === lines.length - 1) {
+        next[last] = `${lines[last] ?? ''}${carriage}`;
+        next.push('features.hooks = true');
+      } else {
+        next.splice(last + 1, 0, `features.hooks = true${carriage}`);
+      }
+    }
+    return next.join('\n');
+  }
   if (section === undefined) {
-    const separator = toml === '' || toml.endsWith('\n') ? '' : '\n';
-    return `${toml}${separator}\n[features]\nhooks = true\n`;
+    const newline = toml.includes('\r\n') ? '\r\n' : '\n';
+    const separator = toml === '' || toml.endsWith('\n') ? '' : newline;
+    return `${toml}${separator}${newline}[features]${newline}hooks = true${newline}`;
   }
 
-  const keyLine = findHooksKey(lines, section);
-  const next = [...lines];
+  const keyLine = findHooksKey(scanned, section);
   if (keyLine === undefined) {
-    next.splice(section.start + 1, 0, 'hooks = true');
+    const carriage = toml.includes('\r\n') ? '\r' : '';
+    if (section.start === lines.length - 1) {
+      next[section.start] = `${lines[section.start] ?? ''}${carriage}`;
+      next.push('hooks = true');
+    } else {
+      next.splice(section.start + 1, 0, `hooks = true${carriage}`);
+    }
   } else {
-    next[keyLine] = 'hooks = true';
+    const edited = enableBooleanLine(lines[keyLine] ?? '');
+    if (typeof edited !== 'string') return edited;
+    next[keyLine] = edited;
   }
   return next.join('\n');
 }
 
-/** The `[features] hooks` value: `true`, `false`, or `undefined` when it is unset. */
-export function readHooksFeature(toml: string): boolean | undefined {
-  const lines = toml.split('\n');
+function unsupportedFeatures(reason: string): { readonly ok: false; readonly error: MehmoryError } {
+  return { ok: false, error: unparseable(codexConfigFile(), reason) };
+}
+
+function enableBooleanLine(line: string): FeatureEdit {
+  const match =
+    /^(\s*(?:(?:features|"features"|'features')\s*\.\s*)?(?:hooks|"hooks"|'hooks')\s*=\s*)(true|false)(\s*(?:#.*)?\r?)$/.exec(
+      line
+    );
+  if (match === null) return unsupportedFeatures('hooks is not a single-line boolean');
+  return match[2] === 'true' ? undefined : `${match[1] ?? ''}true${match[3] ?? ''}`;
+}
+
+function editInlineFeatures(line: string): FeatureEdit {
+  const match = /^(\s*(?:features|"features"|'features')\s*=\s*\{)([^{}]*)(\}\s*(?:#.*)?\r?)$/.exec(
+    line
+  );
+  if (match === null) {
+    if (!line.includes('{')) return unsupportedFeatures('features is not an inline table');
+    if (line.slice(line.indexOf('{') + 1).includes('{')) {
+      return unsupportedFeatures('features inline table contains nested tables');
+    }
+    return unsupportedFeatures('features inline table spans multiple lines or has unsupported trailing syntax');
+  }
+  const body = match[2] ?? '';
+  const entries = body.trim() === '' ? [] : body.split(',');
+  if (
+    entries.some(entry => !/^\s*(?:[\w-]+|"[\w-]+"|'[\w-]+')\s*=\s*(?:true|false)\s*$/.test(entry))
+  ) {
+    return unsupportedFeatures('features inline table contains values other than boolean flags');
+  }
+  const hook = /((?:^|,)\s*(?:hooks|"hooks"|'hooks')\s*=\s*)(true|false)/;
+  if (hook.exec(body)?.[2] === 'true') return undefined;
+  const trimmed = body.trimEnd();
+  const edited = hook.test(body)
+    ? body.replace(hook, '$1true')
+    : `${trimmed}${trimmed === '' ? '' : ','} hooks = true${body.slice(trimmed.length) || ' '}`;
+  return `${match[1] ?? ''}${edited}${match[3] ?? ''}`;
+}
+
+type TomlScan =
+  | {
+      readonly ok: true;
+      readonly lines: readonly string[];
+      readonly statementEnds: readonly number[];
+    }
+  | { readonly ok: false; readonly reason: string };
+
+// Continuations (including string content) are not keys or table headers.
+function scanTomlLines(toml: string): TomlScan {
+  const scanned: string[] = [];
+  const statementEnds: number[] = [];
+  const brackets: string[] = [];
+  let multiline: string | undefined;
+  let start = 0;
+  for (const [row, line] of toml.split('\n').entries()) {
+    const continuation = brackets.length > 0 || multiline !== undefined;
+    scanned.push(continuation ? '' : line);
+    if (!continuation) start = row;
+    let quote = multiline;
+    let escaped = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (quote !== undefined) {
+        if (escaped) escaped = false;
+        else if (quote === '"' && char === '\\') escaped = true;
+        else if (char === quote) {
+          if (multiline === undefined) quote = undefined;
+          else {
+            let count = 1;
+            while (line[i + count] === quote) count++;
+            if (count >= 3) {
+              if (count > 5)
+                return { ok: false, reason: 'multi-line string closes with more than five quotes' };
+              multiline = undefined;
+              quote = undefined;
+            }
+            i += count - 1;
+          }
+        }
+      } else if (char === '#') break;
+      else if (char === '"' || char === "'") {
+        quote = char;
+        if (line.slice(i, i + 3) === char.repeat(3)) {
+          multiline = char;
+          i += 2;
+        }
+      } else if (char === '[' || char === '{') brackets.push(char);
+      else if (char === ']' || char === '}') {
+        if (brackets.pop() !== (char === ']' ? '[' : '{')) {
+          return { ok: false, reason: 'unbalanced TOML array or inline-table delimiters' };
+        }
+      }
+    }
+    if (quote !== undefined && multiline === undefined) {
+      return { ok: false, reason: 'unterminated single-line TOML string' };
+    }
+    if (brackets.length === 0 && multiline === undefined) statementEnds[start] = row;
+  }
+  if (multiline !== undefined) {
+    return {
+      ok: false,
+      reason: `unterminated multi-line ${multiline === '"' ? 'basic' : 'literal'} string`,
+    };
+  }
+  if (brackets.length > 0) return { ok: false, reason: 'unterminated TOML array or inline table' };
+  return { ok: true, lines: scanned, statementEnds };
+}
+
+function rootFeatureLines(lines: readonly string[]): number[] {
+  const roots: number[] = [];
+  let root = true;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (/^\s*\[/.test(line)) root = false;
+    if (root && /^\s*(?:features|"features"|'features')\s*(?:=|\.)/.test(line)) roots.push(i);
+  }
+  return roots;
+}
+
+/** Boolean flag, undefined when unset, or null when it cannot be determined safely. */
+export function readHooksFeature(toml: string): boolean | undefined | null {
+  const edit = enableHooksFeature(toml);
+  if (typeof edit === 'object') return null;
+  if (edit === undefined) return true;
+  const scan = scanTomlLines(toml);
+  if (!scan.ok) return null;
+  const lines = scan.lines;
   const section = featuresSection(lines);
-  if (section === undefined) return undefined;
-  const keyLine = findHooksKey(lines, section);
-  if (keyLine === undefined) return undefined;
-  const value = /=\s*([^#]*)/.exec(lines[keyLine] ?? '')?.[1]?.trim();
+  const keyLine = section === undefined ? undefined : findHooksKey(lines, section);
+  const line =
+    keyLine === undefined
+      ? rootFeatureLines(lines)
+          .map(i => lines[i] ?? '')
+          .find(value =>
+            /^\s*(?:features|"features"|'features')\s*(?:=|\.\s*(?:hooks|"hooks"|'hooks')\s*=)/.test(
+              value
+            )
+          )
+      : lines[keyLine];
+  const value = /(?:^|[.{,])\s*(?:hooks|"hooks"|'hooks')\s*=\s*(true|false)\b/.exec(
+    line ?? ''
+  )?.[1];
   return value === 'true' ? true : value === 'false' ? false : undefined;
 }
 
@@ -754,7 +1113,9 @@ interface SectionRange {
 
 /** Line range of the `[features]` table, header included, next header excluded. */
 function featuresSection(lines: readonly string[]): SectionRange | undefined {
-  const start = lines.findIndex(line => line.trim() === '[features]');
+  const start = lines.findIndex(line =>
+    /^\s*\[\s*(?:features|"features"|'features')\s*\]\s*(?:#.*)?\r?$/.test(line)
+  );
   if (start === -1) return undefined;
   for (let i = start + 1; i < lines.length; i++) {
     if (/^\s*\[/.test(lines[i] ?? '')) return { start, end: i };
@@ -764,7 +1125,7 @@ function featuresSection(lines: readonly string[]): SectionRange | undefined {
 
 function findHooksKey(lines: readonly string[], section: SectionRange): number | undefined {
   for (let i = section.start + 1; i < section.end; i++) {
-    if (/^\s*hooks\s*=/.test(lines[i] ?? '')) return i;
+    if (/^\s*(?:hooks|"hooks"|'hooks')\s*(?:=|\.)/.test(lines[i] ?? '')) return i;
   }
   return undefined;
 }
@@ -777,8 +1138,8 @@ export interface CodexProbe {
   readonly configFile: string;
   /** True when Codex itself has a configuration here — i.e. the harness has been run. */
   readonly harnessPresent: boolean;
-  /** `[features] hooks`, or `undefined` when unset or unreadable. */
-  readonly hooksFeature: boolean | undefined;
+  /** Boolean flag, undefined when unset, or null when unreadable or unsupported. */
+  readonly hooksFeature: boolean | undefined | null;
   /** `hooks.json` exists but does not parse — nothing can be said about wiring. */
   readonly hooksFileBroken: boolean;
   /** Codex events mehmory's entries occupy. */
@@ -815,7 +1176,7 @@ export function probeCodexInstall(): CodexProbe {
     hooksFile,
     configFile,
     harnessPresent: pathExists(configFile),
-    hooksFeature: undefined,
+    hooksFeature: null,
     hooksFileBroken: pathExists(hooksFile),
     wiredEvents: [],
     missingEvents: CODEX_HOOK_EVENTS,

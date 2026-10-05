@@ -21,11 +21,11 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-6E6AUIDR.mjs";
+} from "./chunk-CR4WRARC.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-MQAFAKX4.mjs";
+} from "./chunk-WVRKG4UX.mjs";
 import {
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
@@ -49,7 +49,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-PL4QONDN.mjs";
+} from "./chunk-S7B7BPQR.mjs";
 
 // src/core/stats.ts
 function statsPath() {

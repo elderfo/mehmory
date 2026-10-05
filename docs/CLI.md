@@ -84,7 +84,12 @@ Running `init` twice changes nothing on disk.
 
 Codex has no plugin mechanism for hooks, so `init` writes the configuration itself — two
 files under `$CODEX_HOME` (`~/.codex` unless the variable is set; see `docs/CONFIG.md`),
-plus the six skills:
+plus the six skills. A successful install also calls `initStore()` for the same store layout
+and git setup as the default host; `--uninstall` never initializes or writes to the store.
+Both directions serialize through `.mehmory-install.lock` under `$CODEX_HOME`.
+Missing built hook bundles cause `E_CODEX_INSTALL` before any configuration or store writes.
+
+The Codex wiring is:
 
 - **`hooks.json`** gets one entry per Codex lifecycle event mehmory captures:
   `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact` and `SessionEnd`. Earlier
@@ -97,14 +102,18 @@ plus the six skills:
 Writing those files is not the last step. Codex will not run a hook until you have
 approved it, so a fresh install captures nothing until you start `codex` once and accept
 the hook review it shows you. `mehmory doctor`'s `codex.hooks_trust` check is what tells
-you the review is still outstanding.
+you the review is still outstanding. For already-approved hooks, `init` mentions possible
+re-approval only when it actually changed the hook entries.
+
 - **`skills/`** gets one directory per skill — `mehmory-remember`, `mehmory-integrate`,
   `mehmory-lint`, `mehmory-onboard-session`, `mehmory-pause`, `mehmory-resume` — each holding
   a verbatim copy of the same `SKILL.md` Claude Code loads, the flat, prefix-named layout
   Codex itself uses (see `gstack-*` for the convention this follows). `mehmory doctor`'s
   `codex.skills` check looks for exactly this. `--uninstall` removes every `mehmory` /
   `mehmory-*` directory it finds and nothing else — a foreign skill directory under
-  `skills/` is untouched by either direction.
+  `skills/` is untouched by either direction. Symlinked `$CODEX_HOME` and its ancestors are
+  supported; symlink components inside its `skills/` tree on paths mehmory writes or removes
+  are refused with `E_CODEX_INSTALL`.
 
 Both `hooks.json` and `config.toml` are shared with every other tool that registers a Codex
 hook, so both edits are merges, never rewrites:
@@ -115,23 +124,48 @@ hook, so both edits are merges, never rewrites:
   the path of the script, so upgrading mehmory replaces the previous entry instead of
   leaving a stale duplicate. Re-running the install is idempotent: no duplicates, and a
   second run with nothing to change writes no bytes at all.
-- Every file is copied to `<file>.mehmory.bak` immediately before it is modified. A run
-  that changes nothing takes no backup.
+- Each configuration file is copied to `<file>.mehmory.bak` immediately before it is
+  modified, replacing any previous backup with that immediately preceding state. Backups
+  have mode `0600`. A run that changes nothing takes no backup. Symlinked `config.toml`
+  and `hooks.json` are resolved with realpath: edits update the real target without replacing
+  the symlink, and the backup is written next to that target (including outside `$CODEX_HOME`,
+  for example into a dotfiles repository).
+  A dangling or unresolvable configuration symlink is refused, not replaced.
 - A `hooks.json` that does not parse is **refused**, not overwritten: exit **3** with
   `E_CODEX_INSTALL`, and the file is left byte-for-byte as it was. Overwriting a file
   mehmory could not read would silently unregister whoever else owns entries in it.
-- The `config.toml` edit is a line edit. Your models, MCP servers, per-project trust levels
-  and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
-- **`hooks.json` byte-identity holds only under one assumption: the file was already in
-  canonical 2-space JSON, the shape Codex itself writes.** Content correctness (no entry
-  mehmory did not write is ever touched) holds unconditionally either way. But
-  `hooks.json`'s edits re-serialize the whole document, so a hand-edited file in a different
-  indent style comes back reformatted around a change that otherwise touched nothing of its
-  own — see `docs/PRIVACY.md` for the user-facing version of this note.
+- The `config.toml` edit is a line edit. `[features]` headers accept whitespace and trailing
+  comments; existing `hooks` comments survive. Root-level `features.*` dotted keys and
+  single-line inline tables of boolean feature flags are updated in place, without adding
+  another table. New dotted keys go after the entire preceding feature statement, including
+  multiline arrays. Multiline basic (`"""`) and literal (`'''`) strings are preserved;
+  their content and array continuation rows are never interpreted as headers or keys.
+  Unsupported feature shapes (including `[[features]]`) or unsafe TOML such as an
+  unterminated string are refused with a specific reason and `E_CODEX_INSTALL` before any
+  Codex file or backup is written. `doctor` reports that the hooks feature **could not be
+  determined** at warn level when unreadable or unsupported; a readable but absent flag
+  is **unset** at error level. A parsed `true` flag is on even with unrelated multiline strings.
+  Existing CRLF line endings are retained, including for appended configuration lines.
+  Your models, MCP servers, per-project trust levels and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
+- A semantic no-op leaves `hooks.json` byte-identical in any formatting, with no backup;
+  uninstall on a foreign-only file reports **nothing to remove**. Edits that actually change
+  entries re-serialize the document as canonical 2-space JSON, the shape Codex itself writes.
+  Thus an install → uninstall round trip is byte-identical only when the original file was
+  already canonical; foreign entries survive either way — see `docs/PRIVACY.md`.
 
 Uninstall removes only mehmory's entries, prunes the events and groups that empty out as a
 result, and **never turns the hooks feature back off** — the flag is Codex's, and other
-tools' hooks depend on it.
+tools' hooks depend on it. Skill directories are staged outside `skills/` first and restored
+if staging or the hook edit fails. If deleting staged directories fails after the hook edit,
+the integration stays fully uninstalled (no live hooks or discoverable skills); exit 3 with
+`E_CODEX_INSTALL` names the leftover `$CODEX_HOME/.mehmory-uninstall-*` directory to clean up.
+
+Skill sources, the skills-root symlink check, and every skill target are preflighted before
+configuration edits, so a refusal creates no Codex configuration backups or partial skills.
+Uninstall with neither a hook registry nor mehmory skills reports “nothing to remove” and
+creates no files or `$CODEX_HOME` directory. Removing skills alone never creates `hooks.json`.
+An unwritable installation lock is reported immediately; actual contention names
+`$CODEX_HOME/.mehmory-install.lock` so a confirmed stale lock can be removed by hand.
 
 Run `mehmory doctor` afterwards: it reports whether the wiring actually took (see below).
 
@@ -226,15 +260,16 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - `schema_version` drift (see `docs/UPGRADE.md`).
 - Config parseability.
 - KPI budget violations against the amended numbers in the spec's KPI table.
-- The Codex surface, four checks, each carrying a real error code documented in
+- The Codex surface, four checks, whose error findings carry real error codes documented in
   `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
+  an indeterminate hooks flag is a warning without `E_CODEX_HOOKS_DISABLED`.
 
-  | Check              | Code                      | What it means                                                                                                           |
-  | ------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-  | `codex.harness`    | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing             |
-  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED`  | Codex's `[features] hooks` is off or unset, so no hook fires at all                                                     |
-  | `codex.hooks`      | `E_CODEX_HOOKS_UNWIRED`   | one or more Codex events carry no mehmory entry, so those events capture nothing                                        |
-  | `codex.skills`     | `E_CODEX_SKILLS_MISSING`  | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+  | Check              | Code                      | What it means                                                                                                                   |
+  | ------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+  | `codex.harness`    | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing                     |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED`  | Error when Codex's `[features] hooks` is off or unset; warn without this code when the flag could not be determined; ok when on |
+  | `codex.hooks`      | `E_CODEX_HOOKS_UNWIRED`   | one or more Codex events carry no mehmory entry, so those events capture nothing                                                |
+  | `codex.skills`     | `E_CODEX_SKILLS_MISSING`  | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs)         |
 
   All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
   a Claude-Code-only user gets no findings about a harness they don't run. They appear as

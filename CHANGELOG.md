@@ -28,28 +28,83 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Inbox text round-trips exactly.** Backslashes, line separators, comment terminators,
-  and surrounding whitespace survive new serialization without reinterpretation or loss.
-- **Legacy inbox backslashes have one-way escape semantics.** Raw `\\` and `\r` in old
-  entries now decode as a backslash and carriage return; review backslash-heavy facts
-  before integrating. The schema and upgrade guide document the entry-text escapes.
-- **Atomic writes replace symlinks and flush replacements.** A planted destination
-  symlink is replaced, never written through or used to create its target's parent.
-  Writes flush the temporary file before rename and the directory afterward (best-effort),
-  and clean up temporary files on failure.
+- **Codex TOML scanning distinguishes array continuations from table headers.** Root feature
+  keys and table booleans after nested arrays are edited or refused without creating a
+  duplicate table.
+- **Codex setup preserves multiline TOML strings.** Basic and literal string contents are never
+  edited or read as settings; doctor reports unreadable or unsupported flags as indeterminate
+  warnings instead of unset errors.
+- **Codex dotted hooks keys are inserted after complete feature statements.** Multiline array
+  values no longer receive an invalid key inside their contents.
+- **Codex uninstall leaves foreign-only hook registries untouched.** Semantic no-ops preserve
+  any JSON formatting and create no backup, reporting nothing to remove.
+- **Codex setup refuses `[[features]]` with a specific reason.** An array of tables is never
+  combined with a conflicting feature-flag table.
+- **Codex doctor and backup guidance matches actual behavior.** It distinguishes unset flags
+  from indeterminate warnings and explains backups beside symlink targets in dotfiles
+  repositories.
+- **Codex configuration symlinks survive setup and removal.** Edits and private backups follow
+  the real target, including dotfiles outside `$CODEX_HOME`; dangling links are refused.
+- **Codex lock write failures are reported immediately.** Genuine contention identifies the
+  lock path for stale-lock cleanup instead of hiding permission failures behind a five-second
+  wait.
+- **Codex skill refusals write no configuration or backups.** All shipped sources and
+  destination symlink checks run before any edit.
+- **Codex uninstall on a never-installed home is a no-op.** It creates neither the home nor a
+  hook registry, including when only skills need removing.
+- **Codex configuration edits retain CRLF line endings.** Appended TOML lines and rewritten
+  hook registries use the existing newline convention.
+- **Codex skill symlink checks have a filesystem-root bound.** An unreachable skills boundary
+  cannot cause an infinite walk.
+- **Codex uninstall failures describe removal accurately.** Write failures no longer imply that
+  an installation was attempted.
+- **Codex troubleshooting covers safe-edit refusals and cleanup failures.** Operator guidance
+  now includes unsupported TOML, missing bundles, lock contention, staging cleanup, and symlink
+  targets.
+- **Codex feature edits preserve valid TOML and comments.** Spaced or commented headers, dotted
+  keys, and simple boolean inline tables are edited in place; unsupported shapes fail before
+  any Codex file is written.
+- **Codex init creates the memory store.** Codex-only users can onboard immediately after
+  setup.
+- **Codex uninstall never writes to the memory store.** Install and uninstall share a lock
+  under `$CODEX_HOME`.
+- **Codex setup refuses missing hook bundles.** It no longer registers commands pointing at
+  nonexistent scripts.
+- **Codex setup accepts symlinked homes and ancestors.** Symlink checks cover only owned paths
+  inside its skills tree in both directions.
+- **Codex setup recognizes hook entries from every supported host.** Pi-marked entries are
+  replaced or removed instead of duplicated.
+- **Codex configuration backups reflect the last modification.** Each `.mehmory.bak` contains
+  the immediately preceding contents, with private permissions,
+  deliberately replacing the pristine pre-mehmory backup so recovery preserves intervening
+  user edits.
+- **Codex uninstall keeps hooks and skills consistent on failure.** Skill staging can be rolled
+  back; deletion failures leave the integration uninstalled and identify leftover staging for
+  cleanup.
+- **Unchanged Codex hook entries no longer trigger a re-approval note.** Already-approved hooks
+  are mentioned only when their entries changed.
+- **Inbox text round-trips exactly.** Backslashes, line separators, comment terminators, and
+  surrounding whitespace survive new serialization without reinterpretation or loss.
+- **Legacy inbox backslashes have one-way escape semantics.** Raw `\\` and `\r` in old entries
+  now decode as a backslash and carriage return; review backslash-heavy facts before
+  integrating. The schema and upgrade guide document the entry-text escapes.
+- **Atomic writes replace symlinks and flush replacements.** A planted destination symlink is
+  replaced, never written through or used to create its target's parent. Writes flush the
+  temporary file before rename and the directory afterward (best-effort), and clean up
+  temporary files on failure.
 - **Memory commits use recoverable timeouts.** Git receives SIGTERM, with 500 ms for cheap
-  probes and 10 s for other store operations. Timeouts log the manual remedy;
-  real lock contention retries once then defers.
-- **Git timeouts never delete another process's index lock.** Git cleans up its own lock
-  on SIGTERM; mehmory leaves all index locks untouched and logs the safe manual remedy.
+  probes and 10 s for other store operations. Timeouts log the manual remedy; real lock
+  contention retries once then defers.
+- **Git timeouts never delete another process's index lock.** Git cleans up its own lock on
+  SIGTERM; mehmory leaves all index locks untouched and logs the safe manual remedy.
 - **Old index locks no longer defer silently forever.** Locks older than 30 s trigger a
   rate-limited warning with the manual remedy, without deleting a possibly live lock.
-- **Store history reads disable signature display.** Ambient `log.showSignature` cannot
-  trigger signature verification or contaminate the last-commit summary.
-- **Every store git call is isolated.** Init, config, status, and history reads now share
-  the commit runner's stripped repository environment, disabled hooks and fsmonitor,
-  literal pathspec support, and C locale. Project identity retains the caller's repo
-  environment with bounded reads. An unchanged tree remains a successful no-op.
+- **Store history reads disable signature display.** Ambient `log.showSignature` cannot trigger
+  signature verification or contaminate the last-commit summary.
+- **Every store git call is isolated.** Init, config, status, and history reads now share the
+  commit runner's stripped repository environment, disabled hooks and fsmonitor, literal
+  pathspec support, and C locale. Project identity retains the caller's repo environment with
+  bounded reads. An unchanged tree remains a successful no-op.
 - **Concurrent warnings are not overwritten or cleared accidentally.** Immutable records
   replace read-modify-write storage, drains claim only published records, legacy warnings
   remain readable, and detail paths honor `MEHMORY_HOME`.
@@ -58,60 +113,65 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reclaimed after a minute.
 - **Append and warning directory failures stay fail-open.** An unusable parent directory
   returns an append failure or skips warning storage instead of throwing into the harness.
-- **Capture retries keep their delta.** Cursors advance only after a successful inbox append
-  or durable enqueue, and failed captures retain the Stop counter.
+- **Capture retries keep their delta.** Cursors advance only after a successful inbox append or
+  durable enqueue, and failed captures retain the Stop counter.
 - **Swept live sessions resume without SessionStart.** Later transcript activity restores the
-  saved cursor and advances the generation without clearing a session pause; unchanged
-  trailing hooks still cannot recreate state or replay old entries.
-- **Fresh cursors cannot prove growth.** Untouched transcripts stay retired after an idle sweep.
-- **Real cursors require new bytes.** Mtime bumps and truncation cannot resurrect swept sessions.
-- **Skills read retired session origins.** A named session's marker supplies project key and host.
-- **SessionStart resume is deterministic.** Retired pauses clear before injection and maintenance.
-- **Pause/resume recovery names the next turn.** Errors and skills no longer require SessionStart.
+  saved cursor and advances the generation without clearing a session pause; unchanged trailing
+  hooks still cannot recreate state or replay old entries.
+- **Fresh cursors cannot prove growth.** Untouched transcripts stay retired after an idle
+  sweep.
+- **Real cursors require new bytes.** Mtime bumps and truncation cannot resurrect swept
+  sessions.
+- **Skills read retired session origins.** A named session's marker supplies project key and
+  host.
+- **SessionStart resume is deterministic.** Retired pauses clear before injection and
+  maintenance.
+- **Pause/resume recovery names the next turn.** Errors and skills no longer require
+  SessionStart.
 - **Failed Stop captures back off.** The nudge fires only on the first crossing, followed by
-  one immediate silent retry and at most one retry per threshold window. Persistent failure
-  is logged once after the immediate retry.
+  one immediate silent retry and at most one retry per threshold window. Persistent failure is
+  logged once after the immediate retry.
 - **Deferred tails retain their origin agent.** Session state records the agent so another
   process's sweep cannot misattribute its entries.
-- **Failed inbox appends report failure.** Both transactional entry points return stderr and
-  a non-zero exit, including partial failures that can be safely retried.
+- **Failed inbox appends report failure.** Both transactional entry points return stderr and a
+  non-zero exit, including partial failures that can be safely retried.
 - **Pause and resume use locked transactions.** Skills pass an explicit session id to new
   inbox-tx operations instead of guessing a state filename and hand-editing it.
 - **Skills know their current session.** SessionStart injects the id inside the memory frame;
   all six skills use its hashed state filename, leaving recency only as a legacy project hint.
-- **Skill helper fallbacks name the installed bundle.** Claude Code uses its plugin root,
-  Codex uses the path registered in hooks.json, and Pi names its git package directory.
+- **Skill helper fallbacks name the installed bundle.** Claude Code uses its plugin root, Codex
+  uses the path registered in hooks.json, and Pi names its git package directory.
 - **Finalized session errors explain recovery.** Pause/resume report the marker before a
   missing state file, so an unchanged finalized session is not mistaken for an unknown id.
 - **State-file documentation matches disk.** Config, troubleshooting, and the session module
   describe SHA-256 filenames rather than raw session ids.
-- **Page purges remove catalog summaries too.** Matching normative `- [[slug]] — summary`
-  lines are previewed and removed, preventing deleted summaries from remaining in
-  SessionStart's catalog. Freeform references and lines without the summary separator stay.
-- **Page purges reach archived and agent pages.** Live and archived copies are removed
-  together within the selected scope.
+- **Page purges remove catalog summaries too.** Matching normative `- [[slug]] — summary` lines
+  are previewed and removed, preventing deleted summaries from remaining in SessionStart's
+  catalog. Freeform references and lines without the summary separator stay.
+- **Page purges reach archived and agent pages.** Live and archived copies are removed together
+  within the selected scope.
 - **Purge validates all targets before export or mutation.** Refused pages or indices leave
-  catalog lines intact, and every export source is checked for store containment so
-  symlinked `pages/` or `archive/` directories cannot leak outside-store content.
-- **Ambiguous agent pages can be selected explicitly.** `purge <slug> --agent <name>`
-  restricts deletion to that agent, and ambiguity errors name the correct qualifier.
+  catalog lines intact, and every export source is checked for store containment so symlinked
+  `pages/` or `archive/` directories cannot leak outside-store content.
+- **Ambiguous agent pages can be selected explicitly.** `purge <slug> --agent <name>` restricts
+  deletion to that agent, and ambiguity errors name the correct qualifier.
 - **Scope labels no longer determine deletion identity.** A project aliased to `agent/<name>`
   remains distinct from the agent scope with the same label.
-- **Empty catalog edits no longer clutter purge previews.** An index without matching
-  lines is omitted from text and JSON index edits.
+- **Empty catalog edits no longer clutter purge previews.** An index without matching lines is
+  omitted from text and JSON index edits.
 - **`purge --global` removes the whole global scope.** Its index, inbox, log and archive go
   too, without rewriting git history.
 - **Invalid purge session ids are usage errors.** Ids shorter than eight characters or
   containing whitespace are rejected before confirmation with exit 1 and `E_USAGE`.
 - **Partial inbox purge failures report their reach.** Deleted and remaining entry counts
   disclose that no purge commit was made and suggest inspecting the store's git status.
-- **Interrupted onboard runs retain progress.** Byte-capped and append-failed runs can
-  continue with `--resume`; append failures return exit 3 instead of success.
-- **Onboard rejects zero byte caps.** `--max-bytes 0` returns a usage error instead of
-  creating a run that cannot progress. Append-failure messages cover busy write locks as
-  well as filesystem problems.
-- **Unexpected CLI exceptions use `E_INTERNAL`.** They no longer incorrectly report an
-  append failure.
+- **Interrupted onboard runs retain progress.** Byte-capped and append-failed runs can continue
+  with `--resume`; append failures return exit 3 instead of success.
+- **Onboard rejects zero byte caps.** `--max-bytes 0` returns a usage error instead of creating
+  a run that cannot progress. Append-failure messages cover busy write locks as well as
+  filesystem problems.
+- **Unexpected CLI exceptions use `E_INTERNAL`.** They no longer incorrectly report an append
+  failure.
 - **Queue claims start their stale window at claim time.** Jobs pending for hours are not
   immediately claimed twice.
 - **Stale-lock reclamation is serialized.** A reclaim guard protects the owner/file-identity
@@ -122,12 +182,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when `dist/cli.mjs` is absent or older than `src/`, so a fresh checkout works and tests never
   run against stale code, while CI's explicit build is not repeated.
 - **Architecture lint rules handle Windows paths and checkout boundaries.** All five rules
-  normalize backslashes and checkout-relative paths; a checkout under `test/` no longer
-  exempts production code from the filesystem boundary.
+  normalize backslashes and checkout-relative paths; a checkout under `test/` no longer exempts
+  production code from the filesystem boundary.
 - **The no-exit rule catches process aliases and assignment destructuring.** Static
   template-literal property keys can no longer bypass the core's exit/abort ban.
-- **Module boundary rules check static template literals.** Dynamic imports and `require`
-  calls using expression-free templates now enforce the filesystem and CLI boundaries.
+- **Module boundary rules check static template literals.** Dynamic imports and `require` calls
+  using expression-free templates now enforce the filesystem and CLI boundaries.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

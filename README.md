@@ -89,10 +89,12 @@ plugin's requirement, and tells you whether the plugin is installed.
 `$CODEX_HOME/hooks.json` (`~/.codex` unless `$CODEX_HOME` is set), turns on Codex's
 `[features] hooks` flag in `config.toml` if it's off, and installs the six skills under
 `$CODEX_HOME/skills/mehmory-<name>/`. Both files are shared with other tools — mehmory only
-ever adds or removes entries it can positively identify as its own, and backs each file up
-before touching it. `mehmory init --host codex --uninstall` reverses all of it — the store
-itself is untouched either way (see `docs/PRIVACY.md`). Full detail, including what survives
-a hand-edited config: `docs/CLI.md`.
+ever adds or removes entries it can positively identify as its own, and refreshes each
+`.mehmory.bak` backup to the state immediately before modification. Unsupported feature
+syntax or missing hook bundles are refused rather than writing broken configuration.
+`mehmory init --host codex --uninstall` removes the hooks and skills, leaves the shared
+feature flag on, and never initializes or writes to the store (see `docs/PRIVACY.md`).
+Full detail, including supported TOML shapes and skill-path symlinks: `docs/CLI.md`.
 
 **`--host pi`:** does the same store setup and writes nothing into Pi's configuration — the
 `pi install` above owns that. It ends by naming that install command, so running `init` first
