@@ -6,7 +6,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { type MehmoryError, logError } from './errors.js';
-import { statePath, mehmoryHome } from './home.js';
+import { statePath } from './home.js';
 import { isContainedProjectKey } from './identity.js';
 import {
   pathExists,
@@ -17,20 +17,14 @@ import {
   LOCK_STALE_MS,
   mkdir,
   remove,
-  removeDir,
-  listDir,
   createLockExclusive,
 } from './fs.js';
 
-/**
- * Session locks get far tighter retry bounds than project locks.
- *
- * This one is taken on every prompt and every Stop, and `withProjectLock` retries by
- * *busy-waiting* -- the project default of 50 x 100ms would burn five seconds of CPU
- * inside a hook. The critical section here is one small read plus one atomic write, so
- * contention resolves in microseconds or not at all; on timeout the session operation
- * skips rather than running the unserialized write this replaces.
- */
+/** A reused PID cannot protect an abandoned lock indefinitely. */
+const LOCK_MAX_AGE_MS = 5 * 60 * 1000;
+const retryWait = new Int32Array(new SharedArrayBuffer(4));
+
+/** Session state writes skip after 200 ms of contention instead of failing open. */
 const SESSION_LOCK_RETRY_COUNT = 10;
 const SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 
@@ -42,10 +36,48 @@ function lockFilePath(key: string): string {
   return join(statePath('locks'), name + '.lock');
 }
 
+/** Serialize the identity check and unlink, including recovery of abandoned guards. */
+function reclaimLock(
+  path: string,
+  observed: NonNullable<ReturnType<typeof stat>>,
+  marker: string,
+  owner: string
+): boolean {
+  const guardPath = `${path}.reclaim`;
+  if (!createLockExclusive(guardPath, owner)) {
+    const guardStat = stat(guardPath);
+    if (!guardStat || Date.now() - Number(guardStat.mtimeMs) <= LOCK_STALE_MS) return false;
+    // A guard's reclamation needs its own guard for the same check/unlink race.
+    if (!reclaimLock(guardPath, guardStat, readFile(guardPath), owner)) return false;
+    if (!createLockExclusive(guardPath, owner)) return false;
+  }
+
+  try {
+    const current = stat(path);
+    if (
+      !current ||
+      current.dev !== observed.dev ||
+      current.ino !== observed.ino ||
+      current.mtimeMs !== observed.mtimeMs ||
+      readFile(path) !== marker
+    ) {
+      return false;
+    }
+    remove(path);
+    return true;
+  } finally {
+    try {
+      if (readFile(guardPath) === owner) remove(guardPath);
+    } catch {
+      // A failed cleanup leaves a guard recoverable after the staleness bound.
+    }
+  }
+}
+
 /**
  * Acquire exclusive access to a project, execute fn, then release.
  * Lock is acquired via open(..., 'wx'), which is atomic across processes.
- * Stale locks (mtime > lock.stale_ms) are reclaimed.
+ * Stale locks are reclaimed after their owner exits, or unconditionally after five minutes.
  * Retries at most retryCount × retryIntervalMs, then proceeds without lock and logs E_LOCK_TIMEOUT.
  * Release on both success and throw.
  * @param key - Project key
@@ -76,14 +108,13 @@ export function withProjectLock<T>(
   failOpen = true
 ): T | undefined {
   const lockPath = lockFilePath(key);
-  mkdir(join(mehmoryHome(), '.state', 'locks'));
-
   let acquired = false;
   const owner = `${String(process.pid)}:${randomBytes(16).toString('hex')}`;
 
   try {
     // Try to acquire lock with retries
     for (let attempt = 0; attempt <= retryCount; attempt++) {
+      mkdir(statePath('locks'));
       // Try to create lock file exclusively
       if (createLockExclusive(lockPath, owner)) {
         acquired = true;
@@ -94,40 +125,24 @@ export function withProjectLock<T>(
       if (pathExists(lockPath)) {
         try {
           const lockStat = stat(lockPath);
-          if (!lockStat) {
-            // Retry after backoff
-            if (attempt < retryCount) {
-              const end = Date.now() + retryIntervalMs;
-              while (Date.now() < end) {
-                // Busy-wait
-              }
-            }
-            continue;
-          }
-
           const now = Date.now();
-          const mtime = typeof lockStat.mtimeMs === 'number' ? lockStat.mtimeMs : 0;
+          const mtime = Number(lockStat?.mtimeMs ?? now);
           const age = now - mtime;
 
-          if (age > LOCK_STALE_MS) {
+          if (lockStat && age > LOCK_STALE_MS) {
             const marker = readFile(lockPath);
             const ownerPid = Number(marker.split(':', 1)[0]);
-            if (Number.isInteger(ownerPid) && ownerPid > 0) {
+            let alive = false;
+            if (age <= LOCK_MAX_AGE_MS && Number.isInteger(ownerPid) && ownerPid > 0) {
               try {
                 process.kill(ownerPid, 0);
-                continue;
-              } catch {
-                // The recorded owner is gone; reclaim the stale lock.
+                alive = true;
+              } catch (error) {
+                // EPERM and unknown probe failures cannot prove that the owner exited.
+                alive = !(error instanceof Error && 'code' in error && error.code === 'ESRCH');
               }
             }
-            // Stale lock; try to reclaim it
-            try {
-              remove(lockPath);
-              // Retry immediately
-              continue;
-            } catch {
-              // Race: someone else deleted it or acquired it, retry normally
-            }
+            if (!alive && reclaimLock(lockPath, lockStat, marker, owner)) continue;
           }
         } catch {
           // Could not stat, retry normally
@@ -136,11 +151,7 @@ export function withProjectLock<T>(
 
       // Not stale (or couldn't determine). Retry with backoff.
       if (attempt < retryCount) {
-        // Sleep before retry
-        const end = Date.now() + retryIntervalMs;
-        while (Date.now() < end) {
-          // Busy-wait (sync, no setImmediate available)
-        }
+        Atomics.wait(retryWait, 0, 0, retryIntervalMs);
       }
     }
 
@@ -167,12 +178,6 @@ export function withProjectLock<T>(
         // Ignore cleanup errors
       }
     }
-    try {
-      const locksDir = join(mehmoryHome(), '.state', 'locks');
-      if (pathExists(locksDir) && listDir(locksDir).length === 0) removeDir(locksDir);
-    } catch {
-      // Ignore cleanup errors
-    }
   }
 }
 
@@ -188,7 +193,7 @@ export function withProjectLock<T>(
  */
 export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
   const lockPath = lockFilePath(key);
-  mkdir(join(mehmoryHome(), '.state', 'locks'));
+  mkdir(statePath('locks'));
 
   const owner = `${String(process.pid)}:${randomBytes(16).toString('hex')}`;
   if (!createLockExclusive(lockPath, owner)) return undefined;
