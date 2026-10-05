@@ -21,7 +21,7 @@ import {
   shellQuote,
   stat,
   statePath
-} from "./chunk-3R4TR2B4.mjs";
+} from "./chunk-H34NFU7U.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -711,6 +711,7 @@ var ARCHIVE_DIVIDER = "## Archive";
 var ARCHIVE_DIR = "archive";
 var STALE_SCORE_MULTIPLIER = 0.7;
 function isStalePage(contents, now, staleAfterDays) {
+  if ((readFrontmatter(contents)["decay"] ?? "default") !== "default") return false;
   const age = pageAgeDays(contents, now);
   return age !== null && age > staleAfterDays;
 }
@@ -785,7 +786,7 @@ function readInboxEntries(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? parseInboxEntries(readFile(inboxFile)) : [],
     [],
-    "E_APPEND_FAILED"
+    "E_STORE_READ"
   );
 }
 function isSafeInboxPath(inboxFile) {
@@ -862,7 +863,7 @@ function clearInboxEntries(inboxFile, key, ids) {
 }
 
 // src/core/match.ts
-import { basename, join as join4 } from "path";
+import { resolve as resolve2 } from "path";
 var MIN_TOKEN_LENGTH = 3;
 var STOPWORDS = /* @__PURE__ */ new Set([
   "the",
@@ -946,18 +947,31 @@ function countOccurrences(haystack, token) {
   }
   return count;
 }
+function scoreDoc(tokens, lowerBody, lowerTitle) {
+  let score = 0;
+  for (const token of tokens) {
+    score += countOccurrences(lowerBody, token) + 3 * countOccurrences(lowerTitle, token);
+  }
+  return score;
+}
 function matchPages(prompt, pagesDir, max = 3, options = {}) {
   const tokens = tokenize(prompt);
   if (tokens.size === 0 || !pathExists(pagesDir)) return [];
   const now = options.now ?? Date.now();
-  const prefix = basename(pagesDir);
   const scored = [];
-  for (const name of listDir(pagesDir)) {
+  let names;
+  try {
+    if (lstat(pagesDir)?.isSymbolicLink()) return [];
+    names = listDir(pagesDir);
+  } catch {
+    return [];
+  }
+  for (const name of names) {
     if (!name.endsWith(".md")) continue;
-    const filePath = join4(pagesDir, name);
+    const filePath = resolve2(pagesDir, name);
     let contents;
     try {
-      if (!stat(filePath)?.isFile()) continue;
+      if (lstat(filePath)?.isSymbolicLink() || !stat(filePath)?.isFile()) continue;
       contents = readFile(filePath);
     } catch {
       continue;
@@ -966,13 +980,10 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
     const body = contents.toLowerCase();
     const titleLine = /^#\s+(.*)$/m.exec(body);
     const title = `${name.toLowerCase()} ${titleLine?.[1] ?? ""}`;
-    let score = 0;
-    for (const token of tokens) {
-      score += countOccurrences(body, token) + 3 * countOccurrences(title, token);
-    }
+    const score = scoreDoc(tokens, body, title);
     if (score > 0) {
       scored.push({
-        path: join4(prefix, name),
+        path: filePath,
         score: stale ? score * STALE_SCORE_MULTIPLIER : score,
         stale
       });
@@ -984,7 +995,7 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
 
 // src/core/session.ts
 import { createHash as createHash4 } from "crypto";
-import { join as join5 } from "path";
+import { join as join4 } from "path";
 
 // src/core/cursor.ts
 function freshCursor() {
@@ -1213,7 +1224,7 @@ function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
   for (const name of listDir(dir)) {
     if (!name.endsWith(".json") || name.endsWith(".finalized.json")) continue;
     try {
-      const path = join5(dir, name);
+      const path = join4(dir, name);
       const mtime = stat(path)?.mtimeMs;
       const raw = readFile(path);
       const id = JSON.parse(raw)["session_id"];
@@ -1250,7 +1261,7 @@ function sweepSessionState(maxAgeDays) {
   let deleted = 0;
   for (const name of listDir(dir)) {
     if (!name.endsWith(".json")) continue;
-    const path = join5(dir, name);
+    const path = join4(dir, name);
     try {
       const mtime = stat(path)?.mtimeMs;
       if (mtime === void 0 || mtime > cutoff) continue;
@@ -1298,7 +1309,7 @@ function isPaused(sessionId) {
 }
 
 // src/core/redact.ts
-import { join as join6 } from "path";
+import { join as join5 } from "path";
 var REDACTION_PLACEHOLDER = "[REDACTED]";
 var MAX_INPUT_BYTES = 256 * 1024;
 var SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|(?!sharedaccesskey\b)[a-z0-9]*(?:token|password|passwd|secret|(?:api|secret|private|access|signing|ssh)key)|[a-z][a-z0-9_]*_(?:key|token|password|passwd|secret))`;
@@ -1377,7 +1388,7 @@ function compileUserPatterns(patterns) {
         kind: "actionable",
         what: `secrets.patterns entry ${String(patterns.indexOf(raw))} is not a usable regex (${err instanceof Error ? err.message : String(err)})`,
         consequence: "That pattern is skipped; the built-in secret patterns still apply",
-        fix: `$EDITOR ${join6(mehmoryHome(), "config.json")}`
+        fix: `$EDITOR ${join5(mehmoryHome(), "config.json")}`
       });
     }
   }
@@ -1465,9 +1476,9 @@ export {
   tryProjectLock,
   withSessionLock,
   readFrontmatter,
-  pageAgeDays,
   ARCHIVE_DIVIDER,
   ARCHIVE_DIR,
+  isStalePage,
   parseIndexLine,
   INBOX_HOSTS,
   inboxEntryId,

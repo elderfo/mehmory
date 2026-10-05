@@ -2,6 +2,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTempDir } from './helpers.js';
+import { join } from 'node:path';
 import {
   additionalContext,
   keyFor,
@@ -45,7 +46,9 @@ describe('UserPromptSubmit hook', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(additionalContext(run)).toContain('relevant: pages/deployment.md');
+    expect(additionalContext(run)).toContain(
+      `relevant: ${join(paths(key).pages, 'deployment.md')}`
+    );
     expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', pointers_offered: 1 });
   });
 

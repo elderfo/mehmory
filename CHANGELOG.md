@@ -28,6 +28,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one
+  staleness rule, so exempt decay classes get no age label or ranking demotion.
+- **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep
+  their separate 150-token allowance; claimed warnings are truncated, never dropped, and
+  unselected ones wait for the next start.
+- **Small injection budgets degrade in order.** Routing stays on every populated session and goes
+  first only when the budget is squeezed, then content; the session id that skills depend on is
+  kept whenever its minimal frame fits.
+- **Doctor's injection KPI follows config.** It checks the configured frame budget plus the
+  150-token maintenance allowance instead of a fixed 950.
+- **Unreadable store paths fail open.** Retrieval, status and SessionStart probes skip them;
+  doctor reports a repair for a `pages` path that is a file and continues its other checks.
+  Read failures log informational `E_STORE_READ` instead of an append failure.
+- **Memory pointers are absolute paths.** `relevant:` lines name directly readable project or
+  global store files.
+- **Truncation never splits an emoji.** Injection and search snippets keep surrogate pairs whole.
+- **Prompt matching and search share scoring and skip symlinks.** Golden-set recall is
+  unchanged.
 - **PascalCase secret names are redacted.** `ClientSecret` and `SecretKey` no longer leak.
 - **Unseparated secret suffixes are caught.** Names such as `csrftoken`, `myapikey` and
   `secretkey` are covered, and URL passwords containing commas or apostrophes are redacted.

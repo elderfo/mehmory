@@ -11,6 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import {
@@ -208,7 +209,7 @@ describe('Codex recall (#22)', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(additionalContext(run)).toContain('relevant: pages/deployment.md');
+    expect(additionalContext(run)).toContain(`relevant: ${join(paths(key).pages, 'deployment.md')}`);
     expect(statsLines().at(-1)).toMatchObject({
       hook: 'UserPromptSubmit',
       host: 'codex',
@@ -226,7 +227,7 @@ describe('Codex recall (#22)', () => {
       })
     );
 
-    expect(context).toContain('relevant: pages/deployment.md (stale)');
+    expect(context).toContain(`relevant: ${join(paths(key).pages, 'deployment.md')} (stale)`);
   });
 
   it('suppresses injection on both events while paused', () => {

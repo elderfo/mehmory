@@ -1,4 +1,5 @@
 import {
+  MAINTENANCE_ALLOWANCE_TOKENS,
   applyDistillJobResult,
   buildScopeInjection,
   claimJob,
@@ -10,15 +11,16 @@ import {
   scopePaths,
   skillRef,
   storeExists,
-  storeIsUnpopulated
-} from "./chunk-2KPNGYRS.mjs";
+  storeIsUnpopulated,
+  truncateToTokens
+} from "./chunk-7FSOFKBN.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
   currentAgentName,
   isPaused,
+  isStalePage,
   loadConfig,
-  pageAgeDays,
   parseIndexLine,
   readFrontmatter,
   readInboxEntries,
@@ -27,8 +29,8 @@ import {
   runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-RSYE4VWA.mjs";
-import "./chunk-BEEOLIQD.mjs";
+} from "./chunk-WB3BMRQX.mjs";
+import "./chunk-572P3JTD.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -44,7 +46,10 @@ import {
   rename,
   shellQuote,
   stat
-} from "./chunk-3R4TR2B4.mjs";
+} from "./chunk-H34NFU7U.mjs";
+
+// src/hooks/session-start.ts
+import assert from "assert/strict";
 
 // src/core/store.ts
 import { join } from "path";
@@ -305,14 +310,8 @@ function decayPass(scopeDir, options = {}) {
         if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
-        const decayClass = fields["decay"] ?? "default";
-        const age = pageAgeDays(contents, now);
         const updatedAt = Date.parse(fields["updated"] ?? "");
-        if (decayClass !== "default" || age === null) {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
-          continue;
-        }
-        if (age > purgeDays) {
+        if (isStalePage(contents, now, purgeDays)) {
           const archiveDir = join2(scopeDir, ARCHIVE_DIR);
           if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
             throw new Error("archive directory must not be a symlink");
@@ -324,7 +323,7 @@ function decayPass(scopeDir, options = {}) {
           }
           rename(pagePath, join2(archiveDir, name));
           archived.push(name);
-        } else if (age > archiveDays) {
+        } else if (isStalePage(contents, now, archiveDays)) {
           demoted.push(name);
         } else {
           liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
@@ -421,7 +420,7 @@ runHook("SessionStart", (input, project, host, config) => {
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];
-  const warning = pendingWarnings()[0];
+  const warning = pendingWarnings(1)[0];
   if (warning !== void 0) candidates.push(`mehmory: ${warning}`);
   const integrate = skillRef(host, "integrate");
   if (input.source === "compact") {
@@ -437,8 +436,18 @@ runHook("SessionStart", (input, project, host, config) => {
       `mehmory: memory at ${mehmoryHome()} is empty \u2014 run ${skillRef(host, "onboard-session")} to seed it`
     );
   }
-  const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const selected = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const lines = [];
+  let remaining = MAINTENANCE_ALLOWANCE_TOKENS;
+  for (const [index, line] of selected.entries()) {
+    const allowance = Math.floor(remaining / (selected.length - index));
+    const text = truncateToTokens(line, allowance - 1).text;
+    lines.push(text);
+    remaining -= estimateTokens(text) + 1;
+  }
   const context = [injection.text, ...lines].filter(Boolean).join("\n");
+  assert(lines.length <= MAX_MAINTENANCE_LINES);
+  assert(estimateTokens(context) <= config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS);
   const finalized = maintenance(input.session_id, project, host, config);
   return {
     context,

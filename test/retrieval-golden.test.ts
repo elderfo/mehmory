@@ -21,6 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { matchPages } from '../src/core/match.js';
+import { searchScope } from '../src/core/search.js';
 
 interface GoldenQuery {
   readonly id: string;
@@ -50,11 +51,12 @@ function seedCorpus(): string {
 }
 
 const PAGES_DIR = seedCorpus();
+const OPTIONS = { staleAfterDays: 60, now: Date.parse('2026-08-01T00:00:00Z') };
 
 /** Rank of the expected page in the results, or -1 when it is absent. */
 function rankOf(query: GoldenQuery, max: number): number {
-  const hits = matchPages(query.query, PAGES_DIR, max);
-  return hits.findIndex(hit => hit.path.endsWith(query.expect));
+  const hits = matchPages(query.query, PAGES_DIR, max, OPTIONS);
+  return hits.findIndex((hit) => hit.path.endsWith(query.expect));
 }
 
 function recallAt(k: number, queries: readonly GoldenQuery[]): number {
@@ -89,6 +91,51 @@ describe('retrieval golden set', () => {
     expect(recallAt(3, keyword)).toBeGreaterThanOrEqual(KEYWORD_RECALL_AT_3);
   });
 
+  it('keeps the evergreen golden page fresh in both retrieval paths', () => {
+    const query = golden.queries.find((q) => q.id === 'evergreen-custody');
+    expect(query?.query).toBe('what is custody');
+    expect(matchPages('what is custody', PAGES_DIR, 3, OPTIONS)[0]).toEqual({
+      path: join(PAGES_DIR, 'custody.md'),
+      stale: false,
+    });
+    const hits = searchScope(
+      'what is custody',
+      'golden',
+      {
+        pagesDir: PAGES_DIR,
+        archiveDir: join(PAGES_DIR, '..', 'archive'),
+        logFile: join(PAGES_DIR, '..', 'log.md'),
+      },
+      OPTIONS
+    ).hits;
+    expect(hits[0]).toMatchObject({ path: 'pages/custody.md', score: 8, stale: false });
+  });
+
+  it('reports measured recall for both retrieval entrypoints', () => {
+    for (const queries of [keyword, paraphrase]) {
+      const searchRecall = (k: number): number =>
+        queries.filter((q) => {
+          const hits = searchScope(
+            q.query,
+            'golden',
+            {
+              pagesDir: PAGES_DIR,
+              archiveDir: join(PAGES_DIR, '..', 'archive'),
+              logFile: join(PAGES_DIR, '..', 'log.md'),
+            },
+            OPTIONS
+          ).hits.slice(0, k);
+          return hits.some((hit) => hit.path.endsWith(q.expect));
+        }).length / queries.length;
+      const measured = [recallAt(1, queries), recallAt(3, queries)];
+      console.info(
+        `${queries === keyword ? 'keyword' : 'paraphrase'} (${String(queries.length)} queries): match Recall@1/3 ${measured.join('/')}; search ${[searchRecall(1), searchRecall(3)].join('/')}`
+      );
+      expect(measured).toEqual(queries === keyword ? [1, 1] : [0, 0.25]);
+      expect([searchRecall(1), searchRecall(3)]).toEqual(measured);
+    }
+  });
+
   it('records what keyword matching cannot do, rather than hiding it', () => {
     // Asserted as a ceiling, not a floor: this number going UP means something real
     // changed in retrieval and the paraphrase gap should be re-measured, not that a
@@ -103,7 +150,9 @@ describe('retrieval golden set', () => {
 // Measured, not guessed, against the fixture corpus with the grep matcher as of the
 // commit that added this file:
 //
-//   keyword    Recall@1 = 12/12 = 1.00     Recall@3 = 12/12 = 1.00
+// Before and after isolating the evergreen fixture as custody (avoiding "ship"
+// substring matches in stewardship's filename, title and body), both entrypoints:
+//   keyword    Recall@1 = 13/13 = 1.00     Recall@3 = 13/13 = 1.00
 //   paraphrase Recall@1 =  0/4  = 0.00     Recall@3 =  1/4  = 0.25
 //
 // Update these deliberately, in a commit that says what changed in retrieval — never to

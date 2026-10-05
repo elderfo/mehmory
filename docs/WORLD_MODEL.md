@@ -292,6 +292,7 @@ including the three that change previously fixed contracts and were approved as 
 the gate: **2** (session-scoped capture state; global-cursor API removed), **10**
 (UserPromptSubmit budget restated as <100 ms in-hook / <300 ms end-to-end) and **14**
 (maintenance token allowance: ≤2 lines, 150 tokens, combined injection asserted ≤950).
+`injection.budget_tokens` includes the memory frame's framing; maintenance retains its separate 150-token allowance.
 
 Items 25–28 were discovered during implementation and are recorded here in full:
 

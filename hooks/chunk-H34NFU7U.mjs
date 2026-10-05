@@ -56,6 +56,8 @@ var ERROR_KINDS = {
   E_SESSION_STATE: "informational",
   E_TRANSCRIPT_PARSE: "informational",
   E_APPEND_FAILED: "actionable",
+  /** A store read or metadata probe failed; the caller uses an empty/unknown fallback. */
+  E_STORE_READ: "informational",
   E_ATOMIC_WRITE: "actionable",
   // ─── Run 3 (CLI) ───
   /** A `mehmory search` scan failed or was cut short. Nothing for the user to run. */
@@ -195,7 +197,11 @@ function warningPaths() {
   }
   return paths;
 }
-function readWarnings(consume = false) {
+function readWarnings(consume = false, limit = Infinity) {
+  const selected = consume && Number.isFinite(limit) ? new Set(
+    readWarnings().slice(0, Math.max(0, Math.floor(limit))).map((record) => record.code)
+  ) : void 0;
+  if (selected?.size === 0) return [];
   const records = [];
   for (const path of warningPaths()) {
     const claimed = consume ? `${path.replace(/(?:\.drain-[0-9a-f-]{36})+$/, "")}.drain-${randomUUID()}` : path;
@@ -225,10 +231,28 @@ function readWarnings(consume = false) {
         }
         continue;
       }
-      records.push(
-        ...Array.isArray(parsed) ? parsed.filter(isWarningRecord) : isWarningRecord(parsed) ? [parsed] : []
+      const valid = Array.isArray(parsed) ? parsed.filter(isWarningRecord) : isWarningRecord(parsed) ? [parsed] : [];
+      const delivered = valid.filter(
+        (record) => selected === void 0 || selected.has(record.code)
       );
-      if (renamed) unlinkSync(claimed);
+      const remaining = valid.filter(
+        (record) => selected !== void 0 && !selected.has(record.code)
+      );
+      if (renamed) {
+        if (remaining.length > 0) {
+          const dir = statePath("warning-records");
+          mkdirSync(dir, { recursive: true });
+          const temp = `${claimed}.tmp`;
+          try {
+            writeFileSync(temp, JSON.stringify(remaining), { flag: "wx" });
+            renameSync(temp, join2(dir, `${randomUUID()}.json`));
+          } finally {
+            if (existsSync(temp)) unlinkSync(temp);
+          }
+        }
+        unlinkSync(claimed);
+      }
+      records.push(...delivered);
     } catch {
       if (renamed) {
         try {
@@ -277,8 +301,8 @@ function warningLines(warnings) {
 function peekWarnings() {
   return warningLines(readWarnings());
 }
-function pendingWarnings() {
-  return warningLines(readWarnings(true));
+function pendingWarnings(limit = Infinity) {
+  return warningLines(readWarnings(true, limit));
 }
 
 // src/core/fs.ts

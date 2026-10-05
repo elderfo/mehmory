@@ -89,12 +89,14 @@ export const STALE_SCORE_MULTIPLIER = 0.7;
 export const ARCHIVED_SCORE_MULTIPLIER = 0.5;
 
 /**
- * True when a page body's `updated` frontmatter is older than `staleAfterDays`.
+ * True when a default-decay page's `updated` is older than `staleAfterDays`.
+ * Evergreen and ephemeral pages are exempt from mechanical aging.
  *
  * A page with no parseable `updated` is NOT stale: unknown age is not evidence of age,
  * and treating it as stale would demote every hand-written page that skipped frontmatter.
  */
 export function isStalePage(contents: string, now: number, staleAfterDays: number): boolean {
+  if ((readFrontmatter(contents)['decay'] ?? 'default') !== 'default') return false;
   const age = pageAgeDays(contents, now);
   return age !== null && age > staleAfterDays;
 }

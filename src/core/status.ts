@@ -63,7 +63,7 @@ export interface StatusReport {
 /** Summarize one scope. Never throws; an unreadable store yields zeroes (A2/A11). */
 export function buildStatus(key: string, dir: string): StatusReport {
   const files = scopeFiles(dir);
-  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
+  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
   const timestamps = entries.map(e => e.ts).sort();
   const oldest = timestamps[0];
   const integrated = lastIntegrate(files.logFile);
@@ -89,7 +89,7 @@ export function countPages(pagesDir: string): number {
   return failOpen(
     () => (pathExists(pagesDir) ? listDir(pagesDir).filter(f => f.endsWith('.md')).length : 0),
     0,
-    'E_APPEND_FAILED'
+    'E_STORE_READ'
   );
 }
 
@@ -103,7 +103,7 @@ export function countIndexLines(indexFile: string): number {
             .filter(line => parseIndexLine(line) !== undefined).length
         : 0,
     0,
-    'E_APPEND_FAILED'
+    'E_STORE_READ'
   );
 }
 
@@ -124,7 +124,7 @@ export function countDemotedIndexLines(indexFile: string): number {
       return lines.slice(divider + 1).filter(line => parseIndexLine(line) !== undefined).length;
     },
     0,
-    'E_APPEND_FAILED'
+    'E_STORE_READ'
   );
 }
 
@@ -133,7 +133,7 @@ export function logLines(logFile: string): readonly string[] {
   return failOpen(
     () => (pathExists(logFile) ? readFile(logFile).split('\n').filter(l => l.startsWith('## ')) : []),
     [],
-    'E_APPEND_FAILED'
+    'E_STORE_READ'
   );
 }
 
@@ -156,9 +156,15 @@ export function lastIntegrate(logFile: string): string | undefined {
 
 /** Age of a scope's inbox in ms, from `inbox.md` mtime. Undefined when absent. */
 export function inboxAgeMs(inboxFile: string, now: number = Date.now()): number | undefined {
-  if (!pathExists(inboxFile)) return undefined;
-  const mtime = stat(inboxFile)?.mtime.getTime();
-  return mtime === undefined ? undefined : Math.max(0, now - mtime);
+  return failOpen(
+    () => {
+      if (!pathExists(inboxFile)) return undefined;
+      const mtime = stat(inboxFile)?.mtime.getTime();
+      return mtime === undefined ? undefined : Math.max(0, now - mtime);
+    },
+    undefined,
+    'E_STORE_READ'
+  );
 }
 
 /** `<short-sha> <date> <subject>` of the store's last commit, or undefined. */

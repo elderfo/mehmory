@@ -13,7 +13,7 @@
 
 import { join } from 'node:path';
 import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
-import { tokenize } from './match.js';
+import { countOccurrences, scoreDoc, tokenize } from './match.js';
 import {
   ARCHIVED_SCORE_MULTIPLIER,
   isStalePage,
@@ -78,25 +78,6 @@ interface Doc {
   readonly stale: boolean;
 }
 
-function countOccurrences(haystack: string, token: string): number {
-  let count = 0;
-  let index = haystack.indexOf(token);
-  while (index !== -1) {
-    count++;
-    index = haystack.indexOf(token, index + token.length);
-  }
-  return count;
-}
-
-/** Same weighting as `matchPages`: title/filename hits count triple. */
-function scoreDoc(tokens: ReadonlySet<string>, lowerBody: string, lowerTitle: string): number {
-  let score = 0;
-  for (const token of tokens) {
-    score += countOccurrences(lowerBody, token) + 3 * countOccurrences(lowerTitle, token);
-  }
-  return score;
-}
-
 /** The line with the most matched-token occurrences, trimmed to a bounded width. */
 function bestSnippet(tokens: ReadonlySet<string>, body: string): string {
   let best = '';
@@ -113,11 +94,22 @@ function bestSnippet(tokens: ReadonlySet<string>, body: string): string {
     }
   }
   if (best === '') {
-    best = body.split('\n').find(l => l.trim() !== '')?.trim() ?? '';
+    best =
+      body
+        .split('\n')
+        .find((l) => l.trim() !== '')
+        ?.trim() ?? '';
   }
-  return best.length > SNIPPET_MAX_LENGTH
-    ? best.slice(0, SNIPPET_MAX_LENGTH - 1).trimEnd() + '…'
-    : best;
+  if (best.length <= SNIPPET_MAX_LENGTH) return best;
+  let end = SNIPPET_MAX_LENGTH - 1;
+  if (
+    best.charCodeAt(end - 1) >= 0xd800 &&
+    best.charCodeAt(end - 1) <= 0xdbff &&
+    best.charCodeAt(end) >= 0xdc00 &&
+    best.charCodeAt(end) <= 0xdfff
+  )
+    end--;
+  return best.slice(0, end).trimEnd() + '…';
 }
 
 function markdownDocs(
@@ -128,8 +120,14 @@ function markdownDocs(
   now: number
 ): Doc[] {
   const docs: Doc[] = [];
-  if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return docs;
-  for (const name of listDir(dir)) {
+  let names: string[];
+  try {
+    if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return docs;
+    names = listDir(dir);
+  } catch {
+    return docs;
+  }
+  for (const name of names) {
     if (!name.endsWith('.md')) continue;
     const filePath = join(dir, name);
     let body: string;
@@ -216,10 +214,12 @@ export function searchScope(
     }
   }
 
-  if (pathExists(files.logFile) && !lstat(files.logFile)?.isSymbolicLink()) {
+  if (pathExists(files.logFile)) {
     let logBody: string | undefined;
     try {
-      if (stat(files.logFile)?.isFile()) logBody = readFile(files.logFile);
+      if (!lstat(files.logFile)?.isSymbolicLink() && stat(files.logFile)?.isFile()) {
+        logBody = readFile(files.logFile);
+      }
     } catch {
       logBody = undefined; // unreadable log: skip, never fail the scan
     }

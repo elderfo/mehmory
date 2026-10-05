@@ -125,12 +125,11 @@ describe('mehmory doctor', () => {
     expect(findings(fixture).get('hooks.silent')).toMatchObject({ level: 'warn' });
   });
 
-  it('warns on a KPI budget violation, using the amended numbers', () => {
+  it('warns on a KPI budget violation, using the configured injection cap', () => {
     const fixture = healthyStore();
     const ts = new Date().toISOString();
     writeStats([
       ...statsForEveryHook(),
-      // 951 tokens: one over the amended combined budget of 950.
       { ts, project: 'p', hook: 'SessionStart', ms: 10, injected_tokens: 951 },
       { ts, project: 'p', hook: 'UserPromptSubmit', ms: 400 },
     ]);

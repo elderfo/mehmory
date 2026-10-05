@@ -72,11 +72,6 @@ A single-line append to the store (inbox, log, or stats) failed — usually perm
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
 disk space" is prose, not a command, so it's omitted rather than printed as if it were one.
 
-The same code is also raised through `failOpen` by read-shaped operations that fall back
-rather than append (the store summary behind `status` and `doctor`, for one). Those print
-the generic *Operation failed; using fallback* consequence instead, so match on the
-`MEHMORY E_APPEND_FAILED` prefix rather than on the sentence after it.
-
 During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
 count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
 wait for a busy store's write lock to become available, or repair the named inbox (it must
@@ -84,6 +79,15 @@ be a writable file, not a directory or symlink), permissions or disk-space probl
 resuming. A byte-capped run also retains progress and names `--resume`, but
 is not an error. Completed sessions are skipped; a partially appended session is retried
 with entry-id deduplication.
+
+## E_STORE_READ (informational)
+
+A store read, directory listing or metadata probe failed. Consequence: _Operation failed;
+using fallback._ `status` and `doctor` use empty or unknown summary values; SessionStart
+keeps the memory it can read even when a pages directory or inbox size probe fails.
+No `Fix:` clause — the raw I/O error identifies the cause, and no single repair fits all
+read failures. A `pages` path that is a file is reported directly by `doctor` as a scope
+error with a command to move it aside and create the expected directory.
 
 ## E_INTERNAL (informational)
 
@@ -95,8 +99,8 @@ repair an unknown internal failure.
 
 ## E_ATOMIC_WRITE (informational in practice)
 
-Covers a temp-file-plus-rename write that failed — building the injection frame, or a decay
-pass rewriting `index.md`. Consequence: *Operation failed; using fallback.* The registry
+Covers a temp-file-plus-rename write that failed, such as a decay pass rewriting `index.md`.
+Consequence: *Operation failed; using fallback.* The registry
 marks this code `actionable`, but every current call site routes through the library's
 fail-open wrapper, which always synthesizes an `informational` instance with no invented fix
 (there's no single remedy for "a rewrite failed" that's right in general). No `Fix:` clause

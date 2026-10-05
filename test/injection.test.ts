@@ -8,7 +8,7 @@ import { mehmoryHome } from '../src/core/home.js';
 
 /**
  * Ceiling for the static routing block. It is fixed overhead on every session with a
- * populated store, paid outside `injection.budget_tokens` — so it gets the same
+ * populated store, reserved inside `injection.budget_tokens` — so it gets the same
  * treatment every other always-on channel gets: a number, enforced, raised only on
  * purpose. A tenth of the memory budget is the most a set of routing rules is worth.
  */

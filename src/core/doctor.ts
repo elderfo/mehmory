@@ -19,6 +19,7 @@ import { HOOK_EVENTS, PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } f
 import { dirtyPaths, lastCommit, lastIntegrate, scopeFiles } from './status.js';
 import { readStats, summarize } from './stats-report.js';
 import type { MehmoryConfig } from './config.js';
+import { MAINTENANCE_ALLOWANCE_TOKENS } from './tokens.js';
 
 export type FindingLevel = 'ok' | 'warn' | 'error';
 
@@ -42,12 +43,9 @@ export interface Finding {
 }
 
 /**
- * KPI budgets, from the **amended** numbers (run-1 amendment 1, run-2 amendments 10 and
- * 14) rather than the spec's stale KPI table, which run 3 rewrites separately.
+ * Hook latency budgets. The injection token threshold comes from the caller's config.
  */
 export const KPI_BUDGETS = {
-  /** Injection plus maintenance lines, as SessionStart records it. */
-  combinedInjectionTokens: 950,
   /** UserPromptSubmit, in-hook. */
   userPromptSubmitMs: 100,
   /** SessionStart, the injection path. */
@@ -86,14 +84,26 @@ export function runDoctor(
   }
   findings.push({ check: 'store', level: 'ok', message: `store at ${home}` });
 
-  findings.push(...checkGit(home));
-  findings.push(...checkHookConfig(config));
-  findings.push(...checkHookLiveness());
-  findings.push(...checkScope(config, cwd));
-  findings.push(checkErrorLog());
-  findings.push(checkSchemaVersion(home));
-  findings.push(checkConfigParses(home));
-  findings.push(...checkKpiBudgets());
+  for (const [check, run] of [
+    ['git', () => checkGit(home)],
+    ['hooks.enabled', () => checkHookConfig(config)],
+    ['hooks.liveness', () => checkHookLiveness()],
+    ['scope', () => checkScope(config, cwd)],
+    ['errors', () => [checkErrorLog()]],
+    ['schema_version', () => [checkSchemaVersion(home)]],
+    ['config', () => [checkConfigParses(home)]],
+    ['kpi', () => checkKpiBudgets(config)],
+  ] as const) {
+    try {
+      findings.push(...run());
+    } catch (err) {
+      findings.push({
+        check,
+        level: 'error',
+        message: `check failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
 
   return findings;
 }
@@ -414,8 +424,18 @@ function checkHookLiveness(): readonly Finding[] {
 function checkScope(config: MehmoryConfig, cwd: string): readonly Finding[] {
   const key = resolveProjectKey(cwd);
   const files = scopeFiles(join(mehmoryHome(), 'projects', key));
-  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
   const findings: Finding[] = [];
+  for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
+    if (pathExists(pagesDir) && !stat(pagesDir)?.isDirectory()) {
+      findings.push({
+        check: 'scope',
+        level: 'error',
+        message: `${pagesDir} is not a directory`,
+        fix: `mv -n ${shellQuote(pagesDir)} ${shellQuote(`${pagesDir}.bak`)} && mkdir ${shellQuote(pagesDir)}`,
+      });
+    }
+  }
+  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
 
   const oldest = entries.map(e => e.ts).sort()[0];
   const ageMs = oldest === undefined ? 0 : Date.now() - Date.parse(oldest);
@@ -513,7 +533,7 @@ function checkConfigParses(home: string): Finding {
   }
 }
 
-function checkKpiBudgets(): readonly Finding[] {
+function checkKpiBudgets(config: MehmoryConfig): readonly Finding[] {
   const report = summarize(readStats());
   if (report.records === 0) return [];
 
@@ -521,11 +541,12 @@ function checkKpiBudgets(): readonly Finding[] {
   const over = (actual: number | undefined, budget: number): boolean =>
     actual !== undefined && actual > budget;
 
-  if (over(report.injectedTokensP95, KPI_BUDGETS.combinedInjectionTokens)) {
+  const injectionBudget = config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS;
+  if (over(report.injectedTokensP95, injectionBudget)) {
     findings.push({
       check: 'kpi.injection',
       level: 'warn',
-      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(KPI_BUDGETS.combinedInjectionTokens)} combined budget`,
+      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(injectionBudget)} combined budget`,
       fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
     });
   }

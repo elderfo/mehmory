@@ -18,7 +18,7 @@ import { failOpen } from './errors.js';
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
-  pageAgeDays,
+  isStalePage,
   parseIndexLine,
   readFrontmatter,
 } from '../schema/format.js';
@@ -89,17 +89,9 @@ export function decayPass(
 
         const contents = readFile(pagePath);
         const fields = readFrontmatter(contents);
-        const decayClass = fields['decay'] ?? 'default';
-        const age = pageAgeDays(contents, now);
         const updatedAt = Date.parse(fields['updated'] ?? '');
 
-        if (decayClass !== 'default' || age === null) {
-          // Untouched by mechanical decay, but still ordered in the index.
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
-          continue;
-        }
-
-        if (age > purgeDays) {
+        if (isStalePage(contents, now, purgeDays)) {
           const archiveDir = join(scopeDir, ARCHIVE_DIR);
           if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
             throw new Error('archive directory must not be a symlink');
@@ -111,7 +103,7 @@ export function decayPass(
           }
           rename(pagePath, join(archiveDir, name));
           archived.push(name);
-        } else if (age > archiveDays) {
+        } else if (isStalePage(contents, now, archiveDays)) {
           demoted.push(name);
         } else {
           liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);

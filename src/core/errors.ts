@@ -40,6 +40,8 @@ const ERROR_KINDS = {
   E_SESSION_STATE: 'informational',
   E_TRANSCRIPT_PARSE: 'informational',
   E_APPEND_FAILED: 'actionable',
+  /** A store read or metadata probe failed; the caller uses an empty/unknown fallback. */
+  E_STORE_READ: 'informational',
   E_ATOMIC_WRITE: 'actionable',
   // ─── Run 3 (CLI) ───
   /** A `mehmory search` scan failed or was cut short. Nothing for the user to run. */
@@ -298,7 +300,16 @@ function warningPaths(): string[] {
   return paths;
 }
 
-function readWarnings(consume = false): WarningRecord[] {
+function readWarnings(consume = false, limit = Infinity): WarningRecord[] {
+  const selected =
+    consume && Number.isFinite(limit)
+      ? new Set(
+          readWarnings()
+            .slice(0, Math.max(0, Math.floor(limit)))
+            .map((record) => record.code)
+        )
+      : undefined;
+  if (selected?.size === 0) return [];
   const records: WarningRecord[] = [];
   for (const path of warningPaths()) {
     const claimed = consume
@@ -333,14 +344,33 @@ function readWarnings(consume = false): WarningRecord[] {
         }
         continue;
       }
-      records.push(
-        ...(Array.isArray(parsed)
-          ? parsed.filter(isWarningRecord)
-          : isWarningRecord(parsed)
-            ? [parsed]
-            : [])
+      const valid = Array.isArray(parsed)
+        ? parsed.filter(isWarningRecord)
+        : isWarningRecord(parsed)
+          ? [parsed]
+          : [];
+      const delivered = valid.filter(
+        (record) => selected === undefined || selected.has(record.code)
       );
-      if (renamed) unlinkSync(claimed);
+      const remaining = valid.filter(
+        (record) => selected !== undefined && !selected.has(record.code)
+      );
+      if (renamed) {
+        if (remaining.length > 0) {
+          // Preserve unselected warnings before removing the claim, including legacy arrays.
+          const dir = statePath('warning-records');
+          mkdirSync(dir, { recursive: true });
+          const temp = `${claimed}.tmp`;
+          try {
+            writeFileSync(temp, JSON.stringify(remaining), { flag: 'wx' });
+            renameSync(temp, join(dir, `${randomUUID()}.json`));
+          } finally {
+            if (existsSync(temp)) unlinkSync(temp);
+          }
+        }
+        unlinkSync(claimed);
+      }
+      records.push(...delivered);
     } catch {
       if (renamed) {
         try {
@@ -410,7 +440,7 @@ export function peekWarnings(): readonly string[] {
   return warningLines(readWarnings());
 }
 
-/** Get pending warnings as formatted strings for injection. Returns and clears. */
-export function pendingWarnings(): readonly string[] {
-  return warningLines(readWarnings(true));
+/** Get and consume up to `limit` warning lines; unselected warnings remain pending. */
+export function pendingWarnings(limit = Infinity): readonly string[] {
+  return warningLines(readWarnings(true, limit));
 }
