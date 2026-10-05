@@ -49,6 +49,8 @@ const ERROR_KINDS = {
   /** `mehmory purge` deleted files but could not commit — the store is left dirty, and
    * the remedy is a real command (`git -C <home> commit -a`). */
   E_PURGE_FAILED: 'actionable',
+  /** An unexpected CLI exception stopped the command; this is a bug, not an append failure. */
+  E_INTERNAL: 'informational',
   // ─── Run 4 (Codex host) ───
   /** `mehmory init --host codex` could not read or write a file under `$CODEX_HOME`.
    * Nothing was modified — the file is shared with other tools, so a config mehmory
