@@ -227,7 +227,7 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 - `pnpm install` — Install dependencies
 - `pnpm build` — Build ESM output via tsup (→ dist/)
 - `pnpm lint` — Run ESLint + Prettier check
-- `pnpm test` — Run vitest; global setup builds only when `dist/cli.mjs` is missing
+- `pnpm test` — Run vitest; global setup builds when `dist/cli.mjs` is missing or older than `src/`
 - `pnpm typecheck` — Run tsc strict mode
 - `pnpm prepare` — Install Husky hooks (runs on `pnpm install`)
 - `pnpm docs:dev` — Run the marketing/docs site locally (VitePress dev server)
@@ -246,8 +246,8 @@ This repo is set up for agent-assisted development by a solo maintainer.
   is no issue. Link an issue from the PR with `Closes #N` as the PR template asks. Never close,
   relabel or comment on an issue unless the user asks.
 - **Checks.** `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. The pre-commit hook
-  runs lint, test and typecheck. Test setup builds only if `dist/cli.mjs` is missing;
-  existing artifacts are reused. Run `pnpm build` yourself before committing whenever
+  runs lint, test and typecheck. Test setup builds when `dist/cli.mjs` is missing or
+  older than any file in `src/`, so tests never run against a stale build. Run `pnpm build` yourself before committing whenever
   `src/` changes, and commit the rebuilt `hooks/*.mjs` (A25). CI's explicit build is not
   repeated by tests. CI's `build-test` job runs all four plus
   actionlint and a `hooks/` drift check.

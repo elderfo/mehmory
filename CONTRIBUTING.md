@@ -28,12 +28,12 @@ everything:
 pnpm build      # tsup → dist/ and hooks/*.mjs
 pnpm lint       # ESLint + Prettier check
 pnpm typecheck  # tsc strict mode
-pnpm test       # vitest; builds only if dist/cli.mjs is missing
+pnpm test       # vitest; builds if dist/ is missing or older than src/
 ```
 
-Plain `pnpm test` works in a fresh checkout. Once `dist/cli.mjs` exists, tests reuse the build
-without touching `hooks/`. After source changes, run `pnpm build` before committing and include
-the rebuilt `hooks/*.mjs` (ADR A25); test setup does not refresh existing artifacts.
+Plain `pnpm test` works in a fresh checkout, and rebuilds when `src/` is newer than
+`dist/cli.mjs`, so tests never run against stale code. Commit the rebuilt `hooks/*.mjs` after
+source changes (ADR A25).
 
 ## Conventions
 

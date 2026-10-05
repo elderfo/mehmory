@@ -3,7 +3,9 @@ import * as fs from 'node:fs';
 import * as childProcess from 'node:child_process';
 import { join } from 'node:path';
 import config from '../vitest.config.js';
-import setup from './global-setup.js';
+import setup, { buildIsStale } from './global-setup.js';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -22,12 +24,26 @@ describe('test build wiring', () => {
     expect(config.test?.globalSetup).toEqual(['test/global-setup.ts']);
   });
 
-  it('does not build when the CLI artifact is present', () => {
-    const build = vi.spyOn(childProcess, 'execFileSync');
-    const exists = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-    setup();
-    expect(exists).toHaveBeenCalledWith(join(process.cwd(), 'dist', 'cli.mjs'));
-    expect(build).toHaveBeenCalledTimes(0);
+  it('treats dist as stale when missing or older than src, fresh otherwise', async () => {
+    const actual = await vi.importActual<typeof fs>('node:fs');
+    vi.mocked(fs.existsSync).mockImplementation(actual.existsSync);
+    const root = mkdtempSync(join(tmpdir(), 'mehmory-build-'));
+    try {
+      mkdirSync(join(root, 'src', 'core'), { recursive: true });
+      writeFileSync(join(root, 'src', 'core', 'x.ts'), '');
+      expect(buildIsStale(root)).toBe(true);
+
+      mkdirSync(join(root, 'dist'));
+      writeFileSync(join(root, 'dist', 'cli.mjs'), '');
+      utimesSync(join(root, 'src', 'core', 'x.ts'), 1000, 1000);
+      utimesSync(join(root, 'dist', 'cli.mjs'), 2000, 2000);
+      expect(buildIsStale(root)).toBe(false);
+
+      utimesSync(join(root, 'src', 'core', 'x.ts'), 3000, 3000);
+      expect(buildIsStale(root)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('builds once when the CLI artifact is missing', () => {
@@ -38,6 +54,7 @@ describe('test build wiring', () => {
     expect(build).toHaveBeenCalledWith('pnpm', ['build'], {
       cwd: process.cwd(),
       stdio: 'inherit',
+      shell: process.platform === 'win32',
     });
   });
 
