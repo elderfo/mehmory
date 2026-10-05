@@ -11,7 +11,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHook, type HookResult } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
-import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
+import { captureDelta, skillRef } from '../core/capture.js';
+import { scopePaths } from '../core/wiki.js';
 import { logError } from '../core/errors.js';
 import type { InboxHost } from '../schema/format.js';
 

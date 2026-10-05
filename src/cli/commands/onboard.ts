@@ -5,7 +5,7 @@
  * the decode, the caps and the resume state all live in `src/core/onboard.ts`.
  */
 
-import { storeExists } from '../../core/capture.js';
+import { storeExists } from '../../core/wiki.js';
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_PROJECT_SCAN,

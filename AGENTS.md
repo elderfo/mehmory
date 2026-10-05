@@ -23,8 +23,9 @@ mehmory/
 │   │   ├── session.ts         # run 2: per-session capture state, cursor scoping (A)
 │   │   ├── decay.ts           # run 2: recency decay/archive file ops (A)
 │   │   ├── stats.ts           # run 2: stats.jsonl writer (A)
-│   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
-│   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
+│   │   ├── match.ts           # Keyword scoring over wiki pages (A)
+│   │   ├── wiki.ts            # Scope layout, lazy page/index reads, containment, global fallback
+│   │   ├── capture.ts         # Injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
 │   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23); MEHMORY_ACTIVE_HOST resolution (A30)
 │   │   ├── agent.ts           # run-5: which agent is running — name resolution, MEHMORY_AGENT before config.identity.agent (A21, A27)

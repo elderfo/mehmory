@@ -16,7 +16,8 @@ import { readInboxEntries } from './inbox.js';
 import { resolveProjectKey } from './identity.js';
 import { TEMPLATE_SCHEMA_VERSION } from './store.js';
 import { HOOK_EVENTS, PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } from './environment.js';
-import { dirtyPaths, lastCommit, lastIntegrate, scopeFiles } from './status.js';
+import { dirtyPaths, lastCommit, lastIntegrate } from './status.js';
+import { wikiScope } from './wiki.js';
 import { readStats, summarize } from './stats-report.js';
 import type { MehmoryConfig } from './config.js';
 import { MAINTENANCE_ALLOWANCE_TOKENS } from './tokens.js';
@@ -423,7 +424,7 @@ function checkHookLiveness(): readonly Finding[] {
 /** Inbox size and age, plus the last integrate, for the current directory's scope. */
 function checkScope(config: MehmoryConfig, cwd: string): readonly Finding[] {
   const key = resolveProjectKey(cwd);
-  const files = scopeFiles(join(mehmoryHome(), 'projects', key));
+  const files = wikiScope(join(mehmoryHome(), 'projects', key));
   const findings: Finding[] = [];
   for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
     if (pathExists(pagesDir) && !stat(pagesDir)?.isDirectory()) {

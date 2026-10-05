@@ -22,8 +22,8 @@ import {
   distillDelta,
   distillJobPayload,
   rememberEntry,
-  scopePaths,
 } from '../src/core/capture.js';
+import { scopePaths } from '../src/core/wiki.js';
 import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { isSafeAgentName } from '../src/core/agent.js';
 

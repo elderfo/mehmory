@@ -1,29 +1,68 @@
-/**
- * Grep-style full-text page matching for UserPromptSubmit (run 2; run 3 replaces the
- * scan with an FTS index behind the same signature).
- *
- * No index, no state: read the pages, count token hits, return the best few. A wiki
- * that fits in a token budget is a few dozen small files, so a full scan is cheaper
- * than maintaining an index would be.
- *
- * ponytail: O(pages × tokens) scan per prompt; ceiling is a store with thousands of
- * pages. Upgrade path is run 3's SQLite FTS5 index behind `matchPages`.
- */
+/** Stateless keyword ranking shared by prompt pointers and multi-corpus search. */
 
-import { resolve } from 'node:path';
-import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
-import { isStalePage, STALE_SCORE_MULTIPLIER } from '../schema/format.js';
+import { STALE_SCORE_MULTIPLIER } from '../schema/format.js';
+import type { WikiPage } from './wiki.js';
 
 /** Tokens shorter than this are dropped — they match everything. */
 const MIN_TOKEN_LENGTH = 3;
 
 /** Words too common to discriminate between pages. */
 const STOPWORDS = new Set([
-  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one',
-  'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'new', 'now', 'old',
-  'see', 'two', 'way', 'who', 'boy', 'did', 'use', 'this', 'that', 'with', 'from',
-  'have', 'they', 'what', 'when', 'will', 'your', 'about', 'would', 'there', 'their',
-  'should', 'could', 'please', 'need', 'want', 'make', 'does', 'into', 'just', 'like',
+  'the',
+  'and',
+  'for',
+  'are',
+  'but',
+  'not',
+  'you',
+  'all',
+  'can',
+  'her',
+  'was',
+  'one',
+  'our',
+  'out',
+  'day',
+  'get',
+  'has',
+  'him',
+  'his',
+  'how',
+  'its',
+  'new',
+  'now',
+  'old',
+  'see',
+  'two',
+  'way',
+  'who',
+  'boy',
+  'did',
+  'use',
+  'this',
+  'that',
+  'with',
+  'from',
+  'have',
+  'they',
+  'what',
+  'when',
+  'will',
+  'your',
+  'about',
+  'would',
+  'there',
+  'their',
+  'should',
+  'could',
+  'please',
+  'need',
+  'want',
+  'make',
+  'does',
+  'into',
+  'just',
+  'like',
 ]);
 
 /** Split text into lowercase content tokens (shared by matching and the topic cache). */
@@ -35,10 +74,7 @@ export function tokenize(text: string): Set<string> {
   return tokens;
 }
 
-/**
- * Jaccard similarity |A ∩ B| / |A ∪ B|. Two empty sets are identical (1); one empty
- * set against a non-empty one is 0.
- */
+/** Jaccard similarity; two empty sets are identical, one empty against non-empty is 0. */
 export function jaccard(setA: ReadonlySet<string>, setB: ReadonlySet<string>): number {
   if (setA.size === 0 && setB.size === 0) return 1;
   let intersection = 0;
@@ -72,91 +108,31 @@ export function scoreDoc(
   return score;
 }
 
-/** One matched page: where it lives, and whether it has aged past the staleness horizon. */
 export interface MatchedPage {
-  /** Absolute page path, readable directly from the user's repository cwd. */
+  /** Absolute path, readable directly from the user's repository cwd. */
   readonly path: string;
-  /** True when the page is older than `staleAfterDays` — demoted, never excluded. */
   readonly stale: boolean;
 }
 
-/** Threading for the staleness rule; both default to "no page is stale" (A22). */
-export interface MatchOptions {
-  /** `config.decay.archive_days`. Omitted → staleness is not evaluated at all. */
-  readonly staleAfterDays?: number;
-  /** Clock override for tests. */
-  readonly now?: number;
-}
-
-/**
- * Rank the pages in `pagesDir` against a prompt and return the best matches.
- *
- * Scores a page by how often the prompt's tokens appear in its body, with title and
- * filename hits weighted ×3. Pages with no hit are excluded, so "no match" is an
- * empty array (the hook's silent path).
- *
- * A page past `staleAfterDays` is **demoted, not dropped** (A22): its score is scaled by
- * `STALE_SCORE_MULTIPLIER` and it comes back flagged `stale`, so a stale page still wins
- * over nothing and the caller can say which pointers are old. Without `staleAfterDays`
- * no page is stale and ranking is byte-identical to the pre-A22 behavior.
- *
- * @param prompt - Raw user prompt
- * @param pagesDir - Directory holding `*.md` pages (e.g. `<scope>/pages`)
- * @param max - Maximum pointers to return (default 3)
- * @param options - Staleness horizon and clock
- * @returns Matched pages, best first
- */
+/** Rank wiki pages by token occurrences, with filename/heading hits weighted ×3 (A22). */
 export function matchPages(
   prompt: string,
-  pagesDir: string,
-  max = 3,
-  options: MatchOptions = {}
+  pages: readonly Pick<WikiPage, 'path' | 'body' | 'title' | 'stale'>[],
+  max = 3
 ): MatchedPage[] {
   const tokens = tokenize(prompt);
-  if (tokens.size === 0 || !pathExists(pagesDir)) return [];
-
-  const now = options.now ?? Date.now();
+  if (tokens.size === 0) return [];
   const scored: { path: string; score: number; stale: boolean }[] = [];
-  let names: string[];
-  try {
-    if (lstat(pagesDir)?.isSymbolicLink()) return [];
-    names = listDir(pagesDir);
-  } catch {
-    return [];
-  }
-
-  for (const name of names) {
-    if (!name.endsWith('.md')) continue;
-    const filePath = resolve(pagesDir, name);
-
-    let contents: string;
-    try {
-      if (lstat(filePath)?.isSymbolicLink() || !stat(filePath)?.isFile()) continue;
-      contents = readFile(filePath);
-    } catch {
-      continue; // unreadable page: skip, never fail the prompt
-    }
-
-    // Staleness reads the raw text: `Date.parse` is not reliable on a lowercased
-    // ISO timestamp, so the case-folded copy below is only ever used for scoring.
-    const stale =
-      options.staleAfterDays !== undefined &&
-      isStalePage(contents, now, options.staleAfterDays);
-
-    const body = contents.toLowerCase();
-    const titleLine = /^#\s+(.*)$/m.exec(body);
-    const title = `${name.toLowerCase()} ${titleLine?.[1] ?? ''}`;
-
-    const score = scoreDoc(tokens, body, title);
+  for (const page of pages) {
+    const score = scoreDoc(tokens, page.body.toLowerCase(), page.title);
     if (score > 0) {
       scored.push({
-        path: filePath,
-        score: stale ? score * STALE_SCORE_MULTIPLIER : score,
-        stale,
+        path: page.path,
+        score: page.stale ? score * STALE_SCORE_MULTIPLIER : score,
+        stale: page.stale,
       });
     }
   }
-
   scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  return scored.slice(0, max).map(s => ({ path: s.path, stale: s.stale }));
+  return scored.slice(0, max).map((s) => ({ path: s.path, stale: s.stale }));
 }

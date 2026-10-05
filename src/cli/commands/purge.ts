@@ -12,7 +12,7 @@
  */
 
 import { relative } from 'node:path';
-import { storeExists } from '../../core/capture.js';
+import { storeExists } from '../../core/wiki.js';
 import { readStdin } from '../../core/fs.js';
 import { mehmoryHome } from '../../core/home.js';
 import {

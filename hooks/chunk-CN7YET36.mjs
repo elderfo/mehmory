@@ -1,6 +1,9 @@
 import {
+  ARCHIVE_DIR,
+  ARCHIVE_DIVIDER,
   INBOX_HOSTS,
   MAX_INJECTION_BUDGET_TOKENS,
+  MS_PER_DAY,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
   commitPaths,
@@ -11,9 +14,12 @@ import {
   isContainedProjectKey,
   isPaused,
   isSafeAgentName,
+  isStalePage,
   listPendingSessions,
   loadConfig,
   markSessionFinalized,
+  parseIndexLine,
+  readFrontmatter,
   readSessionState,
   redact,
   rememberSessionOrigin,
@@ -21,7 +27,7 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-WB3BMRQX.mjs";
+} from "./chunk-FR4W5LZ6.mjs";
 import {
   readPiSession,
   readTranscript
@@ -218,17 +224,213 @@ function runHook(event, body) {
   if (out) process.stdout.write(out);
 }
 
+// src/core/wiki.ts
+import { dirname, isAbsolute, join as join2, relative, resolve, sep as sep2 } from "path";
+
+// src/core/scopes.ts
+import { join, sep } from "path";
+
+// src/core/wiki.ts
+function wikiScope(dir) {
+  return {
+    dir,
+    pagesDir: join2(dir, "pages"),
+    archiveDir: join2(dir, ARCHIVE_DIR),
+    indexFile: join2(dir, "index.md"),
+    identityFile: join2(dir, "identity.md"),
+    projectFile: join2(dir, "project.md"),
+    inboxFile: join2(dir, "inbox.md"),
+    logFile: join2(dir, "log.md")
+  };
+}
+function scopePaths(key) {
+  const home = mehmoryHome();
+  const projectDir = join2(home, "projects", key);
+  return { ...wikiScope(projectDir), projectDir, globalDir: join2(home, "global") };
+}
+function agentScopePaths(name) {
+  if (!isSafeAgentName(name)) {
+    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
+  }
+  const agentDir = join2(mehmoryHome(), "agents", name);
+  const scope = wikiScope(agentDir);
+  return {
+    agentDir,
+    identityFile: scope.identityFile,
+    indexFile: scope.indexFile,
+    pagesDir: scope.pagesDir,
+    logFile: scope.logFile
+  };
+}
+function contained(root, candidate) {
+  const suffix = relative(realpath(resolve(root)), realpath(resolve(candidate)));
+  return suffix !== ".." && !suffix.startsWith(`..${sep2}`) && !isAbsolute(suffix);
+}
+function readIfPresent(path) {
+  return failOpen(
+    () => {
+      const candidate = resolve(path);
+      if (!contained(mehmoryHome(), dirname(candidate)) || !pathExists(candidate)) return void 0;
+      const info = lstat(candidate);
+      return !info?.isSymbolicLink() && info?.isFile() === true ? readFile(candidate) : void 0;
+    },
+    void 0,
+    "E_STORE_READ"
+  );
+}
+function readPages(dir, options, archived) {
+  return failOpen(
+    () => {
+      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return { pages: [], readable: false };
+      const pages = [];
+      const now = options.now ?? Date.now();
+      for (const name of listDir(dir)) {
+        if (!name.endsWith(".md")) continue;
+        const page = failOpen(
+          () => {
+            const path = resolve(dir, name);
+            const info = lstat(path);
+            if (info?.isSymbolicLink() || info?.isFile() !== true) return void 0;
+            const body = readFile(path);
+            const frontmatter = readFrontmatter(body);
+            const updated = Date.parse(frontmatter["updated"] ?? "");
+            const updatedAt = Number.isNaN(updated) ? null : updated;
+            return {
+              path,
+              slug: name.slice(0, -3),
+              body,
+              title: `${name} ${/^#\s+(.*)$/m.exec(body)?.[1] ?? ""}`.toLowerCase(),
+              frontmatter,
+              decayClass: frontmatter["decay"] ?? "default",
+              updatedAt,
+              ageDays: updatedAt === null ? null : (now - updatedAt) / MS_PER_DAY,
+              mtimeMs: Number(info.mtimeMs),
+              stale: archived || options.staleAfterDays !== void 0 && isStalePage(frontmatter, now, options.staleAfterDays)
+            };
+          },
+          void 0,
+          "E_STORE_READ"
+        );
+        if (page !== void 0) pages.push(page);
+      }
+      return { pages, readable: true };
+    },
+    { pages: [], readable: false },
+    "E_STORE_READ"
+  );
+}
+function readIndex(path) {
+  const contents = readIfPresent(path);
+  const body = contents ?? "";
+  const lines = [];
+  let demoted = false;
+  for (const [offset, line] of body.split("\n").entries()) {
+    if (line.trim() === ARCHIVE_DIVIDER) demoted = true;
+    const parsed = parseIndexLine(line);
+    if (parsed !== void 0) lines.push({ ...parsed, demoted, line: offset });
+  }
+  return { readable: contents !== void 0, body, lines };
+}
+function openScope(dir, options = {}) {
+  const scope = wikiScope(dir);
+  let pages;
+  let archive;
+  let index;
+  let identity;
+  let project;
+  let log;
+  return {
+    scope,
+    get pages() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).pages;
+    },
+    get pagesReadable() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).readable;
+    },
+    get archive() {
+      return (archive ??= readPages(scope.archiveDir, options, true)).pages;
+    },
+    get index() {
+      return index ??= readIndex(scope.indexFile);
+    },
+    get identity() {
+      return identity ??= (readIfPresent(scope.identityFile) ?? "").trim();
+    },
+    get project() {
+      return project ??= (readIfPresent(scope.projectFile) ?? "").trim();
+    },
+    get log() {
+      return log ??= readIfPresent(scope.logFile) ?? "";
+    }
+  };
+}
+function openProjectWiki(key, options = {}) {
+  const paths = scopePaths(key);
+  const project = openScope(paths.dir, options);
+  const global = openScope(paths.globalDir, options);
+  const sourceFor = (path) => pathExists(path) ? project : global;
+  return {
+    scope: project.scope,
+    get archive() {
+      return project.archive;
+    },
+    get project() {
+      return project.project;
+    },
+    get log() {
+      return project.log;
+    },
+    get pages() {
+      return sourceFor(paths.pagesDir).pages;
+    },
+    get pagesReadable() {
+      return sourceFor(paths.pagesDir).pagesReadable;
+    },
+    get index() {
+      return sourceFor(paths.indexFile).index;
+    },
+    get identity() {
+      return global.identity;
+    }
+  };
+}
+function storeExists() {
+  return pathExists(wikiScope(join2(mehmoryHome(), "global")).identityFile);
+}
+function storeIsUnpopulated(key) {
+  const paths = scopePaths(key);
+  const project = openScope(paths.dir);
+  return project.project === "" && project.pages.length === 0 && openScope(paths.globalDir).pages.length === 0;
+}
+function archivePage(scope, page) {
+  return failOpen(
+    () => {
+      if (pathExists(scope.archiveDir) && lstat(scope.archiveDir)?.isSymbolicLink()) {
+        throw new Error("archive directory must not be a symlink");
+      }
+      mkdir(scope.archiveDir);
+      if (!contained(scope.dir, scope.archiveDir)) {
+        throw new Error("archive directory must remain inside the scope");
+      }
+      rename(page.path, join2(scope.archiveDir, `${page.slug}.md`));
+      return true;
+    },
+    false,
+    "E_ATOMIC_WRITE"
+  );
+}
+
 // src/core/queue.ts
 import { randomBytes } from "crypto";
-import { join } from "path";
+import { join as join3 } from "path";
 function claimAge(claim, claimPath) {
   const timestamp = /^\w+\.\d+\.[0-9a-f]{32}\.(\d+)\.json$/.exec(claim)?.[1];
   return Date.now() - (timestamp === void 0 ? Number(stat(claimPath)?.mtimeMs ?? Date.now()) : Number(timestamp));
 }
 function enqueueJob(jobData, jobType) {
   const jobId = randomBytes(8).toString("hex");
-  const queueDir = join(statePath("queue"));
-  const jobPath = join(queueDir, `${jobId}.json`);
+  const queueDir = join3(statePath("queue"));
+  const jobPath = join3(queueDir, `${jobId}.json`);
   mkdir(queueDir);
   const payload = { ...jobData };
   if (jobType !== void 0) {
@@ -249,21 +451,21 @@ function enqueueJob(jobData, jobType) {
   }
 }
 function claimJob(jobType) {
-  const queueDir = join(statePath("queue"));
-  const claimedDir = join(queueDir, "claimed");
-  const failedDir = join(queueDir, "failed");
+  const queueDir = join3(statePath("queue"));
+  const claimedDir = join3(queueDir, "claimed");
+  const failedDir = join3(queueDir, "failed");
   if (!pathExists(queueDir)) {
     return null;
   }
   if (pathExists(claimedDir)) {
     for (const claim of listDir(claimedDir)) {
       if (!claim.endsWith(".json")) continue;
-      const claimPath = join(claimedDir, claim);
+      const claimPath = join3(claimedDir, claim);
       try {
         const age = claimAge(claim, claimPath);
         if (age <= QUEUE_STALE_MS) continue;
         const jobId = claim.slice(0, claim.indexOf("."));
-        const pendingPath = join(queueDir, `${jobId}.json`);
+        const pendingPath = join3(queueDir, `${jobId}.json`);
         if (pathExists(pendingPath)) {
           remove(claimPath);
         } else {
@@ -289,7 +491,7 @@ function claimJob(jobType) {
   if (jobs.length === 0) return null;
   const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
   for (const jobFile of jobs) {
-    const jobPath = join(queueDir, jobFile);
+    const jobPath = join3(queueDir, jobFile);
     const jobId = jobFile.replace(".json", "");
     let jobData;
     try {
@@ -307,7 +509,7 @@ function claimJob(jobType) {
     }
     const jobClaims = claimedFiles.filter((f) => f.startsWith(jobId + "."));
     jobClaims.forEach((claim) => {
-      const claimPath = join(claimedDir, claim);
+      const claimPath = join3(claimedDir, claim);
       try {
         const age = claimAge(claim, claimPath);
         if (age > QUEUE_STALE_MS) {
@@ -320,7 +522,7 @@ function claimJob(jobType) {
     if (attempts >= QUEUE_CLAIM_ATTEMPTS) {
       mkdir(failedDir);
       try {
-        rename(jobPath, join(failedDir, jobId + ".json"));
+        rename(jobPath, join3(failedDir, jobId + ".json"));
       } catch {
       }
       continue;
@@ -328,7 +530,7 @@ function claimJob(jobType) {
     mkdir(claimedDir);
     const claimToken = randomBytes(16).toString("hex");
     const claimFile = `${jobId}.${String(process.pid)}.${claimToken}.${String(Date.now())}.json`;
-    const claimedPath = join(claimedDir, claimFile);
+    const claimedPath = join3(claimedDir, claimFile);
     try {
       rename(jobPath, claimedPath);
       return { id: jobId, data: jobData, claimFile };
@@ -339,14 +541,14 @@ function claimJob(jobType) {
   return null;
 }
 function completeJob(jobId, claimFile) {
-  const claimedDir = join(statePath("queue"), "claimed");
+  const claimedDir = join3(statePath("queue"), "claimed");
   if (!pathExists(claimedDir)) return;
   const files = claimFile === void 0 ? [] : [claimFile];
   for (const file of files) {
     if (!file.startsWith(jobId + ".") || !/^\d+\.[0-9a-f]{32}(?:\.\d+)?\.json$/.test(file.slice(jobId.length + 1)))
       continue;
     try {
-      remove(join(claimedDir, file));
+      remove(join3(claimedDir, file));
     } catch {
     }
   }
@@ -492,7 +694,7 @@ function truncateToTokens(text, targetTokens) {
 
 // src/core/capture.ts
 import { homedir } from "os";
-import { dirname, join as join2, relative, resolve, sep } from "path";
+import { join as join4, relative as relative2, resolve as resolve2, sep as sep3 } from "path";
 
 // src/transcript/codex.ts
 import { createHash } from "crypto";
@@ -697,66 +899,12 @@ function distill(records, fallbackSessionId = "", secrets) {
 }
 
 // src/core/capture.ts
-function scopePaths(key) {
-  const home = mehmoryHome();
-  const projectDir = join2(home, "projects", key);
-  const globalDir = join2(home, "global");
-  return {
-    projectDir,
-    globalDir,
-    inboxFile: join2(projectDir, "inbox.md"),
-    logFile: join2(projectDir, "log.md"),
-    pagesDir: join2(projectDir, "pages")
-  };
-}
-function agentScopePaths(name) {
-  if (!isSafeAgentName(name)) {
-    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
-  }
-  const agentDir = join2(mehmoryHome(), "agents", name);
-  return {
-    agentDir,
-    identityFile: join2(agentDir, "identity.md"),
-    indexFile: join2(agentDir, "index.md"),
-    pagesDir: join2(agentDir, "pages"),
-    logFile: join2(agentDir, "log.md")
-  };
-}
-function storeExists() {
-  return pathExists(join2(mehmoryHome(), "global", "identity.md"));
-}
-function storeIsUnpopulated(key) {
-  const paths = scopePaths(key);
-  if (readIfPresent(join2(paths.projectDir, "project.md")) !== "") return false;
-  for (const dir of [paths.pagesDir, join2(paths.globalDir, "pages")]) {
-    const hasPages = failOpen(
-      () => pathExists(dir) && listDir(dir).some((f) => f.endsWith(".md")),
-      false,
-      "E_STORE_READ"
-    );
-    if (hasPages) return false;
-  }
-  return true;
-}
 function inboxBytes(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? Number(stat(inboxFile)?.size ?? 0) : 0,
     0,
     "E_STORE_READ"
   );
-}
-function readIfPresent(path) {
-  try {
-    const candidate = resolve(path);
-    const parent = realpath(dirname(candidate));
-    const home = realpath(resolve(mehmoryHome()));
-    const suffix = relative(home, parent);
-    if (suffix !== "" && (suffix === ".." || suffix.startsWith(`..${sep}`))) return "";
-    if (lstat(candidate)?.isSymbolicLink()) return "";
-    return pathExists(candidate) ? readFile(candidate).trim() : "";
-  } catch {
-    return "";
-  }
 }
 var ROUTING_BLOCK = [
   "<mehmory-routing>",
@@ -778,23 +926,17 @@ function skillRef(host, skill) {
 function buildScopeInjection(key, config = loadConfig(), sessionId) {
   return failOpen(
     () => {
-      const paths = scopePaths(key);
-      const projectIndex = join2(paths.projectDir, "index.md");
+      const wiki = openProjectWiki(key);
       const agent = currentAgentName(config);
       const parts = [
-        { label: "identity", content: readIfPresent(join2(paths.globalDir, "identity.md")) },
-        { label: "project", content: readIfPresent(join2(paths.projectDir, "project.md")) },
-        {
-          label: "index",
-          content: readIfPresent(
-            pathExists(projectIndex) ? projectIndex : join2(paths.globalDir, "index.md")
-          )
-        }
+        { label: "identity", content: wiki.identity },
+        { label: "project", content: wiki.project },
+        { label: "index", content: wiki.index.body.trim() }
       ];
       if (agent !== void 0) {
         parts.push({
           label: "agent",
-          content: readIfPresent(agentScopePaths(agent).identityFile)
+          content: openScope(agentScopePaths(agent).agentDir).identity
         });
       }
       const sessionLine = sessionId === void 0 ? "" : `session: ${/^[a-zA-Z0-9_-]+$/.test(sessionId) ? sessionId : JSON.stringify(sessionId).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e")}
@@ -846,18 +988,18 @@ ${frame[part.label] ?? ""}`);
   );
 }
 var TRANSCRIPT_ROOTS = {
-  "claude-code": () => join2(homedir(), ".claude", "projects"),
-  codex: () => join2(codexHome(), "sessions"),
+  "claude-code": () => join4(homedir(), ".claude", "projects"),
+  codex: () => join4(codexHome(), "sessions"),
   pi: piSessionsDir
 };
 function isApprovedTranscript(path, host) {
-  const candidate = resolve(path);
-  const roots = [TRANSCRIPT_ROOTS[host](), join2(mehmoryHome(), ".state", "transcripts")];
+  const candidate = resolve2(path);
+  const roots = [TRANSCRIPT_ROOTS[host](), join4(mehmoryHome(), ".state", "transcripts")];
   try {
     if (lstat(candidate)?.isSymbolicLink() || stat(candidate)?.isFile() !== true) return false;
     return roots.some((root) => {
-      const suffix = relative(realpath(root), realpath(candidate));
-      return suffix !== ".." && !suffix.startsWith(`..${sep}`);
+      const suffix = relative2(realpath(root), realpath(candidate));
+      return suffix !== ".." && !suffix.startsWith(`..${sep3}`);
     });
   } catch {
     return false;
@@ -1047,8 +1189,8 @@ function finalizeSessionUnlocked(sessionId, transcriptPath, project, host, confi
       "session-end",
       `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId, generation)}`
     );
-    const touched = [paths.logFile, paths.inboxFile].filter(pathExists).map((path) => relative(home, path));
-    if (touched.length > 0 && pathExists(join2(home, ".git"))) {
+    const touched = [paths.logFile, paths.inboxFile].filter(pathExists).map((path) => relative2(home, path));
+    if (touched.length > 0 && pathExists(join4(home, ".git"))) {
       commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
     }
     capturedEntries = entries.length;
@@ -1084,14 +1226,17 @@ function finalizePendingSessions(currentSessionId, project, host, config = loadC
 
 export {
   runHook,
+  scopePaths,
+  openScope,
+  openProjectWiki,
+  storeExists,
+  storeIsUnpopulated,
+  archivePage,
   claimJob,
   completeJob,
   MAINTENANCE_ALLOWANCE_TOKENS,
   estimateTokens,
   truncateToTokens,
-  scopePaths,
-  storeExists,
-  storeIsUnpopulated,
   inboxBytes,
   skillRef,
   buildScopeInjection,
