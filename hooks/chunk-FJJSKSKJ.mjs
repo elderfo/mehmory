@@ -35,7 +35,8 @@ import {
   renameSync,
   unlinkSync,
   writeFileSync,
-  readdirSync
+  readdirSync,
+  utimesSync
 } from "fs";
 import { dirname, join as join2 } from "path";
 import { mkdirSync } from "fs";
@@ -163,6 +164,7 @@ function isWarningRecord(value) {
   return typeof v["code"] === "string" && typeof v["lastTime"] === "number" && typeof v["count"] === "number";
 }
 var WARN_RATE_LIMIT_MS = 60 * 60 * 1e3;
+var WARNING_CLAIM_STALE_MS = 60 * 1e3;
 function warningPaths() {
   const paths = [];
   const legacy = statePath("warnings.json");
@@ -174,23 +176,56 @@ function warningPaths() {
     );
   } catch {
   }
+  for (const claimDir of [statePath(), dir]) {
+    try {
+      for (const name of readdirSync(claimDir)) {
+        if (!/\.json(?:\.drain-[0-9a-f-]{36})+$/.test(name)) continue;
+        if (claimDir !== dir && !name.startsWith("warnings.json.drain-")) continue;
+        const path = join2(claimDir, name);
+        try {
+          if (Date.now() - statSync(path).mtimeMs > WARNING_CLAIM_STALE_MS) paths.push(path);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
   return paths;
 }
 function readWarnings(consume = false) {
   const records = [];
   for (const path of warningPaths()) {
-    const claimed = consume ? `${path}.drain-${randomUUID()}` : path;
+    const claimed = consume ? `${path.replace(/(?:\.drain-[0-9a-f-]{36})+$/, "")}.drain-${randomUUID()}` : path;
     let renamed = false;
-    try {
-      if (consume) {
+    if (consume) {
+      try {
         renameSync(path, claimed);
         renamed = true;
+        const now = /* @__PURE__ */ new Date();
+        utimesSync(claimed, now, now);
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
       }
-      const parsed = JSON.parse(readFileSync(claimed, "utf-8"));
+    }
+    const readPath = renamed ? claimed : path;
+    try {
+      const contents = readFileSync(readPath, "utf-8");
+      let parsed;
+      try {
+        parsed = JSON.parse(contents);
+      } catch {
+        if (renamed) {
+          try {
+            unlinkSync(claimed);
+          } catch {
+          }
+        }
+        continue;
+      }
       records.push(
         ...Array.isArray(parsed) ? parsed.filter(isWarningRecord) : isWarningRecord(parsed) ? [parsed] : []
       );
-      if (consume) unlinkSync(claimed);
+      if (renamed) unlinkSync(claimed);
     } catch {
       if (renamed) {
         try {
@@ -260,10 +295,9 @@ import {
   realpathSync,
   chmodSync,
   fsyncSync,
-  readlinkSync,
   constants
 } from "fs";
-import { dirname as dirname2, isAbsolute, sep } from "path";
+import { dirname as dirname2 } from "path";
 var LOCK_RETRY_COUNT = 50;
 var LOCK_RETRY_INTERVAL_MS = 100;
 var LOCK_STALE_MS = 3e4;
@@ -352,11 +386,10 @@ function createLockExclusive(path, owner = "") {
   }
 }
 function atomicWrite(path, contents, mode) {
-  const destination = resolveWriteTarget(path);
-  const dir = dirname2(destination);
+  const dir = dirname2(path);
   mkdir(dir);
-  const tempPath = destination + ".tmp-" + Math.random().toString(36).slice(2, 8);
-  const targetMode = mode ?? existingMode(destination);
+  const tempPath = path + ".tmp-" + Math.random().toString(36).slice(2, 8);
+  const targetMode = mode ?? existingMode(path);
   let created = false;
   try {
     const fd = openSync(tempPath, "wx", targetMode);
@@ -368,7 +401,7 @@ function atomicWrite(path, contents, mode) {
     } finally {
       closeSync(fd);
     }
-    renameSync2(tempPath, destination);
+    renameSync2(tempPath, path);
     try {
       const directoryFd = openSync(dir, "r");
       try {
@@ -388,30 +421,10 @@ function atomicWrite(path, contents, mode) {
     throw error;
   }
 }
-function resolveWriteTarget(path) {
-  let target = path;
-  const seen = /* @__PURE__ */ new Set();
-  for (; ; ) {
-    if (seen.has(target)) throw new Error("atomic write target contains a symlink cycle");
-    seen.add(target);
-    try {
-      return realpathSync.native(target);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    let link;
-    try {
-      link = readlinkSync(target);
-    } catch (error) {
-      if (error.code === "ENOENT") return target;
-      throw error;
-    }
-    target = isAbsolute(link) ? link : `${realpathSync.native(dirname2(target))}${sep}${link}`;
-  }
-}
 function existingMode(path) {
   try {
-    return statSync2(path).mode & 511;
+    const info = lstatSync(path);
+    return info.isSymbolicLink() ? void 0 : info.mode & 511;
   } catch {
     return void 0;
   }

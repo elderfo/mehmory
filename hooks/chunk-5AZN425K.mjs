@@ -3,6 +3,7 @@ import {
   MAX_INJECTION_BUDGET_TOKENS,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
+  commitPaths,
   currentAgentName,
   deleteSessionState,
   inboxEntryId,
@@ -20,14 +21,12 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-FDY3QNAB.mjs";
+} from "./chunk-YIL6L2Y3.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-QRUWTGED.mjs";
+} from "./chunk-JFYN3S32.mjs";
 import {
-  INDEX_LOCK_RETRY_COUNT,
-  INDEX_LOCK_RETRY_INTERVAL_MS,
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
   appendRecord,
@@ -50,7 +49,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-B6KFCQBF.mjs";
+} from "./chunk-FJJSKSKJ.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -355,135 +354,6 @@ function estimateTokens(text) {
 // src/core/capture.ts
 import { homedir } from "os";
 import { dirname, join as join2, relative, resolve, sep } from "path";
-
-// src/core/git.ts
-import { execFileSync } from "child_process";
-var GIT_TIMEOUT_MS = 500;
-var GIT_LOCATION_ENV = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_INTERNAL_SUPER_PREFIX",
-  "GIT_CONFIG",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_QUARANTINE_PATH",
-  "GIT_GRAFT_FILE",
-  "GIT_SHALLOW_FILE",
-  "GIT_NAMESPACE",
-  "GIT_PREFIX",
-  "GIT_CEILING_DIRECTORIES",
-  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-  "GIT_IMPLICIT_WORK_TREE",
-  "GIT_REPLACE_REF_BASE"
-];
-var GIT_PREFIX = ["-c", "core.hooksPath=/dev/null"];
-function gitOptions(cwd) {
-  const env = { ...process.env };
-  for (const name of GIT_LOCATION_ENV) Reflect.deleteProperty(env, name);
-  return {
-    stdio: "pipe",
-    timeout: GIT_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-    env,
-    ...cwd ? { cwd } : {}
-  };
-}
-function commitPaths(paths, message, cwd, strictPaths = false) {
-  const opts = gitOptions(cwd);
-  try {
-    execFileSync("git", [...GIT_PREFIX, "rev-parse", "--git-dir"], opts);
-  } catch {
-    const error = {
-      code: "E_GIT_COMMIT",
-      kind: "informational",
-      what: "Not in a git repository",
-      consequence: "Commit failed; memory was not recorded"
-    };
-    logError(error);
-    return { ok: false };
-  }
-  let stagePaths = paths;
-  try {
-    execFileSync("git", [...GIT_PREFIX, "rev-parse", "--verify", "HEAD"], opts);
-  } catch {
-    if (paths.length === 0) stagePaths = ["."];
-  }
-  try {
-    execFileSync("git", [...GIT_PREFIX, "add", "-A", "--", ...stagePaths], opts);
-  } catch (err) {
-    const error = {
-      code: "E_GIT_COMMIT",
-      kind: "informational",
-      what: err instanceof Error ? err.message : String(err),
-      consequence: "Failed to stage paths; commit aborted"
-    };
-    logError(error);
-    return { ok: false };
-  }
-  try {
-    const staged = execFileSync("git", [...GIT_PREFIX, "diff", "--cached", "--name-only"], opts).toString().split("\n").filter(Boolean);
-    if (staged.length === 0) return { ok: true };
-    if (strictPaths) {
-      const allowed = paths.map(
-        (path) => path.replace(/^:\(top,literal\)/, "").replace(/\\/g, "/")
-      );
-      const unrelated = staged.some(
-        (file) => !allowed.some((path) => file === path || file.startsWith(path + "/"))
-      );
-      if (unrelated) {
-        logError({
-          code: "E_GIT_COMMIT",
-          kind: "informational",
-          what: "unrelated changes are already staged in the memory store",
-          consequence: "Purge left the store dirty rather than committing user changes"
-        });
-        return { ok: false };
-      }
-    }
-  } catch {
-    return { ok: false };
-  }
-  for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
-    try {
-      execFileSync(
-        "git",
-        [...GIT_PREFIX, "commit", "--no-verify", "--no-gpg-sign", "-m", message],
-        {
-          ...opts,
-          stdio: "pipe"
-        }
-      );
-      return { ok: true };
-    } catch (err) {
-      const stderr = err instanceof Error ? err.message : String(err);
-      const failure = err;
-      if (failure.status === 1 && /nothing to commit|nothing added to commit/.test(failure.stdout?.toString() ?? "")) {
-        return { ok: true };
-      }
-      const isIndexLock = stderr.includes("index.lock") || stderr.includes("fatal: Unable to process");
-      if (isIndexLock && attempt < INDEX_LOCK_RETRY_COUNT) {
-        const end = Date.now() + INDEX_LOCK_RETRY_INTERVAL_MS;
-        while (Date.now() < end) {
-        }
-        continue;
-      }
-      if (isIndexLock) {
-        return { ok: false, deferred: true };
-      }
-      const error = {
-        code: "E_GIT_COMMIT",
-        kind: "informational",
-        what: stderr,
-        consequence: "Commit failed; tree left staged for manual recovery"
-      };
-      logError(error);
-      return { ok: false, deferred: true };
-    }
-  }
-  return { ok: false };
-}
 
 // src/core/injection.ts
 function buildInjection(parts, options = {}) {

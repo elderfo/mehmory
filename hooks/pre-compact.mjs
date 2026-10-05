@@ -1,16 +1,16 @@
 import {
   captureDelta,
   runHook
-} from "./chunk-CF2POKV2.mjs";
+} from "./chunk-5AZN425K.mjs";
 import {
   isPaused,
   resetStopCount
-} from "./chunk-FDY3QNAB.mjs";
-import "./chunk-QRUWTGED.mjs";
+} from "./chunk-YIL6L2Y3.mjs";
+import "./chunk-JFYN3S32.mjs";
 import {
   logError,
   pathExists
-} from "./chunk-B6KFCQBF.mjs";
+} from "./chunk-FJJSKSKJ.mjs";
 
 // src/hooks/pre-compact.ts
 runHook("PreCompact", (input, project, host, config) => {

@@ -22,10 +22,9 @@ import {
   realpathSync,
   chmodSync,
   fsyncSync,
-  readlinkSync,
   constants,
 } from 'node:fs';
-import { dirname, isAbsolute, sep } from 'node:path';
+import { dirname } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
 
 // ─── Bounds (A8) ───
@@ -192,7 +191,8 @@ export function createLockExclusive(path: string, owner = ''): boolean {
 
 /**
  * Write contents atomically: write to a temp file in the same directory,
- * then rename into place. Creates parent directories.
+ * then rename into place, replacing a destination symlink rather than following it.
+ * Creates parent directories.
  *
  * The rename carries the *temp* file's permissions, so without this the destination's
  * mode is silently replaced by whatever the umask gives — a 0600 file rewritten in place
@@ -204,11 +204,10 @@ export function createLockExclusive(path: string, owner = ''): boolean {
  *               callers are unaffected.
  */
 export function atomicWrite(path: string, contents: string, mode?: number): void {
-  const destination = resolveWriteTarget(path);
-  const dir = dirname(destination);
+  const dir = dirname(path);
   mkdir(dir);
-  const tempPath = destination + '.tmp-' + Math.random().toString(36).slice(2, 8);
-  const targetMode = mode ?? existingMode(destination);
+  const tempPath = path + '.tmp-' + Math.random().toString(36).slice(2, 8);
+  const targetMode = mode ?? existingMode(path);
   let created = false;
   try {
     const fd = openSync(tempPath, 'wx', targetMode);
@@ -220,7 +219,7 @@ export function atomicWrite(path: string, contents: string, mode?: number): void
     } finally {
       closeSync(fd);
     }
-    renameSync(tempPath, destination);
+    renameSync(tempPath, path);
     // Some filesystems do not support directory fsync; the replacement still succeeded.
     try {
       const directoryFd = openSync(dir, 'r');
@@ -244,34 +243,11 @@ export function atomicWrite(path: string, contents: string, mode?: number): void
   }
 }
 
-/** Follow even dangling final symlinks; realpath alone cannot resolve those. */
-function resolveWriteTarget(path: string): string {
-  let target = path;
-  const seen = new Set<string>();
-  for (;;) {
-    if (seen.has(target)) throw new Error('atomic write target contains a symlink cycle');
-    seen.add(target);
-    try {
-      // Native resolution keeps '..' after a directory symlink physical, not lexical.
-      return realpathSync.native(target);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    let link: string;
-    try {
-      link = readlinkSync(target);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return target;
-      throw error;
-    }
-    target = isAbsolute(link) ? link : `${realpathSync.native(dirname(target))}${sep}${link}`;
-  }
-}
-
 /** Permission bits of an existing file, or undefined when it does not exist. */
 function existingMode(path: string): number | undefined {
   try {
-    return statSync(path).mode & 0o777;
+    const info = lstatSync(path);
+    return info.isSymbolicLink() ? undefined : info.mode & 0o777;
   } catch {
     return undefined;
   }

@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-CF2POKV2.mjs";
+} from "./chunk-5AZN425K.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -22,10 +22,11 @@ import {
   readFrontmatter,
   readInboxEntries,
   resumeFinalizedSession,
+  runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-FDY3QNAB.mjs";
-import "./chunk-QRUWTGED.mjs";
+} from "./chunk-YIL6L2Y3.mjs";
+import "./chunk-JFYN3S32.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -41,11 +42,10 @@ import {
   rename,
   shellQuote,
   stat
-} from "./chunk-B6KFCQBF.mjs";
+} from "./chunk-FJJSKSKJ.mjs";
 
 // src/core/store.ts
 import { join } from "path";
-import { execFileSync } from "child_process";
 function initStore() {
   const home = mehmoryHome();
   try {
@@ -68,14 +68,8 @@ function initStore() {
     const gitDir = join(home, ".git");
     if (!pathExists(gitDir)) {
       try {
-        execFileSync("git", ["init", home], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
-        execFileSync("git", ["-C", home, "config", "commit.gpgsign", "false"], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
+        runStoreGit(["init", home], home);
+        runStoreGit(["config", "--local", "commit.gpgsign", "false"], home);
       } catch (err) {
         const error = {
           code: "E_STORE_INIT",
@@ -224,7 +218,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed \u2014 including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. \`\\\\\`, \`\\n\`, \`\\r\`, and \`--\\>\` are escape sequences in entry text (backslash, newline, carriage return, and \`-->\` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.

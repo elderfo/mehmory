@@ -1,7 +1,7 @@
 import {
   stripPiSkillEnvelope
-} from "./chunk-QRUWTGED.mjs";
-import "./chunk-B6KFCQBF.mjs";
+} from "./chunk-JFYN3S32.mjs";
+import "./chunk-FJJSKSKJ.mjs";
 
 // src/hooks/pi-extension.ts
 import { spawn } from "child_process";

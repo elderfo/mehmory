@@ -12,7 +12,7 @@ it('bounds every git invocation and disables all hooks', () => {
   );
   expect(ensureGitBaseline(process.cwd())).toEqual({ ok: true });
   expect(commitPaths(['note.md'], 'test', process.cwd(), true)).toEqual({ ok: true });
-  expect(vi.mocked(execFileSync).mock.calls.map(([, args]) => args?.[2])).toEqual([
+  expect(vi.mocked(execFileSync).mock.calls.map(([, args]) => args?.[6])).toEqual([
     'rev-parse',
     'rev-parse',
     'rev-parse',
@@ -23,9 +23,16 @@ it('bounds every git invocation and disables all hooks', () => {
   ]);
   for (const [command, args, options] of vi.mocked(execFileSync).mock.calls) {
     expect(command).toBe('git');
-    expect(args?.slice(0, 2)).toEqual(['-c', 'core.hooksPath=/dev/null']);
-    expect(options?.timeout).toBe(500);
-    expect(options?.killSignal).toBe('SIGKILL');
+    expect(args?.slice(0, 6)).toEqual([
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.useBuiltinFSMonitor=false',
+    ]);
+    expect(options?.timeout).toBe(args?.includes('rev-parse') ? 500 : 10000);
+    expect(options?.killSignal).toBe('SIGTERM');
     if (args?.includes('commit')) expect(args).toContain('--no-verify');
   }
 });
@@ -39,7 +46,10 @@ it('bounds initialization and both attempts after index.lock contention', () => 
   expect(ensureGitBaseline(process.cwd())).toEqual({ ok: false, deferred: true });
   const calls = vi.mocked(execFileSync).mock.calls;
   expect(calls.filter(([, args]) => args?.includes('commit'))).toHaveLength(2);
-  for (const [, , options] of calls) expect(options?.timeout).toBe(500);
+  for (const [, args, options] of calls) {
+    expect(options?.timeout).toBe(args?.includes('rev-parse') ? 500 : 10000);
+    expect(options?.killSignal).toBe('SIGTERM');
+  }
 });
 
 it('treats a concurrent commit leaving nothing to commit as success without warnings', () => {

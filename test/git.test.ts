@@ -17,7 +17,10 @@ function setupTestRepo(): { readonly dir: string; readonly cleanup: () => void }
 
   // Initialize git repo
   execFileSync('git', ['init'], { cwd: repoDir, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd: repoDir,
+    stdio: 'pipe',
+  });
   execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repoDir, stdio: 'pipe' });
 
   const cleanup = () => {
@@ -47,11 +50,7 @@ describe('commitPaths (done-when 8)', () => {
       writeFileSync(join(dir, 'file2.txt'), 'modified2');
 
       // Commit only file1
-      const result = commitPaths(
-        [join(dir, 'file1.txt')],
-        'commit file1 only',
-        dir
-      );
+      const result = commitPaths([join(dir, 'file1.txt')], 'commit file1 only', dir);
 
       // Mock: change process.cwd() for commitPaths
       // Since we can't easily change cwd, we skip this test for now
@@ -77,21 +76,16 @@ describe('commitPaths (done-when 8)', () => {
       const lockPath = join(dir, '.git', 'index.lock');
       writeFileSync(lockPath, 'locked');
 
-      // Attempt commit (should fail and defer, not throw)
-      let result;
-      try {
-        result = commitPaths(
-          [join(dir, 'file.txt')],
-          'test commit',
-          dir
-        );
-      } catch {
-        // If it throws, that's also acceptable for this test
-      }
-
-      expect(result).toBeDefined();
-      // Assert that result is not a throw
-      expect(result?.ok).toBeDefined();
+      const started = Date.now();
+      expect(commitPaths(['file.txt'], 'test commit', dir)).toEqual({ ok: false, deferred: true });
+      expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+      expect(readFileSync(lockPath, 'utf8')).toBe('locked');
+      expect(peekWarnings()).toEqual([]);
+      rmSync(lockPath);
+      expect(commitPaths(['file.txt'], 'after contention', dir)).toEqual({ ok: true });
+      expect(execFileSync('git', ['show', 'HEAD:file.txt'], { cwd: dir, encoding: 'utf8' })).toBe(
+        'modified'
+      );
     } finally {
       cleanup();
     }
@@ -156,7 +150,10 @@ describe('commitPaths (done-when 8)', () => {
       execFileSync('git', ['add', join(dir, 'file2.txt')], { cwd: dir, stdio: 'pipe' });
 
       // Verify both are staged
-      const status = execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf-8' });
+      const status = execFileSync('git', ['status', '--porcelain'], {
+        cwd: dir,
+        encoding: 'utf-8',
+      });
       expect(status).toContain('M  file1.txt');
       expect(status).toContain('M  file2.txt');
     } finally {
@@ -187,13 +184,14 @@ describe('commitPaths (done-when 8)', () => {
 });
 
 describe('git child isolation', () => {
-  it('terminates a hung git child even when it ignores SIGTERM', () => {
+  it('terminates a hung git probe with SIGTERM so git can release locks', () => {
     const bin = statePath('fake-bin');
     const pidFile = statePath('hung-git.pid');
+    const signalFile = statePath('git-signal');
     mkdirSync(bin, { recursive: true });
     writeFileSync(
       join(bin, 'git'),
-      `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nprocess.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n`,
+      `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nprocess.on('SIGTERM', () => { writeFileSync(${JSON.stringify(signalFile)}, 'SIGTERM'); process.exit(1); });\nsetInterval(() => {}, 1000);\n`,
       { mode: 0o755 }
     );
     const started = Date.now();
@@ -215,6 +213,7 @@ describe('git child isolation', () => {
       );
       expect(child.status).toBe(0);
       expect(child.stdout.trim()).toBe('{"ok":false}');
+      expect(readFileSync(signalFile, 'utf8')).toBe('SIGTERM');
       expect(Date.now() - started).toBeLessThan(2000);
     } finally {
       if (existsSync(pidFile)) {

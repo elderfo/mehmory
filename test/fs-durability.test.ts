@@ -17,38 +17,30 @@ vi.mock('node:fs', async (importOriginal) => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('atomicWrite durability', () => {
-  it('preserves a chained relative symlink and updates its final target', () => {
-    const dir = statePath('dotfiles');
+  it('replaces a destination symlink without touching its outside target', () => {
+    const dir = statePath('store');
+    const target = statePath('outside.bashrc');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(join(dir, 'actual.toml'), 'old', { mode: 0o600 });
-    fs.symlinkSync('actual.toml', join(dir, 'middle.toml'));
-    fs.symlinkSync('middle.toml', join(dir, 'config.toml'));
+    fs.writeFileSync(target, 'user configuration', { mode: 0o600 });
+    const destination = join(dir, 'index.md');
+    fs.symlinkSync(target, destination);
 
-    atomicWrite(join(dir, 'config.toml'), 'new');
+    atomicWrite(destination, 'memory index');
 
-    expect(fs.lstatSync(join(dir, 'config.toml')).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(join(dir, 'actual.toml'), 'utf8')).toBe('new');
-    expect(fs.statSync(join(dir, 'actual.toml')).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(target, 'utf8')).toBe('user configuration');
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(destination, 'utf8')).toBe('memory index');
   });
 
-  it('resolves parent traversal after a symlinked directory physically', () => {
-    const dir = statePath('physical-target');
-    fs.mkdirSync(join(dir, 'folder/deep'), { recursive: true });
-    fs.writeFileSync(join(dir, 'folder/actual.toml'), 'old');
-    fs.symlinkSync('folder/deep', join(dir, 'alias'));
-    fs.symlinkSync('alias/../actual.toml', join(dir, 'config.toml'));
-    atomicWrite(join(dir, 'config.toml'), 'new');
-    expect(fs.readFileSync(join(dir, 'folder/actual.toml'), 'utf8')).toBe('new');
-    expect(fs.existsSync(join(dir, 'actual.toml'))).toBe(false);
-  });
-
-  it('preserves a dangling symlink while creating its target', () => {
-    const dir = statePath('dangling');
+  it('replaces a dangling symlink without creating its target parent', () => {
+    const dir = statePath('store');
+    const targetParent = statePath('outside-missing');
     fs.mkdirSync(dir, { recursive: true });
-    fs.symlinkSync('nested/actual.toml', join(dir, 'config.toml'));
-    atomicWrite(join(dir, 'config.toml'), 'new');
-    expect(fs.lstatSync(join(dir, 'config.toml')).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(join(dir, 'nested/actual.toml'), 'utf8')).toBe('new');
+    const destination = join(dir, 'index.md');
+    fs.symlinkSync(join(targetParent, 'index.md'), destination);
+    atomicWrite(destination, 'memory index');
+    expect(fs.existsSync(targetParent)).toBe(false);
+    expect(fs.readFileSync(destination, 'utf8')).toBe('memory index');
   });
 
   it('flushes the temp file before rename and the directory afterward', () => {

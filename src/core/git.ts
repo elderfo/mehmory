@@ -4,10 +4,12 @@
  */
 
 import { execFileSync, type ExecFileSyncOptionsWithBufferEncoding } from 'node:child_process';
-import { logError, type MehmoryError } from './errors.js';
-import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS } from './fs.js';
+import { join } from 'node:path';
+import { logError, shellQuote, type MehmoryError } from './errors.js';
+import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS, lstat, remove } from './fs.js';
 
-const GIT_TIMEOUT_MS = 500;
+export const GIT_PROBE_TIMEOUT_MS = 500;
+export const GIT_OPERATION_TIMEOUT_MS = 10000;
 const GIT_LOCATION_ENV = [
   'GIT_DIR',
   'GIT_WORK_TREE',
@@ -22,23 +24,71 @@ const GIT_LOCATION_ENV = [
   'GIT_SHALLOW_FILE',
   'GIT_NAMESPACE',
   'GIT_PREFIX',
-  'GIT_CEILING_DIRECTORIES',
   'GIT_DISCOVERY_ACROSS_FILESYSTEM',
   'GIT_IMPLICIT_WORK_TREE',
   'GIT_REPLACE_REF_BASE',
+  'GIT_LITERAL_PATHSPECS',
+  'GIT_GLOB_PATHSPECS',
+  'GIT_NOGLOB_PATHSPECS',
+  'GIT_ICASE_PATHSPECS',
 ];
-const GIT_PREFIX = ['-c', 'core.hooksPath=/dev/null'];
+const GIT_PREFIX = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.useBuiltinFSMonitor=false',
+];
 
-function gitOptions(cwd?: string): ExecFileSyncOptionsWithBufferEncoding {
-  const env = { ...process.env };
+function gitOptions(
+  cwd: string | undefined,
+  timeout: number
+): ExecFileSyncOptionsWithBufferEncoding {
+  const env = { ...process.env, LC_ALL: 'C' };
   for (const name of GIT_LOCATION_ENV) Reflect.deleteProperty(env, name);
   return {
     stdio: 'pipe',
-    timeout: GIT_TIMEOUT_MS,
-    killSignal: 'SIGKILL',
+    timeout,
+    killSignal: 'SIGTERM',
     env,
     ...(cwd ? { cwd } : {}),
   };
+}
+
+function isGitTimeout(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ETIMEDOUT';
+}
+
+/** Internal subprocess primitive: callers catch failures at their fail-open boundary. */
+export function runStoreGit(args: string[], cwd?: string): Buffer {
+  const timeout = args[0] === 'rev-parse' ? GIT_PROBE_TIMEOUT_MS : GIT_OPERATION_TIMEOUT_MS;
+  const started = Date.now();
+  try {
+    return execFileSync('git', [...GIT_PREFIX, ...args], gitOptions(cwd, timeout));
+  } catch (error) {
+    if (isGitTimeout(error)) {
+      const lock = join(cwd ?? process.cwd(), '.git', 'index.lock');
+      let removed = false;
+      try {
+        // Do not remove a lock that predates this call: another git may still own it.
+        const info = lstat(lock);
+        if (info && info.mtimeMs >= started) {
+          remove(lock);
+          removed = true;
+        }
+      } catch {
+        // SIGTERM normally cleans the lock; missing or unwritable locks are harmless here.
+      }
+      logError({
+        code: 'E_GIT_COMMIT',
+        kind: 'informational',
+        what: `git ${args[0] ?? ''} timed out after ${String(timeout)} ms; ${removed ? 'removed new index.lock' : 'no new index.lock removed'}; after checking no git is running, remedy: rm ${shellQuote(lock)}`,
+        consequence: 'Git operation failed; memory may be left uncommitted',
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -53,15 +103,15 @@ function gitOptions(cwd?: string): ExecFileSyncOptionsWithBufferEncoding {
  */
 export function ensureGitBaseline(cwd: string): { ok: true } | { ok: false } {
   try {
-    execFileSync('git', [...GIT_PREFIX, 'rev-parse', '--git-dir'], gitOptions(cwd));
-  } catch {
-    return { ok: true };
+    runStoreGit(['rev-parse', '--git-dir'], cwd);
+  } catch (error) {
+    return { ok: !isGitTimeout(error) };
   }
   try {
-    execFileSync('git', [...GIT_PREFIX, 'rev-parse', '--verify', 'HEAD'], gitOptions(cwd));
+    runStoreGit(['rev-parse', '--verify', 'HEAD'], cwd);
     return { ok: true };
-  } catch {
-    return commitPaths([], 'init: store', cwd);
+  } catch (error) {
+    return isGitTimeout(error) ? { ok: false } : commitPaths([], 'init: store', cwd);
   }
 }
 
@@ -74,12 +124,12 @@ export function commitPaths(
   // `stdio: 'pipe'` is part of the U2 contract, not a tidiness choice: without it the
   // child git inherits the caller's stderr, and a hook running inside Claude Code
   // leaks `fatal: …` straight past the fail-open boundary.
-  const opts = gitOptions(cwd);
 
   // Ensure we're in a git repo (will fail with clear error if not)
   try {
-    execFileSync('git', [...GIT_PREFIX, 'rev-parse', '--git-dir'], opts);
-  } catch {
+    runStoreGit(['rev-parse', '--git-dir'], cwd);
+  } catch (caught) {
+    if (isGitTimeout(caught)) return { ok: false };
     const error: MehmoryError = {
       code: 'E_GIT_COMMIT',
       kind: 'informational',
@@ -94,27 +144,40 @@ export function commitPaths(
   // HEAD yet, so its initial files are all part of the first commit.
   let stagePaths = paths;
   try {
-    execFileSync('git', [...GIT_PREFIX, 'rev-parse', '--verify', 'HEAD'], opts);
-  } catch {
+    runStoreGit(['rev-parse', '--verify', 'HEAD'], cwd);
+  } catch (error) {
+    if (isGitTimeout(error)) return { ok: false };
     if (paths.length === 0) stagePaths = ['.'];
   }
-  try {
-    // `--` terminates option parsing: without it a path beginning with `-`
-    // (legal on disk, and page titles feed these paths) is read as a flag.
-    execFileSync('git', [...GIT_PREFIX, 'add', '-A', '--', ...stagePaths], opts);
-  } catch (err) {
-    const error: MehmoryError = {
-      code: 'E_GIT_COMMIT',
-      kind: 'informational',
-      what: err instanceof Error ? err.message : String(err),
-      consequence: 'Failed to stage paths; commit aborted',
-    };
-    logError(error);
-    return { ok: false };
+  for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
+    try {
+      // `--` keeps a filename beginning with `-` from becoming a git option.
+      runStoreGit(['add', '-A', '--', ...stagePaths], cwd);
+      break;
+    } catch (err) {
+      const what = err instanceof Error ? err.message : String(err);
+      if (!isGitTimeout(err) && what.includes('index.lock')) {
+        if (attempt < INDEX_LOCK_RETRY_COUNT) {
+          const end = Date.now() + INDEX_LOCK_RETRY_INTERVAL_MS;
+          while (Date.now() < end) {
+            /* bounded contention retry */
+          }
+          continue;
+        }
+        return { ok: false, deferred: true };
+      }
+      logError({
+        code: 'E_GIT_COMMIT',
+        kind: 'informational',
+        what,
+        consequence: 'Failed to stage paths; commit aborted',
+      });
+      return { ok: false };
+    }
   }
 
   try {
-    const staged = execFileSync('git', [...GIT_PREFIX, 'diff', '--cached', '--name-only'], opts)
+    const staged = runStoreGit(['diff', '--cached', '--name-only'], cwd)
       .toString()
       .split('\n')
       .filter(Boolean);
@@ -150,14 +213,7 @@ export function commitPaths(
       // object". Inside a hook that freezes the session on a prompt the user
       // never sees, which breaks the invariant that memory never blocks the
       // harness (A2). Signing someone's memory bookkeeping buys nothing anyway.
-      execFileSync(
-        'git',
-        [...GIT_PREFIX, 'commit', '--no-verify', '--no-gpg-sign', '-m', message],
-        {
-          ...opts,
-          stdio: 'pipe',
-        }
-      );
+      runStoreGit(['commit', '--no-verify', '--no-gpg-sign', '-m', message], cwd);
       // Success!
       return { ok: true };
     } catch (err) {
@@ -173,7 +229,8 @@ export function commitPaths(
 
       // Check if it's index.lock contention
       const isIndexLock =
-        stderr.includes('index.lock') || stderr.includes('fatal: Unable to process');
+        !isGitTimeout(err) &&
+        (stderr.includes('index.lock') || stderr.includes('fatal: Unable to process'));
 
       if (isIndexLock && attempt < INDEX_LOCK_RETRY_COUNT) {
         // Retry after delay

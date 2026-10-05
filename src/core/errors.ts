@@ -7,6 +7,7 @@ import {
   unlinkSync,
   writeFileSync,
   readdirSync,
+  utimesSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -255,6 +256,7 @@ function isWarningRecord(value: unknown): value is WarningRecord {
 }
 
 const WARN_RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
+const WARNING_CLAIM_STALE_MS = 60 * 1000;
 
 /** Published records are immutable; include the pre-upgrade array until drained. */
 function warningPaths(): string[] {
@@ -272,20 +274,62 @@ function warningPaths(): string[] {
   } catch {
     // Missing or unreadable warning directory.
   }
+  // A crashed drain may have renamed a record without reading it. Reclaim only
+  // after a minute so a concurrent active drain keeps exclusive ownership.
+  for (const claimDir of [statePath(), dir]) {
+    try {
+      for (const name of readdirSync(claimDir)) {
+        if (!/\.json(?:\.drain-[0-9a-f-]{36})+$/.test(name)) continue;
+        if (claimDir !== dir && !name.startsWith('warnings.json.drain-')) continue;
+        const path = join(claimDir, name);
+        try {
+          if (Date.now() - statSync(path).mtimeMs > WARNING_CLAIM_STALE_MS) paths.push(path);
+        } catch {
+          // Another drain may have just consumed it.
+        }
+      }
+    } catch {
+      // Missing or unreadable state directory.
+    }
+  }
   return paths;
 }
 
 function readWarnings(consume = false): WarningRecord[] {
   const records: WarningRecord[] = [];
   for (const path of warningPaths()) {
-    const claimed = consume ? `${path}.drain-${randomUUID()}` : path;
+    const claimed = consume
+      ? `${path.replace(/(?:\.drain-[0-9a-f-]{36})+$/, '')}.drain-${randomUUID()}`
+      : path;
     let renamed = false;
-    try {
-      if (consume) {
+    if (consume) {
+      try {
         renameSync(path, claimed);
         renamed = true;
+        // Rename preserves mtime; an old warning must not look like a stale active claim.
+        const now = new Date();
+        utimesSync(claimed, now, now);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        // Read-only state still has useful warnings, even though they cannot be claimed.
       }
-      const parsed: unknown = JSON.parse(readFileSync(claimed, 'utf-8'));
+    }
+    const readPath = renamed ? claimed : path;
+    try {
+      const contents = readFileSync(readPath, 'utf-8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(contents) as unknown;
+      } catch {
+        if (renamed) {
+          try {
+            unlinkSync(claimed);
+          } catch {
+            // Do not republish corrupt JSON, even if cleanup is temporarily impossible.
+          }
+        }
+        continue;
+      }
       records.push(
         ...(Array.isArray(parsed)
           ? parsed.filter(isWarningRecord)
@@ -293,13 +337,13 @@ function readWarnings(consume = false): WarningRecord[] {
             ? [parsed]
             : [])
       );
-      if (consume) unlinkSync(claimed);
+      if (renamed) unlinkSync(claimed);
     } catch {
       if (renamed) {
         try {
           renameSync(claimed, path);
         } catch {
-          // Best-effort restoration if reading the claimed record failed.
+          // Best-effort restoration only for I/O failures, not corrupt JSON.
         }
       }
     }

@@ -175,9 +175,11 @@ describe('inbox text escaping', () => {
     }
   });
 
-  it('preserves the decoding of legacy text with no original backslash', () => {
+  it('decodes legacy text with the new one-way escape semantics', () => {
     const legacy =
-      '- line1\\nline2 --\\> --!\\> <!--mehmory id=0123456789abcdef src=session ts=2026-10-05T00:00:00Z-->';
-    expect(parseInboxEntries(legacy)[0]?.text).toBe('line1\nline2 --> --!>');
+      '- line1\\nline2 --\\> --!\\> a\\\\b C:\\Users\\name\\repo <!--mehmory id=0123456789abcdef src=session ts=2026-10-05T00:00:00Z-->';
+    expect(parseInboxEntries(legacy)[0]?.text).toBe(
+      'line1\nline2 --> --!> a\\b C:\\Users\name\repo'
+    );
   });
 });

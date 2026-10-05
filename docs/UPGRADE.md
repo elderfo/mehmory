@@ -40,6 +40,17 @@ train you to ignore the warning entirely by the time a real template drift shows
 There is no automatic migration step in v1. `doctor`'s warning is the entire upgrade signal
 you get; treat it as a nudge to go read the diff, not as an error that needs suppressing.
 
+## Inbox text escapes (one-way compatibility change)
+
+New writes escape backslashes before escaping line separators and comment terminators,
+so new entries round-trip exactly. The parser now treats `\\`, `\n`, `\r`, and `--\>`
+as escapes in entry text. This is a **one-way** change for legacy inbox entries that
+contained raw backslashes: `a\\b` now reads as `a\b`, and `C:\Users\name\repo` gains
+both a newline (`\n`) and a carriage return (`\r`). Legacy lines are not rewritten or
+version-stamped, so the parser cannot distinguish an old literal from an escape. Review
+backslash-heavy legacy facts before integrating them; double literal backslashes in the
+entry text if needed. Pages already integrated are unaffected.
+
 ## `FORMAT_VERSION` history
 
 - **3** — inbox entries carry an optional `agent=` field recording which named agent

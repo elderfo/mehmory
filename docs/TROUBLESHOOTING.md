@@ -100,6 +100,15 @@ was not recorded*, *Failed to stage paths; commit aborted*, or *Commit failed; t
 staged for manual recovery*. No `Fix:` clause; `mehmory doctor` flags an uncommitted store so
 you don't have to notice on your own.
 
+Git probes have a 500 ms timeout; add, commit, diff, init, config, status, and log have
+10 s. A timeout sends SIGTERM so git can release its lock. A stale `.git/index.lock`
+left by an interrupted git (especially older builds using SIGKILL) can block every later
+commit. After a timeout mehmory removes a lock only if its mtime is at or after that
+call's start and logs the recovery and remedy. An older lock is left alone because it
+may belong to another process. If no git process is still using the store, the manual
+remedy is `rm <store>/.git/index.lock` (replace `<store>` with the resolved store home),
+then retry. A timed-out repository probe is reported as a timeout, not a missing repo.
+
 ## E_QUEUE_CLAIM (informational)
 
 A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fix:`.
