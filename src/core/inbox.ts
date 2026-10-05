@@ -28,7 +28,7 @@ export function readInboxEntries(inboxFile: string): InboxEntry[] {
   return failOpen(
     () => (pathExists(inboxFile) ? parseInboxEntries(readFile(inboxFile)) : []),
     [],
-    'E_APPEND_FAILED'
+    'E_STORE_READ'
   );
 }
 

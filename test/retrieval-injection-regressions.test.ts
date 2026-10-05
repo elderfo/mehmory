@@ -140,12 +140,14 @@ describe('retrieval and injection regressions', () => {
     }
   );
 
-  it.each([1, 8])('emits the smallest valid frame below framing cost at %i tokens', (budget) => {
+  it.each([
+    [1, ''],
+    [8, ''],
+    [9, '<mehmory-memory></mehmory-memory>'],
+  ] as const)('honors even a %i-token cap below the session framing cost', (budget, expected) => {
     seedStore(KEY);
     const config = { ...loadConfig(), injection: { budget_tokens: budget } };
-    expect(buildScopeInjection(KEY, config, 'live-session').text).toBe(
-      '<mehmory-memory></mehmory-memory>'
-    );
+    expect(buildScopeInjection(KEY, config, 'live-session').text).toBe(expected);
   });
 
   it.each([1, 8, 9, 128, 400, 800, 2000, 8000])(
@@ -162,9 +164,9 @@ describe('retrieval and injection regressions', () => {
       const context = additionalContext(
         runHook('session-start', { session_id: 'budget-session', source: 'compact' }, { cwd })
       );
-      if (budget < 9) expect(context).toBe('');
-      else expect(context).toContain('</mehmory-memory>');
-      expect(estimateTokens(context)).toBeLessThanOrEqual(budget);
+      expect(context).toContain('context was compacted');
+      if (budget >= 9) expect(context).toContain('</mehmory-memory>');
+      expect(estimateTokens(context)).toBeLessThanOrEqual(budget + 150);
       expect(statsLines().at(-1)?.['injected_tokens']).toBe(estimateTokens(context));
     }
   );
@@ -173,13 +175,13 @@ describe('retrieval and injection regressions', () => {
     seedStore(KEY);
     writeFileSync(
       join(mehmoryHome(), '.state', 'stats.jsonl'),
-      `${JSON.stringify({ ts: new Date().toISOString(), project: KEY, hook: 'SessionStart', ms: 5, injected_tokens: 2000 })}\n`
+      `${JSON.stringify({ ts: new Date().toISOString(), project: KEY, hook: 'SessionStart', ms: 5, injected_tokens: 2150 })}\n`
     );
     const config = { ...loadConfig(), injection: { budget_tokens: 2000 } };
     expect(runDoctor(config, '>=22').find((f) => f.check === 'kpi.injection')).toBeUndefined();
     const lowerBudget = { ...config, injection: { budget_tokens: 1999 } };
     expect(runDoctor(lowerBudget, '>=22').find((f) => f.check === 'kpi.injection')?.message).toBe(
-      'injected tokens p95 is 2000, over the 1999 combined budget'
+      'injected tokens p95 is 2150, over the 2149 combined budget'
     );
   });
 

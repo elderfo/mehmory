@@ -235,7 +235,7 @@ export function buildInjection(
  * @param targetTokens — Target token count
  * @returns Object with truncated text and its token count
  */
-function truncateToTokens(text: string, targetTokens: number): TruncationResult {
+export function truncateToTokens(text: string, targetTokens: number): TruncationResult {
   if (!text) {
     return { text: '', tokens: 0 };
   }

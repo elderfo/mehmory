@@ -7,6 +7,7 @@
  * otherwise; the next session picks it up.
  */
 
+import assert from 'node:assert/strict';
 import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
 import { logError, pendingWarnings } from '../core/errors.js';
@@ -23,7 +24,8 @@ import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
 import { tryProjectLock } from '../core/lock.js';
 import { claimJob, completeJob } from '../core/queue.js';
-import { estimateTokens } from '../core/tokens.js';
+import { estimateTokens, MAINTENANCE_ALLOWANCE_TOKENS } from '../core/tokens.js';
+import { truncateToTokens } from '../core/injection.js';
 import {
   applyDistillJobResult,
   buildScopeInjection,
@@ -102,7 +104,7 @@ runHook('SessionStart', (input, project, host, config) => {
 
   // Priority order is fixed: warning > compact notice > nudge > init notice.
   const candidates: string[] = [];
-  const warning = pendingWarnings()[0];
+  const warning = pendingWarnings(1)[0];
   if (warning !== undefined) candidates.push(`mehmory: ${warning}`);
   // Every maintenance line names a skill, and how a skill is invoked is harness-specific
   // — a Codex user has no slash commands to run (F3-4).
@@ -121,15 +123,19 @@ runHook('SessionStart', (input, project, host, config) => {
     );
   }
 
-  const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
-  let context = [injection.text, ...lines].filter(Boolean).join('\n');
-  // Optional notices yield first; never slice the data frame or its closing tag.
-  while (lines.length > 0 && estimateTokens(context) > config.injection.budget_tokens) {
-    lines.pop();
-    context = [injection.text, ...lines].filter(Boolean).join('\n');
+  const selected = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const lines: string[] = [];
+  let remaining = MAINTENANCE_ALLOWANCE_TOKENS;
+  for (const [index, line] of selected.entries()) {
+    // Reserve separators and a share for the next notice, even when a warning is long.
+    const allowance = Math.floor(remaining / (selected.length - index));
+    const text = truncateToTokens(line, allowance - 1).text;
+    lines.push(text);
+    remaining -= estimateTokens(text) + 1;
   }
-
-  if (estimateTokens(context) > config.injection.budget_tokens) context = '';
+  const context = [injection.text, ...lines].filter(Boolean).join('\n');
+  assert(lines.length <= MAX_MAINTENANCE_LINES);
+  assert(estimateTokens(context) <= config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS);
 
   const finalized = maintenance(input.session_id, project, host, config);
 

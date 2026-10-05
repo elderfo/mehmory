@@ -49,24 +49,29 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 { "injection": { "budget_tokens": 800 } }
 ```
 
-This budget caps the **complete emitted SessionStart context**, estimated as characters / 4,
+`budget_tokens` includes the **memory frame's framing**, estimated as characters / 4,
 rounded up: stored memory, `<mehmory-memory>` delimiters, section headers, the
-`session: <id>` metadata line, `<mehmory-routing>`, and any maintenance notices. The session
-line lets skills identify this session without guessing from state-file recency. Framing
-cost is reserved before allocating stored content; optional maintenance lines are dropped
-from lowest priority first when the final context would exceed the cap. Closing tags are
-never truncated. `doctor` compares its injection KPI against this configured cap, not a
-fixed threshold.
+`session: <id>` metadata line, and `<mehmory-routing>` when it fits. The session line lets
+skills identify this session without guessing from state-file recency. Routing yields
+before stored content is truncated; framing cost is reserved before allocating that content.
+Closing tags and session ids are never truncated.
+
+Maintenance notices have a **separate 150-token allowance** (`MAINTENANCE_ALLOWANCE_TOKENS`),
+with at most two lines in priority order: warning, post-compaction notice, integrate nudge,
+onboarding notice. Long lines are truncated to fit, not discarded after claiming a warning;
+unselected warnings remain pending for the next session. SessionStart asserts the combined
+context stays within `budget_tokens + 150`, and `doctor` uses that same KPI threshold
+(default 950). This preserves run-2 amendment 14's maintenance allowance.
 
 - `budget_tokens` — integer from 1 to 8000, default 800. The **remaining content allowance**
   after framing is split identity / project / index in a 1:1:2 ratio, with flooring remainder
   assigned to index. **Honored** (`buildInjection`, `buildScopeInjection`, `SessionStart`).
 
-If the budget cannot accommodate framing, `buildScopeInjection` returns the smallest valid
-frame, `<mehmory-memory></mehmory-memory>` (9 estimated tokens), without content, routing or
-session metadata. For budgets below even those 9 tokens, SessionStart emits no context at
-all rather than breaking the configured cap. Thus only the core framing helper's minimal
-fallback can exceed a tiny budget; the actual hook output never does.
+If the budget cannot accommodate content framing, the frame drops content and section
+headers, then the reference-data sentence. The complete `session: <id>` line is kept last,
+whenever its minimal framed form fits. Only below that cost is session metadata omitted.
+The empty frame, `<mehmory-memory></mehmory-memory>`, costs 9 estimated tokens; below 9 the
+memory frame is empty. Maintenance notices can still use their separate allowance.
 
 **The named-agent share.** When the running agent has a name (see `identity.agent` below),
 its own scope is injected too, taking a fourth share of the *same* `budget_tokens` rather
@@ -75,7 +80,7 @@ identity 200 / agent 200 / project 200 / index 400 and every share scales to the
 remaining content allowance against that total of 1000: identity / agent / project / index
 have a 1:1:1:2 ratio after framing is reserved. `budget_tokens` stays a hard cap either way.
 Truncation runs in priority order — index, then project, then the agent share, then identity.
-Identity is only shortened when content fits; the minimal-frame fallback has no content.
+Identity survives when there is room for content; the minimal session frame has no content.
 Truncation never splits a UTF-16 surrogate pair.
 
 ## `decay`

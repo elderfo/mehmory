@@ -1,4 +1,5 @@
 import {
+  MAINTENANCE_ALLOWANCE_TOKENS,
   applyDistillJobResult,
   buildScopeInjection,
   claimJob,
@@ -10,8 +11,9 @@ import {
   scopePaths,
   skillRef,
   storeExists,
-  storeIsUnpopulated
-} from "./chunk-KLQ3PATG.mjs";
+  storeIsUnpopulated,
+  truncateToTokens
+} from "./chunk-I7LL5VYT.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -27,8 +29,8 @@ import {
   runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-5J2J3ZM3.mjs";
-import "./chunk-WVRKG4UX.mjs";
+} from "./chunk-TQ5IOPZC.mjs";
+import "./chunk-MGH656ZU.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -44,7 +46,10 @@ import {
   rename,
   shellQuote,
   stat
-} from "./chunk-S7B7BPQR.mjs";
+} from "./chunk-2EYGJ7GZ.mjs";
+
+// src/hooks/session-start.ts
+import assert from "assert/strict";
 
 // src/core/store.ts
 import { join } from "path";
@@ -415,7 +420,7 @@ runHook("SessionStart", (input, project, host, config) => {
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];
-  const warning = pendingWarnings()[0];
+  const warning = pendingWarnings(1)[0];
   if (warning !== void 0) candidates.push(`mehmory: ${warning}`);
   const integrate = skillRef(host, "integrate");
   if (input.source === "compact") {
@@ -431,13 +436,18 @@ runHook("SessionStart", (input, project, host, config) => {
       `mehmory: memory at ${mehmoryHome()} is empty \u2014 run ${skillRef(host, "onboard-session")} to seed it`
     );
   }
-  const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
-  let context = [injection.text, ...lines].filter(Boolean).join("\n");
-  while (lines.length > 0 && estimateTokens(context) > config.injection.budget_tokens) {
-    lines.pop();
-    context = [injection.text, ...lines].filter(Boolean).join("\n");
+  const selected = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const lines = [];
+  let remaining = MAINTENANCE_ALLOWANCE_TOKENS;
+  for (const [index, line] of selected.entries()) {
+    const allowance = Math.floor(remaining / (selected.length - index));
+    const text = truncateToTokens(line, allowance - 1).text;
+    lines.push(text);
+    remaining -= estimateTokens(text) + 1;
   }
-  if (estimateTokens(context) > config.injection.budget_tokens) context = "";
+  const context = [injection.text, ...lines].filter(Boolean).join("\n");
+  assert(lines.length <= MAX_MAINTENANCE_LINES);
+  assert(estimateTokens(context) <= config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS);
   const finalized = maintenance(input.session_id, project, host, config);
   return {
     context,

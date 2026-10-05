@@ -21,7 +21,7 @@ import {
   shellQuote,
   stat,
   statePath
-} from "./chunk-S7B7BPQR.mjs";
+} from "./chunk-2EYGJ7GZ.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -789,7 +789,7 @@ function readInboxEntries(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? parseInboxEntries(readFile(inboxFile)) : [],
     [],
-    "E_APPEND_FAILED"
+    "E_STORE_READ"
   );
 }
 function isSafeInboxPath(inboxFile) {

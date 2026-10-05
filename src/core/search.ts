@@ -94,11 +94,22 @@ function bestSnippet(tokens: ReadonlySet<string>, body: string): string {
     }
   }
   if (best === '') {
-    best = body.split('\n').find(l => l.trim() !== '')?.trim() ?? '';
+    best =
+      body
+        .split('\n')
+        .find((l) => l.trim() !== '')
+        ?.trim() ?? '';
   }
-  return best.length > SNIPPET_MAX_LENGTH
-    ? best.slice(0, SNIPPET_MAX_LENGTH - 1).trimEnd() + '…'
-    : best;
+  if (best.length <= SNIPPET_MAX_LENGTH) return best;
+  let end = SNIPPET_MAX_LENGTH - 1;
+  if (
+    best.charCodeAt(end - 1) >= 0xd800 &&
+    best.charCodeAt(end - 1) <= 0xdbff &&
+    best.charCodeAt(end) >= 0xdc00 &&
+    best.charCodeAt(end) <= 0xdfff
+  )
+    end--;
+  return best.slice(0, end).trimEnd() + '…';
 }
 
 function markdownDocs(

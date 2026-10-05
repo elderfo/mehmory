@@ -130,11 +130,11 @@ describe('mehmory doctor', () => {
     const ts = new Date().toISOString();
     writeStats([
       ...statsForEveryHook(),
-      { ts, project: 'p', hook: 'SessionStart', ms: 10, injected_tokens: 801 },
+      { ts, project: 'p', hook: 'SessionStart', ms: 10, injected_tokens: 951 },
       { ts, project: 'p', hook: 'UserPromptSubmit', ms: 400 },
     ]);
     const found = findings(fixture);
-    expect(found.get('kpi.injection')?.message).toContain('over the 800 combined budget');
+    expect(found.get('kpi.injection')?.message).toContain('over the 950 combined budget');
     expect(found.get('kpi.UserPromptSubmit')?.message).toContain('over its 100 ms budget');
   });
 

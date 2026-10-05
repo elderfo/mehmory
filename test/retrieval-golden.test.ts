@@ -92,14 +92,14 @@ describe('retrieval golden set', () => {
   });
 
   it('keeps the evergreen golden page fresh in both retrieval paths', () => {
-    const query = golden.queries.find((q) => q.id === 'evergreen-stewardship');
-    expect(query?.query).toBe('what is stewardship');
-    expect(matchPages('what is stewardship', PAGES_DIR, 3, OPTIONS)[0]).toEqual({
-      path: join(PAGES_DIR, 'stewardship.md'),
+    const query = golden.queries.find((q) => q.id === 'evergreen-custody');
+    expect(query?.query).toBe('what is custody');
+    expect(matchPages('what is custody', PAGES_DIR, 3, OPTIONS)[0]).toEqual({
+      path: join(PAGES_DIR, 'custody.md'),
       stale: false,
     });
     const hits = searchScope(
-      'what is stewardship',
+      'what is custody',
       'golden',
       {
         pagesDir: PAGES_DIR,
@@ -108,7 +108,7 @@ describe('retrieval golden set', () => {
       },
       OPTIONS
     ).hits;
-    expect(hits[0]).toMatchObject({ path: 'pages/stewardship.md', score: 8, stale: false });
+    expect(hits[0]).toMatchObject({ path: 'pages/custody.md', score: 8, stale: false });
   });
 
   it('reports measured recall for both retrieval entrypoints', () => {
@@ -128,6 +128,9 @@ describe('retrieval golden set', () => {
           return hits.some((hit) => hit.path.endsWith(q.expect));
         }).length / queries.length;
       const measured = [recallAt(1, queries), recallAt(3, queries)];
+      console.info(
+        `${queries === keyword ? 'keyword' : 'paraphrase'} (${String(queries.length)} queries): match Recall@1/3 ${measured.join('/')}; search ${[searchRecall(1), searchRecall(3)].join('/')}`
+      );
       expect(measured).toEqual(queries === keyword ? [1, 1] : [0, 0.25]);
       expect([searchRecall(1), searchRecall(3)]).toEqual(measured);
     }
@@ -147,11 +150,9 @@ describe('retrieval golden set', () => {
 // Measured, not guessed, against the fixture corpus with the grep matcher as of the
 // commit that added this file:
 //
-// Before shared scoring/decay exemptions:
-//   keyword    Recall@1 = 12/12 = 1.00     Recall@3 = 12/12 = 1.00
-// After, with an aged evergreen page and both entrypoints measured:
+// Before and after isolating the evergreen fixture as custody (avoiding "ship"
+// substring matches in stewardship's filename, title and body), both entrypoints:
 //   keyword    Recall@1 = 13/13 = 1.00     Recall@3 = 13/13 = 1.00
-// Both runs:
 //   paraphrase Recall@1 =  0/4  = 0.00     Recall@3 =  1/4  = 0.25
 //
 // Update these deliberately, in a commit that says what changed in retrieval — never to

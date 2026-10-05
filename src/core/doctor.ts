@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 import { mehmoryHome, statePath } from './home.js';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { pathExists, readFile, stat } from './fs.js';
 import { failOpen, shellQuote, type ErrorCode } from './errors.js';
 import { probeCodexInstall, type CodexProbe } from './codex-install.js';
 import { readInboxEntries } from './inbox.js';
@@ -19,6 +19,7 @@ import { HOOK_EVENTS, PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } f
 import { dirtyPaths, lastCommit, lastIntegrate, scopeFiles } from './status.js';
 import { readStats, summarize } from './stats-report.js';
 import type { MehmoryConfig } from './config.js';
+import { MAINTENANCE_ALLOWANCE_TOKENS } from './tokens.js';
 
 export type FindingLevel = 'ok' | 'warn' | 'error';
 
@@ -423,11 +424,18 @@ function checkHookLiveness(): readonly Finding[] {
 function checkScope(config: MehmoryConfig, cwd: string): readonly Finding[] {
   const key = resolveProjectKey(cwd);
   const files = scopeFiles(join(mehmoryHome(), 'projects', key));
-  for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
-    if (pathExists(pagesDir)) listDir(pagesDir);
-  }
-  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
   const findings: Finding[] = [];
+  for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
+    if (pathExists(pagesDir) && !stat(pagesDir)?.isDirectory()) {
+      findings.push({
+        check: 'scope',
+        level: 'error',
+        message: `${pagesDir} is not a directory`,
+        fix: `mv -n ${shellQuote(pagesDir)} ${shellQuote(`${pagesDir}.bak`)} && mkdir ${shellQuote(pagesDir)}`,
+      });
+    }
+  }
+  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
 
   const oldest = entries.map(e => e.ts).sort()[0];
   const ageMs = oldest === undefined ? 0 : Date.now() - Date.parse(oldest);
@@ -533,11 +541,12 @@ function checkKpiBudgets(config: MehmoryConfig): readonly Finding[] {
   const over = (actual: number | undefined, budget: number): boolean =>
     actual !== undefined && actual > budget;
 
-  if (over(report.injectedTokensP95, config.injection.budget_tokens)) {
+  const injectionBudget = config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS;
+  if (over(report.injectedTokensP95, injectionBudget)) {
     findings.push({
       check: 'kpi.injection',
       level: 'warn',
-      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(config.injection.budget_tokens)} combined budget`,
+      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(injectionBudget)} combined budget`,
       fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
     });
   }
