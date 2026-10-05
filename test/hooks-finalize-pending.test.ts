@@ -35,7 +35,8 @@ const CODEX_ARGS = ['codex', '--mehmory'] as const;
 /** A real rollout uuid from the captured payloads — Codex reports it as `session_id`. */
 const ABANDONED = '019fbf44-4f17-7a53-8914-1002bc65fbae';
 
-const ROLLOUT = [{ text: 'We decided to use fly.io for deploys.' }];
+const DECISION = 'We decided to use fly.io for deploys.';
+const ROLLOUT = [{ text: DECISION }];
 
 /**
  * Age a session's state past `PENDING_FINALIZE_IDLE_MS` so it reads as abandoned rather
@@ -108,7 +109,7 @@ describe('finalization at the next session start (#24)', () => {
     expect(entries.length).toBeGreaterThan(0);
     expect(entries.every((entry) => entry.host === 'codex')).toBe(true);
     expect(entries.every((entry) => entry.src === ABANDONED)).toBe(true);
-    expect(entries.some((entry) => entry.text.includes('fly.io'))).toBe(true);
+    expect(entries.some((entry) => entry.text.includes(DECISION))).toBe(true);
 
     // Exactly once: one log line, one commit, and the dead session's state is gone.
     expect(endLogLines(key)).toBe(1);
@@ -320,7 +321,7 @@ describe('PreCompact payload guard (#24)', () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toBe('');
     const entries = parseInboxEntries(readIfPresent(paths(key).inbox));
-    expect(entries.some((entry) => entry.text.includes('fly.io'))).toBe(true);
+    expect(entries.some((entry) => entry.text.includes(DECISION))).toBe(true);
     expect(entries.every((entry) => entry.host === 'codex')).toBe(true);
   });
 
