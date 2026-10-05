@@ -65,13 +65,17 @@ describe('loadConfig', () => {
     });
   });
 
-  it('rejects a config whose pi toggle has the wrong type, like any other host', () => {
+  it('defaults an invalid pi toggle without enabling a disabled codex host', () => {
     writeFileSync(
       join(tempDir, 'config.json'),
       JSON.stringify({ hosts: { codex: { enabled: false }, pi: { enabled: 'no' } } })
     );
 
-    expect(loadConfig().hosts.codex.enabled).toBe(true);
+    expect(loadConfig().hosts).toEqual({
+      'claude-code': { enabled: true },
+      codex: { enabled: false },
+      pi: { enabled: true },
+    });
   });
 
   it('detects missing config.json and returns full defaults without throwing', () => {
@@ -160,8 +164,11 @@ describe('loadConfig', () => {
 
     const config = loadConfig();
 
-    // Should return defaults
     expect(config.injection.budget_tokens).toBe(800);
+    const log = readFileSync(join(tempDir, '.state/errors.log'), 'utf8');
+    expect(log.match(/E_CONFIG_PARSE/g)).toHaveLength(1);
+    expect(log).toContain('config.json root is not an object.');
+    expect(config).not.toHaveProperty('0');
   });
 
   it('defaults the run-2 keys (criterion 19)', () => {
@@ -346,6 +353,121 @@ describe('loadConfig', () => {
 
     // But with the same values
     expect(config1).toEqual(config2);
+  });
+
+  it('keeps aliases and valid siblings when one key has an invalid type', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        identity: { aliases: { 'github.com/owner/repo': 'stable-key' } },
+        decay: { archive_days: 45, purge_days: 'invalid' },
+        secrets: { patterns: false, whitelist: ['fake-whitelisted-value'] },
+        injection: { budget_tokens: 1200 },
+      })
+    );
+
+    const config = loadConfig();
+    expect(config.identity.aliases).toEqual({ 'github.com/owner/repo': 'stable-key' });
+    expect(config.decay).toEqual({ enabled: true, archive_days: 45, purge_days: 90 });
+    expect(config.secrets).toEqual({ patterns: [], whitelist: ['fake-whitelisted-value'] });
+    expect(config.injection.budget_tokens).toBe(1200);
+    const log = readFileSync(join(tempDir, '.state/errors.log'), 'utf8');
+    expect(log.match(/E_CONFIG_PARSE/g)).toHaveLength(1);
+    expect(log).toContain('decay.purge_days');
+    expect(log).toContain('secrets.patterns');
+    expect(log).not.toContain('fake-whitelisted-value');
+  });
+
+  it('defaults an invalid group without dropping valid groups', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        identity: { aliases: { 'github.com/owner/repo': 'stable-key' } },
+        hooks: [],
+        stop: { capture_threshold: 2 },
+      })
+    );
+    const config = loadConfig();
+    expect(config.identity.aliases).toEqual({ 'github.com/owner/repo': 'stable-key' });
+    expect(config.hooks.stop.enabled).toBe(true);
+    expect(config.stop.capture_threshold).toBe(2);
+    expect(readFileSync(join(tempDir, '.state/errors.log'), 'utf8')).toContain('hooks');
+  });
+
+  it('keeps valid alias entries when another alias is wrongly typed', () => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        identity: { aliases: { 'github.com/owner/repo': 'stable-key', 'bad-alias': 123 } },
+      })
+    );
+    expect(loadConfig().identity.aliases).toEqual({ 'github.com/owner/repo': 'stable-key' });
+    expect(readFileSync(join(tempDir, '.state/errors.log'), 'utf8')).toContain(
+      'identity.aliases.bad-alias'
+    );
+  });
+
+  it.each([
+    ['injection', 'budget_tokens', 0, 800],
+    ['injection', 'budget_tokens', 8001, 800],
+    ['injection', 'budget_tokens', 1.5, 800],
+    ['decay', 'archive_days', -1, 60],
+    ['decay', 'purge_days', -1, 90],
+    ['stop', 'capture_threshold', -1, 15],
+    ['stop', 'capture_threshold', 1.5, 15],
+    ['inbox', 'nudge_entries', -1, 10],
+    ['inbox', 'nudge_bytes', -1, 8192],
+    ['session_state', 'max_age_days', -1, 14],
+    ['match', 'jaccard', -0.1, 0.7],
+    ['match', 'jaccard', 1.1, 0.7],
+    ['match', 'cache_ttl_ms', -1, 300000],
+    ['lock', 'retry_count', -1, 50],
+    ['lock', 'retry_delay_ms', -1, 100],
+    ['lock', 'stale_ms', -1, 30000],
+    ['queue', 'max_claims', -1, 3],
+    ['queue', 'claims_per_start', -1, 1],
+    ['queue', 'claims_per_start', 1.5, 1],
+    ['queue', 'stale_ms', -1, 30000],
+    ['distill', 'max_loss_percent', -1, 10],
+    ['distill', 'max_loss_percent', 101, 10],
+    ['log', 'rotation_size_mb', -1, 5],
+    ['log', 'rotation_size_mb', 0, 5],
+    ['warning', 'rate_limit_ms', -1, 3600000],
+  ])('defaults only out-of-range %s.%s (%s)', (group, key, value, fallback) => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        [group]: { [key]: value },
+        identity: { aliases: { 'github.com/owner/repo': 'stable-key' } },
+      })
+    );
+    const config = loadConfig();
+    const settings = config[group as keyof MehmoryConfig] as unknown as Record<string, unknown>;
+    expect(settings[key]).toBe(fallback);
+    expect(config.identity.aliases).toEqual({ 'github.com/owner/repo': 'stable-key' });
+    const log = readFileSync(join(tempDir, '.state/errors.log'), 'utf8');
+    expect(log.match(/E_CONFIG_PARSE/g)).toHaveLength(1);
+    expect(log).toContain(`${group}.${key}`);
+  });
+
+  it.each([1, 8000])('accepts the injection budget boundary %s', (budget) => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({ injection: { budget_tokens: budget } })
+    );
+    expect(loadConfig().injection.budget_tokens).toBe(budget);
+  });
+
+  it.each([0, 1])('accepts the Jaccard boundary %s and zero maintenance claims', (jaccard) => {
+    writeFileSync(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        match: { jaccard },
+        queue: { claims_per_start: 0 },
+      })
+    );
+    expect(loadConfig().match.jaccard).toBe(jaccard);
+    expect(loadConfig().queue.claims_per_start).toBe(0);
   });
 
   it('allows all bounds to be overridden via config', () => {

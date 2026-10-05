@@ -21,120 +21,10 @@ import {
   shellQuote,
   stat,
   statePath
-} from "./chunk-S7B7BPQR.mjs";
+} from "./chunk-3R4TR2B4.mjs";
 
 // src/core/config.ts
 import { join } from "path";
-
-// src/schema/format.ts
-import { createHash } from "crypto";
-
-// src/core/agent-name.ts
-var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
-var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
-var MAX_AGENT_NAME_LENGTH = 64;
-function isSafeAgentName(name) {
-  if (name.length === 0 || name.length > MAX_AGENT_NAME_LENGTH) return false;
-  if (!SAFE_AGENT_NAME.test(name)) return false;
-  if (name.startsWith(".")) return false;
-  return !RESERVED_AGENT_NAMES.includes(name);
-}
-
-// src/schema/format.ts
-var FRONTMATTER_DIVIDER = "---";
-function readFrontmatter(contents) {
-  const lines = contents.split("\n");
-  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
-  const fields = {};
-  for (const line of lines.slice(1)) {
-    if (line.trim() === FRONTMATTER_DIVIDER) break;
-    const separator = line.indexOf(":");
-    if (separator < 0) continue;
-    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-  return fields;
-}
-var MS_PER_DAY = 24 * 60 * 60 * 1e3;
-function pageAgeDays(contents, now) {
-  const updated = readFrontmatter(contents)["updated"];
-  if (!updated) return null;
-  const parsed = Date.parse(updated);
-  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
-}
-var ARCHIVE_DIVIDER = "## Archive";
-var ARCHIVE_DIR = "archive";
-var STALE_SCORE_MULTIPLIER = 0.7;
-function isStalePage(contents, now, staleAfterDays) {
-  const age = pageAgeDays(contents, now);
-  return age !== null && age > staleAfterDays;
-}
-var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
-function parseIndexLine(line) {
-  const m = INDEX_LINE_PATTERN.exec(line.trimEnd());
-  if (!m?.[1]) return void 0;
-  return { slug: m[1], summary: m[2] ?? "" };
-}
-var INBOX_ENTRY_ID_LENGTH = 16;
-var INBOX_HOSTS = ["claude-code", "codex", "pi"];
-var DEFAULT_INBOX_HOST = "claude-code";
-var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
-function inboxEntryId(seed) {
-  return createHash("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
-}
-function serializeInboxEntry(entry) {
-  const text = entry.text.replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/--(!?)>/g, "--$1\\>");
-  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
-    throw new Error("inbox entry source contains unsafe metadata characters");
-  }
-  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
-    throw new Error("inbox entry metadata is malformed");
-  }
-  const host = entry.host ?? DEFAULT_INBOX_HOST;
-  const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
-}
-function parseInboxEntries(content) {
-  const entries = [];
-  for (const line of content.split("\n")) {
-    const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
-    if (!m) continue;
-    const [, text, id, src, rawHost, rawAgent, ts] = m;
-    if (text === void 0 || id === void 0 || src === void 0 || ts === void 0) {
-      continue;
-    }
-    const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
-    const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
-    entries.push({
-      id,
-      // One pass prevents an escaped backslash from becoming a second escape.
-      text: text.replace(
-        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
-        (_match, escape, bang) => {
-          if (escape === void 0) return `--${bang ?? ""}>`;
-          switch (escape) {
-            case "n":
-              return "\n";
-            case "r":
-              return "\r";
-            case "u2028":
-              return "\u2028";
-            case "u2029":
-              return "\u2029";
-            default:
-              return "\\";
-          }
-        }
-      ),
-      src,
-      host,
-      ...agent !== void 0 ? { agent } : {},
-      ts
-    });
-  }
-  return entries;
-}
-
-// src/core/config.ts
 var MAX_INJECTION_BUDGET_TOKENS = 8e3;
 var DEFAULTS = {
   injection: {
@@ -146,18 +36,7 @@ var DEFAULTS = {
     purge_days: 90
   },
   secrets: {
-    patterns: [
-      // AWS keys: AKIA... or similar
-      /AKIA[0-9A-Z]{16}/,
-      // GitHub tokens: ghp_ or ghs_ or ghu_ or gho_
-      /gh[psuor]_[A-Za-z0-9_]{36,255}/,
-      // Generic bearer tokens
-      /bearer\s+[A-Za-z0-9._-]{20,}/i,
-      // Private key blocks
-      /-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----/,
-      // .env-shaped KEY=value
-      /^[A-Z_][A-Z0-9_]*=.+$/m
-    ].map((p) => p.toString()),
+    patterns: [],
     whitelist: []
   },
   stop: {
@@ -233,55 +112,68 @@ function loadConfig() {
     logError(createConfigParseError(`config.json is not valid JSON (${message}).`));
     return deepClone(DEFAULTS);
   }
-  if (typeof userConfig !== "object" || userConfig === null) {
+  if (!isRecord(userConfig)) {
     logError(createConfigParseError("config.json root is not an object."));
     return deepClone(DEFAULTS);
   }
-  const merged = deepMerge(
-    deepClone(DEFAULTS),
-    userConfig
-  );
-  if (!isValidConfigShape(merged)) {
-    logError(createConfigParseError("config.json contains values with invalid types."));
-    return deepClone(DEFAULTS);
-  }
-  const secrets = merged["secrets"];
-  if (typeof secrets !== "object" || secrets === null || Array.isArray(secrets)) {
-    merged["secrets"] = deepClone(DEFAULTS.secrets);
-  } else {
-    const secretConfig = secrets;
-    if (!Array.isArray(secretConfig["patterns"])) secretConfig["patterns"] = [];
-    if (!Array.isArray(secretConfig["whitelist"])) secretConfig["whitelist"] = [];
+  const merged = deepMerge(deepClone(DEFAULTS), userConfig);
+  const invalidKeys = [];
+  defaultInvalidKeys(merged, DEFAULTS, invalidKeys);
+  if (invalidKeys.length > 0) {
+    logError({
+      ...createConfigParseError(
+        `config.json contains invalid values at: ${invalidKeys.join(", ")}.`
+      ),
+      consequence: "Only invalid settings use defaults; valid settings are still applied."
+    });
   }
   return merged;
 }
 var POLLUTING_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-function isValidConfigShape(config) {
-  const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-  const finite = (value) => typeof value === "number" && Number.isFinite(value);
-  const toggle = (value) => record(value) && typeof value["enabled"] === "boolean";
-  const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
-  const aliases = (value) => record(value) && Object.values(value).every((item) => typeof item === "string");
-  const group = (name) => {
-    const value = config[name];
-    return record(value) ? value : void 0;
-  };
-  const injection = group("injection");
-  const decay = group("decay");
-  const secrets = group("secrets");
-  const stop = group("stop");
-  const hooks = group("hooks");
-  const hosts = group("hosts");
-  const inbox = group("inbox");
-  const sessionState = group("session_state");
-  const match = group("match");
-  const identity = group("identity");
-  const lock = group("lock");
-  const queue = group("queue");
-  const distill = group("distill");
-  const log = group("log");
-  const warning = group("warning");
-  return injection !== void 0 && Number.isInteger(injection["budget_tokens"]) && injection["budget_tokens"] >= 1 && injection["budget_tokens"] <= MAX_INJECTION_BUDGET_TOKENS && decay !== void 0 && typeof decay["enabled"] === "boolean" && finite(decay["archive_days"]) && finite(decay["purge_days"]) && secrets !== void 0 && strings(secrets["patterns"]) && strings(secrets["whitelist"]) && stop !== void 0 && finite(stop["capture_threshold"]) && hooks !== void 0 && ["session_start", "user_prompt_submit", "stop", "pre_compact", "session_end"].every((key) => toggle(hooks[key])) && hosts !== void 0 && INBOX_HOSTS.every((host) => toggle(hosts[host])) && inbox !== void 0 && finite(inbox["nudge_entries"]) && finite(inbox["nudge_bytes"]) && sessionState !== void 0 && finite(sessionState["max_age_days"]) && match !== void 0 && finite(match["jaccard"]) && finite(match["cache_ttl_ms"]) && identity !== void 0 && aliases(identity["aliases"]) && typeof identity["agent"] === "string" && lock !== void 0 && finite(lock["retry_count"]) && finite(lock["retry_delay_ms"]) && finite(lock["stale_ms"]) && queue !== void 0 && finite(queue["max_claims"]) && finite(queue["stale_ms"]) && finite(queue["claims_per_start"]) && distill !== void 0 && finite(distill["max_loss_percent"]) && log !== void 0 && finite(log["rotation_size_mb"]) && warning !== void 0 && finite(warning["rate_limit_ms"]);
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+var INTEGER_KEYS = /* @__PURE__ */ new Set([
+  "stop.capture_threshold",
+  "inbox.nudge_entries",
+  "inbox.nudge_bytes",
+  "lock.retry_count",
+  "queue.max_claims",
+  "queue.claims_per_start"
+]);
+function validNumber(value, path) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return false;
+  if (path === "injection.budget_tokens") {
+    return Number.isInteger(value) && value >= 1 && value <= MAX_INJECTION_BUDGET_TOKENS;
+  }
+  if (path === "match.jaccard") return value <= 1;
+  if (path === "distill.max_loss_percent") return value <= 100;
+  if (path === "log.rotation_size_mb") return value > 0;
+  return !INTEGER_KEYS.has(path) || Number.isSafeInteger(value);
+}
+function defaultInvalidKeys(config, defaults, invalidKeys, prefix = "") {
+  for (const [key, fallback] of Object.entries(defaults)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const value = config[key];
+    if (isRecord(fallback) && isRecord(value)) {
+      if (path === "identity.aliases") {
+        for (const [alias, target] of Object.entries(value)) {
+          if (typeof target !== "string") {
+            invalidKeys.push(`${path}.${alias}`);
+            Reflect.deleteProperty(value, alias);
+          }
+        }
+      } else {
+        defaultInvalidKeys(value, fallback, invalidKeys, path);
+      }
+      continue;
+    }
+    const valid = Array.isArray(fallback) ? Array.isArray(value) && value.every((item) => typeof item === "string") : typeof fallback === "number" ? validNumber(value, path) : !isRecord(fallback) && typeof value === typeof fallback;
+    if (!valid) {
+      invalidKeys.push(path);
+      config[key] = deepClone(fallback);
+    }
+  }
 }
 function deepMerge(target, source) {
   for (const key in source) {
@@ -291,10 +183,7 @@ function deepMerge(target, source) {
       if (sourceValue !== null && typeof sourceValue === "object" && !Array.isArray(sourceValue) && // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so an inherited
       // member would steer the recursion into a shared object rather than the config.
       Object.prototype.hasOwnProperty.call(target, key) && typeof target[key] === "object" && target[key] !== null && !Array.isArray(target[key])) {
-        deepMerge(
-          target[key],
-          sourceValue
-        );
+        deepMerge(target[key], sourceValue);
       } else {
         target[key] = sourceValue;
       }
@@ -319,6 +208,17 @@ function deepClone(obj) {
     }
   }
   return cloned;
+}
+
+// src/core/agent-name.ts
+var SAFE_AGENT_NAME = /^[a-z0-9._-]+$/;
+var RESERVED_AGENT_NAMES = ["global", "projects", "agents", "all"];
+var MAX_AGENT_NAME_LENGTH = 64;
+function isSafeAgentName(name) {
+  if (name.length === 0 || name.length > MAX_AGENT_NAME_LENGTH) return false;
+  if (!SAFE_AGENT_NAME.test(name)) return false;
+  if (name.startsWith(".")) return false;
+  return !RESERVED_AGENT_NAMES.includes(name);
 }
 
 // src/core/agent.ts
@@ -355,12 +255,12 @@ function describe(value) {
 }
 
 // src/core/lock.ts
-import { createHash as createHash3, randomBytes } from "crypto";
+import { createHash as createHash2, randomBytes } from "crypto";
 import { join as join3 } from "path";
 
 // src/core/identity.ts
 import { execFileSync as execFileSync2 } from "child_process";
-import { createHash as createHash2 } from "crypto";
+import { createHash } from "crypto";
 
 // src/core/git.ts
 import { execFileSync } from "child_process";
@@ -569,7 +469,7 @@ function isSafeProjectKey(key) {
 }
 function safeRemoteKey(normalizedRemote) {
   if (isSafeProjectKey(normalizedRemote)) return normalizedRemote;
-  const hash = createHash2("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
+  const hash = createHash("sha256").update(normalizedRemote).digest("hex").slice(0, 12);
   return `remote/${hash}`;
 }
 function resolveProjectKey(cwd = process.cwd()) {
@@ -593,7 +493,7 @@ function resolveProjectKey(cwd = process.cwd()) {
   }
   const base = tryGetGitToplevel(cwd) ?? cwd;
   const resolvedPath = realpath(base);
-  const hash = createHash2("sha256").update(resolvedPath).digest("hex").slice(0, 12);
+  const hash = createHash("sha256").update(resolvedPath).digest("hex").slice(0, 12);
   const pathKey = `local/${hash}`;
   const config = loadConfig();
   const aliasKey = configuredAlias(config, pathKey);
@@ -673,7 +573,7 @@ var retryWait = new Int32Array(new SharedArrayBuffer(4));
 var SESSION_LOCK_RETRY_COUNT = 10;
 var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
-  const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
+  const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash2("sha256").update(key).digest("hex");
   return join3(statePath("locks"), name + ".lock");
 }
 function reclaimLock(path, observed, marker, owner) {
@@ -784,6 +684,103 @@ function withSessionLock(sessionId, fn) {
 
 // src/core/inbox.ts
 import { dirname, relative, resolve, sep } from "path";
+
+// src/schema/format.ts
+import { createHash as createHash3 } from "crypto";
+var FRONTMATTER_DIVIDER = "---";
+function readFrontmatter(contents) {
+  const lines = contents.split("\n");
+  if (lines[0]?.trim() !== FRONTMATTER_DIVIDER) return {};
+  const fields = {};
+  for (const line of lines.slice(1)) {
+    if (line.trim() === FRONTMATTER_DIVIDER) break;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    fields[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return fields;
+}
+var MS_PER_DAY = 24 * 60 * 60 * 1e3;
+function pageAgeDays(contents, now) {
+  const updated = readFrontmatter(contents)["updated"];
+  if (!updated) return null;
+  const parsed = Date.parse(updated);
+  return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
+}
+var ARCHIVE_DIVIDER = "## Archive";
+var ARCHIVE_DIR = "archive";
+var STALE_SCORE_MULTIPLIER = 0.7;
+function isStalePage(contents, now, staleAfterDays) {
+  const age = pageAgeDays(contents, now);
+  return age !== null && age > staleAfterDays;
+}
+var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
+function parseIndexLine(line) {
+  const m = INDEX_LINE_PATTERN.exec(line.trimEnd());
+  if (!m?.[1]) return void 0;
+  return { slug: m[1], summary: m[2] ?? "" };
+}
+var INBOX_ENTRY_ID_LENGTH = 16;
+var INBOX_HOSTS = ["claude-code", "codex", "pi"];
+var DEFAULT_INBOX_HOST = "claude-code";
+var INBOX_ENTRY_PATTERN = /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
+function inboxEntryId(seed) {
+  return createHash3("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
+}
+function serializeInboxEntry(entry) {
+  const text = entry.text.replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/--(!?)>/g, "--$1\\>");
+  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
+    throw new Error("inbox entry source contains unsafe metadata characters");
+  }
+  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
+    throw new Error("inbox entry metadata is malformed");
+  }
+  const host = entry.host ?? DEFAULT_INBOX_HOST;
+  const agent = entry.agent !== void 0 && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : "";
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
+}
+function parseInboxEntries(content) {
+  const entries = [];
+  for (const line of content.split("\n")) {
+    const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
+    if (!m) continue;
+    const [, text, id, src, rawHost, rawAgent, ts] = m;
+    if (text === void 0 || id === void 0 || src === void 0 || ts === void 0) {
+      continue;
+    }
+    const host = rawHost !== void 0 && INBOX_HOSTS.includes(rawHost) ? rawHost : DEFAULT_INBOX_HOST;
+    const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
+    entries.push({
+      id,
+      // One pass prevents an escaped backslash from becoming a second escape.
+      text: text.replace(
+        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
+        (_match, escape, bang) => {
+          if (escape === void 0) return `--${bang ?? ""}>`;
+          switch (escape) {
+            case "n":
+              return "\n";
+            case "r":
+              return "\r";
+            case "u2028":
+              return "\u2028";
+            case "u2029":
+              return "\u2029";
+            default:
+              return "\\";
+          }
+        }
+      ),
+      src,
+      host,
+      ...agent !== void 0 ? { agent } : {},
+      ts
+    });
+  }
+  return entries;
+}
+
+// src/core/inbox.ts
 function readInboxEntries(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? parseInboxEntries(readFile(inboxFile)) : [],
@@ -1303,31 +1300,60 @@ function isPaused(sessionId) {
 // src/core/redact.ts
 import { join as join6 } from "path";
 var REDACTION_PLACEHOLDER = "[REDACTED]";
+var MAX_INPUT_BYTES = 256 * 1024;
+var SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|(?!sharedaccesskey\b)[a-z0-9]*(?:token|password|passwd|secret|(?:api|secret|private|access|signing|ssh)key)|[a-z][a-z0-9_]*_(?:key|token|password|passwd|secret))`;
+var CAMEL_SECRET_NAME = String.raw`(?!(?:AccountKey|SharedAccessKey)\b)[A-Za-z][A-Za-z0-9]*(?:Key|Token|Password|Passwd|Secret)`;
+var VALUE_DELIMITER = String.raw`[\s,};#)"'&>]|$`;
+var NON_SECRET_VALUE = /^(?:true|false|str|int|float|bool|bytes|string|integer|optional|any|number|boolean|bigint|symbol|object|undefined|null|unknown|never|void|[+-]?\d{1,19}(?:\.\d+)?)$/;
+var BARE_VALUE = String.raw`[A-Za-z0-9_./+@!$%*?~-]+(?::[A-Za-z0-9_./+@!$%*?~-]+)?=*`;
+var QUOTED_VALUE = String.raw`(?:\\"(?:\\(?!")[\s\S]|[^"\\\r\n])+\\"|"(?:\\.|[^"\\\r\n])+"|'(?:\\.|[^'\\\r\n])+'|\x60(?:\\[\s\S]|[^\x60\\])+\x60)`;
+var ENV_VALUE = String.raw`[^\s"'&>;)\x60]+`;
+var ASSIGNMENT_PATTERNS = [
+  [SECRET_NAME, "gim"],
+  [CAMEL_SECRET_NAME, "gm"]
+].flatMap(([name, flags]) => [
+  // Try structured values first, then the shell stop set for arbitrary '=' values.
+  // Bare ':' values in prose still need a structural delimiter, not the next word.
+  new RegExp(
+    String.raw`(?:\bexport\s+)?(?:\\?["'])?\b${name}\b(?:\\?["'])?\s*(?:[:=]\s*${QUOTED_VALUE}|=\s*${BARE_VALUE}(?=${VALUE_DELIMITER})|=\s*${ENV_VALUE}|:\s*${BARE_VALUE}(?=[ \t]*(?:[,};#)"'&>]|$)))`,
+    flags
+  ),
+  new RegExp(
+    String.raw`(?<=^|[{(,;])[ \t]*${name}\b\s*:\s*${BARE_VALUE}(?=${VALUE_DELIMITER})`,
+    flags
+  )
+]);
 var SECRET_PATTERNS = [
-  // AWS: AKIA... access keys (20 chars after AKIA)
-  /AKIA[0-9A-Z]{16}/gi,
-  // AWS: secret access keys (40 chars, base64-like)
+  // AWS access keys, including temporary STS credentials.
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
   /aws_secret_access_key\s*=\s*([A-Za-z0-9/+=]{40})/gi,
-  // GitHub: ghp_ personal access tokens (36 chars after ghp_)
-  /ghp_[A-Za-z0-9_]{36}/gi,
-  // GitHub: ghs_ OAuth tokens (37 chars after ghs_)
-  /ghs_[A-Za-z0-9_]{37}/gi,
-  // GitHub: ghu_ user tokens (37 chars after ghu_)
-  /ghu_[A-Za-z0-9_]{37}/gi,
-  // Generic bearer token: Bearer <token> (assumes token is 32+ chars of non-space)
-  /bearer\s+[A-Za-z0-9._-]{32,}/gi,
-  // Private key blocks: -----BEGIN...-----END
-  /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----/gi,
-  // .env-style KEY=value (requires KEY to be UPPERCASE_WORD and value to be non-empty, non-quoted)
-  // Excludes lines like PATH=/usr/bin, common env vars
-  /^([A-Z][A-Z0-9_]*(?<!PATH|HOME|USER|SHELL|LANG|TERM))\s*=\s*([^\s'"]+)$/gm,
-  // URL-embedded credentials: scheme://user:pass@host
-  // eslint-disable-next-line no-useless-escape
-  /(?:https?|ftp|ssh):\/\/[A-Za-z0-9._%-]+:[A-Za-z0-9!@#$%^&*()_+=\[\]{}|;':",./<>?-]{1,}@/gi,
-  // API keys (APIKEY=... or api_key=..., common pattern)
-  /(api[_-]?key|apikey)\s*=\s*([A-Za-z0-9_-]{20,})/gi,
-  // Tokens in common formats: token=..., access_token=...
-  /(access[_-]?token|token|auth[_-]?token)\s*=\s*([A-Za-z0-9_-]{20,})/gi
+  /gh[psuor]_[A-Za-z0-9_]{36,}/gi,
+  /github_pat_[A-Za-z0-9_]{22,}/gi,
+  /sk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/g,
+  /\bsk-[A-Za-z0-9]{48}\b/g,
+  /\b(?:[sr]k_(?:live|test)_|whsec_)[A-Za-z0-9]{16,}/g,
+  /\bAIza[0-9A-Za-z_-]{35}\b/g,
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /\bnpm_[A-Za-z0-9]{36}\b/g,
+  /\bglpat-[A-Za-z0-9_-]{20,}/g,
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43,}/g,
+  /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9]+\/[A-Za-z0-9]+\/[A-Za-z0-9]+/g,
+  /\b(?:AccountKey|SharedAccessKey)\s*=\s*[A-Za-z0-9/+]{16,}=*/gi,
+  /Authorization\s*:\s*Basic\s+[A-Za-z0-9/+]+=*/gi,
+  /xox[abposr]-\d+-[A-Za-z0-9-]{10,}/g,
+  /bearer\s+[A-Za-z0-9._~+/-]{20,}=*/gi,
+  // Distillation may cut off the footer; a public-key footer must not end the match.
+  // Unknown body separators need a nearby footer, so prose-only headers stay readable.
+  /-----BEGIN\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----(?:[ \t]*(?:\r?\n|\\n|\\r\\n|[A-Za-z0-9+/=]{20,})[\s\S]*?(?:-----END\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----|$)|[\s\S]{0,8192}?-----END\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----)/gi,
+  // Non-secret environment settings and example identifiers stay readable.
+  /^(?![A-Z_][A-Z0-9_]*_EXAMPLE\s*=)([A-Z_][A-Z0-9_]*(?<!PATH|HOME|USER|SHELL|LANG|TERM))\s*=\s*(?:[^\s'"]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*')$/gm,
+  new RegExp(
+    String.raw`(?<![A-Za-z0-9_])(?:export\s+)?(?:SECRET_KEY_BASE|PASSPHRASE|[A-Z_][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|PASS|PASSPHRASE|AUTH|CREDENTIALS?|_PIN))=(?:\\"(?:\\(?!")[\s\S]|[^"\\\r\n])*\\"|\\"[^\s"]*|"(?:\\.|[^"\\\r\n])*"|\$?'(?:\\.|[^'\\\r\n])*'|${ENV_VALUE})`,
+    "g"
+  ),
+  // A single slash can be password material; '//' stops scans at the next URL.
+  /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:(?:(?:[^\s/"',]|\/(?!\/))+@|(?:[^\s/"]|\/(?!\/))+@)/gi,
+  ...ASSIGNMENT_PATTERNS
 ];
 var userPatternCache = /* @__PURE__ */ new Map();
 function compileUserPatterns(patterns) {
@@ -1340,7 +1366,7 @@ function compileUserPatterns(patterns) {
     const parsed = /^\/(.*)\/([a-z]*)$/s.exec(raw);
     try {
       if (!parsed?.[1]) throw new Error("not in /source/flags form");
-      if (parsed[1].length > 256 || (parsed[1].match(/[+*]|\\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 || /\\[1-9]|\([^()]*[+*{][^)]*\)[+*{]/.test(parsed[1]) || /\([^()]*\|[^()]*\)[+*]/.test(parsed[1]) || /\(\?<?[=!]/.test(parsed[1])) {
+      if (parsed[1].length > 256 || (parsed[1].match(/[+*]|\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 || /\\[1-9]|\([^()]*[+*{][^)]*\)[+*{]/.test(parsed[1]) || /\([^()]*\|[^()]*\)[+*]/.test(parsed[1]) || /\(\?<?[=!]/.test(parsed[1])) {
         throw new Error("pattern is too complex or too long");
       }
       const flags = parsed[2] ?? "";
@@ -1372,17 +1398,28 @@ function whitelistRanges(text, whitelist) {
 function isExempt(start, end, ranges) {
   return ranges.some(([from, to]) => from <= start && end <= to);
 }
+function isNonSecretAssignment(match) {
+  const assignment = /^(?:export\s+)?(?:\\?["'])?([A-Za-z][A-Za-z0-9_-]*)(?:\\?["'])?\s*[:=]\s*(\S+)$/i.exec(
+    match.trim()
+  );
+  if (!assignment) return false;
+  const [, name, value] = assignment;
+  if (!name || !value) return false;
+  return name === value || NON_SECRET_VALUE.test(value);
+}
 function applyPatterns(text, extra, whitelist) {
   let result = text;
   for (const pattern of [...SECRET_PATTERNS, ...extra]) {
     pattern.lastIndex = 0;
-    if (whitelist.length === 0) {
+    const isAssignment = ASSIGNMENT_PATTERNS.includes(pattern);
+    if (whitelist.length === 0 && !isAssignment) {
       result = result.replace(pattern, REDACTION_PLACEHOLDER);
       continue;
     }
     const ranges = whitelistRanges(result, whitelist);
     result = result.replace(pattern, (...args) => {
       const match = String(args[0]);
+      if (isAssignment && isNonSecretAssignment(match)) return match;
       const offset = Number(args[args.length - 2]);
       return isExempt(offset, offset + match.length, ranges) ? match : REDACTION_PLACEHOLDER;
     });
@@ -1394,6 +1431,9 @@ function redact(text, options = {}) {
     return text ?? "";
   }
   try {
+    if (text.length > MAX_INPUT_BYTES || Buffer.byteLength(text, "utf8") > MAX_INPUT_BYTES) {
+      throw new Error("redaction input exceeds limit");
+    }
     const candidate = options;
     const patterns = Array.isArray(candidate.patterns) ? candidate.patterns.filter((entry) => typeof entry === "string") : [];
     const whitelist = Array.isArray(candidate.whitelist) ? candidate.whitelist.filter(
@@ -1402,21 +1442,20 @@ function redact(text, options = {}) {
     const extra = compileUserPatterns(patterns);
     return applyPatterns(text, extra, whitelist);
   } catch {
-    return text;
+    logError({
+      code: "E_REDACT_FAILED",
+      kind: "informational",
+      what: "Secret filtering failed or input exceeded 256 KiB",
+      consequence: "The entire text was redacted"
+    });
+    return REDACTION_PLACEHOLDER;
   }
 }
 
 export {
-  isSafeAgentName,
-  readFrontmatter,
-  pageAgeDays,
-  ARCHIVE_DIVIDER,
-  ARCHIVE_DIR,
-  parseIndexLine,
-  INBOX_HOSTS,
-  inboxEntryId,
   MAX_INJECTION_BUDGET_TOKENS,
   loadConfig,
+  isSafeAgentName,
   currentAgentName,
   runStoreGit,
   commitPaths,
@@ -1425,6 +1464,13 @@ export {
   withProjectLock,
   tryProjectLock,
   withSessionLock,
+  readFrontmatter,
+  pageAgeDays,
+  ARCHIVE_DIVIDER,
+  ARCHIVE_DIR,
+  parseIndexLine,
+  INBOX_HOSTS,
+  inboxEntryId,
   readInboxEntries,
   appendInboxEntries,
   clearInboxEntries,

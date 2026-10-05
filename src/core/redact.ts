@@ -2,7 +2,7 @@
  * Secret filter: regex-based pattern detection for API keys, tokens, credentials.
  *
  * LIMITATION (A3): This is best-effort pattern matching. It catches common forms
- * (AWS keys, GitHub tokens, bearer tokens, private-key blocks, .env-shaped secrets,
+ * (provider tokens, authorization headers, private-key blocks, secret assignments,
  * URL-embedded credentials) but does NOT reliably catch PII or prose secrets.
  * A regex-based filter has a known ceiling: entropy scoring or a real scanner is needed
  * for higher confidence.
@@ -19,46 +19,75 @@ import { mehmoryHome } from './home.js';
 // entropy scoring (strings with high entropy) or integrating a real scanner (trivy, talisman).
 
 const REDACTION_PLACEHOLDER = '[REDACTED]';
+const MAX_INPUT_BYTES = 256 * 1024;
+const SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|(?!sharedaccesskey\b)[a-z0-9]*(?:token|password|passwd|secret|(?:api|secret|private|access|signing|ssh)key)|[a-z][a-z0-9_]*_(?:key|token|password|passwd|secret))`;
+// These Azure names retain their dedicated value-length rule, not generic matching.
+const CAMEL_SECRET_NAME = String.raw`(?!(?:AccountKey|SharedAccessKey)\b)[A-Za-z][A-Za-z0-9]*(?:Key|Token|Password|Passwd|Secret)`;
+const VALUE_DELIMITER = String.raw`[\s,};#)"'&>]|$`;
+const NON_SECRET_VALUE =
+  /^(?:true|false|str|int|float|bool|bytes|string|integer|optional|any|number|boolean|bigint|symbol|object|undefined|null|unknown|never|void|[+-]?\d{1,19}(?:\.\d+)?)$/;
+const BARE_VALUE = String.raw`[A-Za-z0-9_./+@!$%*?~-]+(?::[A-Za-z0-9_./+@!$%*?~-]+)?=*`;
+const QUOTED_VALUE = String.raw`(?:\\"(?:\\(?!")[\s\S]|[^"\\\r\n])+\\"|"(?:\\.|[^"\\\r\n])+"|'(?:\\.|[^'\\\r\n])+'|\x60(?:\\[\s\S]|[^\x60\\])+\x60)`;
+const ENV_VALUE = String.raw`[^\s"'&>;)\x60]+`;
+const ASSIGNMENT_PATTERNS = (
+  [
+    [SECRET_NAME, 'gim'],
+    [CAMEL_SECRET_NAME, 'gm'],
+  ] as const
+).flatMap(([name, flags]) => [
+  // Try structured values first, then the shell stop set for arbitrary '=' values.
+  // Bare ':' values in prose still need a structural delimiter, not the next word.
+  new RegExp(
+    String.raw`(?:\bexport\s+)?(?:\\?["'])?\b${name}\b(?:\\?["'])?\s*(?:[:=]\s*${QUOTED_VALUE}|=\s*${BARE_VALUE}(?=${VALUE_DELIMITER})|=\s*${ENV_VALUE}|:\s*${BARE_VALUE}(?=[ \t]*(?:[,};#)"'&>]|$)))`,
+    flags
+  ),
+  new RegExp(
+    String.raw`(?<=^|[{(,;])[ \t]*${name}\b\s*:\s*${BARE_VALUE}(?=${VALUE_DELIMITER})`,
+    flags
+  ),
+]);
 
 /**
  * Pattern list with their coverage.
  * Keep in sync with test fixture corpus under test/fixtures/secrets/.
+ * @internal Exposed only for exhaustive regression tests, not a supported API.
  */
-const SECRET_PATTERNS = [
-  // AWS: AKIA... access keys (20 chars after AKIA)
-  /AKIA[0-9A-Z]{16}/gi,
-
-  // AWS: secret access keys (40 chars, base64-like)
+export const SECRET_PATTERNS = [
+  // AWS access keys, including temporary STS credentials.
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
   /aws_secret_access_key\s*=\s*([A-Za-z0-9/+=]{40})/gi,
 
-  // GitHub: ghp_ personal access tokens (36 chars after ghp_)
-  /ghp_[A-Za-z0-9_]{36}/gi,
+  /gh[psuor]_[A-Za-z0-9_]{36,}/gi,
+  /github_pat_[A-Za-z0-9_]{22,}/gi,
+  /sk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/g,
+  /\bsk-[A-Za-z0-9]{48}\b/g,
+  /\b(?:[sr]k_(?:live|test)_|whsec_)[A-Za-z0-9]{16,}/g,
+  /\bAIza[0-9A-Za-z_-]{35}\b/g,
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /\bnpm_[A-Za-z0-9]{36}\b/g,
+  /\bglpat-[A-Za-z0-9_-]{20,}/g,
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43,}/g,
+  /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9]+\/[A-Za-z0-9]+\/[A-Za-z0-9]+/g,
+  /\b(?:AccountKey|SharedAccessKey)\s*=\s*[A-Za-z0-9/+]{16,}=*/gi,
+  /Authorization\s*:\s*Basic\s+[A-Za-z0-9/+]+=*/gi,
+  /xox[abposr]-\d+-[A-Za-z0-9-]{10,}/g,
+  /bearer\s+[A-Za-z0-9._~+/-]{20,}=*/gi,
 
-  // GitHub: ghs_ OAuth tokens (37 chars after ghs_)
-  /ghs_[A-Za-z0-9_]{37}/gi,
+  // Distillation may cut off the footer; a public-key footer must not end the match.
+  // Unknown body separators need a nearby footer, so prose-only headers stay readable.
+  /-----BEGIN\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----(?:[ \t]*(?:\r?\n|\\n|\\r\\n|[A-Za-z0-9+/=]{20,})[\s\S]*?(?:-----END\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----|$)|[\s\S]{0,8192}?-----END\s+(?:[A-Z]+\s+)*PRIVATE\s+KEY(?:\s+BLOCK)?-----)/gi,
 
-  // GitHub: ghu_ user tokens (37 chars after ghu_)
-  /ghu_[A-Za-z0-9_]{37}/gi,
+  // Non-secret environment settings and example identifiers stay readable.
+  /^(?![A-Z_][A-Z0-9_]*_EXAMPLE\s*=)([A-Z_][A-Z0-9_]*(?<!PATH|HOME|USER|SHELL|LANG|TERM))\s*=\s*(?:[^\s'"]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*')$/gm,
+  new RegExp(
+    String.raw`(?<![A-Za-z0-9_])(?:export\s+)?(?:SECRET_KEY_BASE|PASSPHRASE|[A-Z_][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|PASS|PASSPHRASE|AUTH|CREDENTIALS?|_PIN))=(?:\\"(?:\\(?!")[\s\S]|[^"\\\r\n])*\\"|\\"[^\s"]*|"(?:\\.|[^"\\\r\n])*"|\$?'(?:\\.|[^'\\\r\n])*'|${ENV_VALUE})`,
+    'g'
+  ),
 
-  // Generic bearer token: Bearer <token> (assumes token is 32+ chars of non-space)
-  /bearer\s+[A-Za-z0-9._-]{32,}/gi,
+  // A single slash can be password material; '//' stops scans at the next URL.
+  /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:(?:(?:[^\s/"',]|\/(?!\/))+@|(?:[^\s/"]|\/(?!\/))+@)/gi,
 
-  // Private key blocks: -----BEGIN...-----END
-  /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----/gi,
-
-  // .env-style KEY=value (requires KEY to be UPPERCASE_WORD and value to be non-empty, non-quoted)
-  // Excludes lines like PATH=/usr/bin, common env vars
-  /^([A-Z][A-Z0-9_]*(?<!PATH|HOME|USER|SHELL|LANG|TERM))\s*=\s*([^\s'"]+)$/gm,
-
-  // URL-embedded credentials: scheme://user:pass@host
-  // eslint-disable-next-line no-useless-escape
-  /(?:https?|ftp|ssh):\/\/[A-Za-z0-9._%-]+:[A-Za-z0-9!@#$%^&*()_+=\[\]{}|;':",./<>?-]{1,}@/gi,
-
-  // API keys (APIKEY=... or api_key=..., common pattern)
-  /(api[_-]?key|apikey)\s*=\s*([A-Za-z0-9_-]{20,})/gi,
-
-  // Tokens in common formats: token=..., access_token=...
-  /(access[_-]?token|token|auth[_-]?token)\s*=\s*([A-Za-z0-9_-]{20,})/gi,
+  ...ASSIGNMENT_PATTERNS,
 ] as const;
 
 /**
@@ -78,15 +107,12 @@ export interface RedactOptions {
   readonly whitelist?: readonly string[];
 }
 
-/** Compiled user patterns, keyed by the pattern list. Config defaults mirror the
- * built-in corpus, so the common case recompiles the same five regexes on every
- * call without this. Bounded by the number of distinct pattern lists a process sees
- * (one, in practice). */
+/** Compiled user patterns, keyed by the pattern list (one list per process in practice). */
 const userPatternCache = new Map<string, RegExp[]>();
 
 /** Compile `/source/flags` strings to regexes, skipping (and logging) malformed ones. */
 function compileUserPatterns(patterns: readonly string[]): RegExp[] {
-  const boundedPatterns = patterns.slice(0, 64).filter(raw => raw.length <= 512);
+  const boundedPatterns = patterns.slice(0, 64).filter((raw) => raw.length <= 512);
   const cacheKey = JSON.stringify(boundedPatterns);
   const cached = userPatternCache.get(cacheKey);
   if (cached) return cached;
@@ -98,7 +124,7 @@ function compileUserPatterns(patterns: readonly string[]): RegExp[] {
       if (!parsed?.[1]) throw new Error('not in /source/flags form');
       if (
         parsed[1].length > 256 ||
-        (parsed[1].match(/[+*]|\\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 ||
+        (parsed[1].match(/[+*]|\{\d+(?:,\d*)?}/g)?.length ?? 0) > 3 ||
         /\\[1-9]|\([^()]*[+*{][^)]*\)[+*{]/.test(parsed[1]) ||
         /\([^()]*\|[^()]*\)[+*]/.test(parsed[1]) ||
         /\(\?<?[=!]/.test(parsed[1])
@@ -151,6 +177,17 @@ function isExempt(start: number, end: number, ranges: readonly Range[]): boolean
   return ranges.some(([from, to]) => from <= start && end <= to);
 }
 
+function isNonSecretAssignment(match: string): boolean {
+  const assignment =
+    /^(?:export\s+)?(?:\\?["'])?([A-Za-z][A-Za-z0-9_-]*)(?:\\?["'])?\s*[:=]\s*(\S+)$/i.exec(
+      match.trim()
+    );
+  if (!assignment) return false;
+  const [, name, value] = assignment;
+  if (!name || !value) return false;
+  return name === value || NON_SECRET_VALUE.test(value);
+}
+
 function applyPatterns(
   text: string,
   extra: readonly RegExp[],
@@ -161,7 +198,8 @@ function applyPatterns(
   for (const pattern of [...SECRET_PATTERNS, ...extra]) {
     pattern.lastIndex = 0;
 
-    if (whitelist.length === 0) {
+    const isAssignment = ASSIGNMENT_PATTERNS.includes(pattern);
+    if (whitelist.length === 0 && !isAssignment) {
       result = result.replace(pattern, REDACTION_PLACEHOLDER);
       continue;
     }
@@ -170,12 +208,11 @@ function applyPatterns(
     const ranges = whitelistRanges(result, whitelist);
     result = result.replace(pattern, (...args: unknown[]): string => {
       const match = String(args[0]);
+      if (isAssignment && isNonSecretAssignment(match)) return match;
       // String.replace passes (match, ...groups, offset, whole); none of these
       // patterns use named groups, so the offset is always second from the end.
       const offset = Number(args[args.length - 2]);
-      return isExempt(offset, offset + match.length, ranges)
-        ? match
-        : REDACTION_PLACEHOLDER;
+      return isExempt(offset, offset + match.length, ranges) ? match : REDACTION_PLACEHOLDER;
     });
   }
 
@@ -184,7 +221,7 @@ function applyPatterns(
 
 /**
  * Redact secrets from text using the built-in corpus plus any configured patterns.
- * Never throws; returns original text on any error.
+ * Never throws; unexpected failures or inputs over 256 KiB redact the entire input.
  *
  * @param text — The text to redact (empty string, very large, or invalid UTF-16 all handled safely)
  * @param options — `config.secrets`; omitted means built-in patterns only
@@ -200,6 +237,9 @@ export function redact(text: string, options: RedactOptions = {}): string {
   }
 
   try {
+    if (text.length > MAX_INPUT_BYTES || Buffer.byteLength(text, 'utf8') > MAX_INPUT_BYTES) {
+      throw new Error('redaction input exceeds limit');
+    }
     const candidate = options as unknown as Record<string, unknown>;
     const patterns = Array.isArray(candidate.patterns)
       ? candidate.patterns.filter((entry): entry is string => typeof entry === 'string')
@@ -217,8 +257,13 @@ export function redact(text: string, options: RedactOptions = {}): string {
     // combined alternation regex if that ever shows up in a profile.
     return applyPatterns(text, extra, whitelist);
   } catch {
-    // On any regex error or unexpected failure, return original text unchanged
-    // Better to leak a secret than crash the system
-    return text;
+    // Neither the input nor an exception message is safe to include in this log.
+    logError({
+      code: 'E_REDACT_FAILED',
+      kind: 'informational',
+      what: 'Secret filtering failed or input exceeded 256 KiB',
+      consequence: 'The entire text was redacted',
+    });
+    return REDACTION_PLACEHOLDER;
   }
 }
