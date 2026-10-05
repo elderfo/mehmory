@@ -29,7 +29,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **Codex TOML scanning distinguishes array continuations from table headers.** Root feature keys and table booleans after nested arrays are edited or refused without creating a duplicate table.
-- **Codex setup refuses triple-quoted TOML strings.** Install never rewrites string contents, and doctor never mistakes them for a hooks feature setting.
+- **Codex setup preserves multiline TOML strings.** Basic and literal string contents are never edited or read as settings; doctor reports unreadable or unsupported flags as indeterminate warnings instead of unset errors.
+- **Codex dotted hooks keys are inserted after complete feature statements.** Multiline array values no longer receive an invalid key inside their contents.
+- **Codex uninstall leaves foreign-only hook registries untouched.** Semantic no-ops preserve any JSON formatting and create no backup, reporting nothing to remove.
+- **Codex setup refuses `[[features]]` with a specific reason.** An array of tables is never combined with a conflicting feature-flag table.
+- **Codex doctor and backup guidance matches actual behavior.** It distinguishes unset flags from indeterminate warnings and explains backups beside symlink targets in dotfiles repositories.
 - **Codex configuration symlinks survive setup and removal.** Edits and private backups follow the real target, including dotfiles outside `$CODEX_HOME`; dangling links are refused.
 - **Codex lock write failures are reported immediately.** Genuine contention identifies the lock path for stale-lock cleanup instead of hiding permission failures behind a five-second wait.
 - **Codex skill refusals write no configuration or backups.** All shipped sources and destination symlink checks run before any edit.

@@ -222,7 +222,9 @@ describe('Codex install safety', () => {
   it('documents every Codex installation refusal and cleanup consequence', () => {
     const docs = readFileSync('docs/TROUBLESHOOTING.md', 'utf-8');
     for (const reason of [
-      'Unsupported features shape or triple-quoted TOML',
+      'Unsupported features shape or unsafe TOML',
+      'could not be determined',
+      'dotfiles repository',
       'Missing hook bundles',
       'Lock contention',
       'Staged-skill cleanup incomplete',
@@ -231,6 +233,8 @@ describe('Codex install safety', () => {
       'was not modified, so the Codex integration was not removed',
     ])
       expect(docs).toContain(reason);
+    expect(readFileSync('docs/CLI.md', 'utf-8')).toContain('could not be determined');
+    expect(readFileSync('docs/CLI.md', 'utf-8')).toContain('dotfiles repository');
     expect(readFileSync('README.md', 'utf-8')).toContain(
       'syntax or missing hook bundles are refused'
     );

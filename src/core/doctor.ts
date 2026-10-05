@@ -199,6 +199,14 @@ function checkCodexHarness(probe: CodexProbe): Finding {
 }
 
 function checkCodexFeatureFlag(probe: CodexProbe): Finding {
+  if (probe.hooksFeature === null) {
+    return {
+      check: 'codex.hooks_flag',
+      level: 'warn',
+      message: `Codex \`[features] hooks\` could not be determined in ${probe.configFile}`,
+      fix: `$EDITOR ${shellQuote(probe.configFile)}`,
+    };
+  }
   if (probe.hooksFeature === true) {
     return { check: 'codex.hooks_flag', level: 'ok', message: 'Codex `[features] hooks` is on' };
   }

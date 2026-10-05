@@ -127,7 +127,8 @@ hook, so both edits are merges, never rewrites:
   modified, replacing any previous backup with that immediately preceding state. Backups
   have mode `0600`. A run that changes nothing takes no backup. Symlinked `config.toml`
   and `hooks.json` are resolved with realpath: edits update the real target without replacing
-  the symlink, and the backup is written next to that target (including outside `$CODEX_HOME`).
+  the symlink, and the backup is written next to that target (including outside `$CODEX_HOME`,
+  for example into a dotfiles repository).
   A dangling or unresolvable configuration symlink is refused, not replaced.
 - A `hooks.json` that does not parse is **refused**, not overwritten: exit **3** with
   `E_CODEX_INSTALL`, and the file is left byte-for-byte as it was. Overwriting a file
@@ -135,18 +136,21 @@ hook, so both edits are merges, never rewrites:
 - The `config.toml` edit is a line edit. `[features]` headers accept whitespace and trailing
   comments; existing `hooks` comments survive. Root-level `features.*` dotted keys and
   single-line inline tables of boolean feature flags are updated in place, without adding
-  another table. Array continuation rows are never interpreted as headers or keys. Unsupported
-  feature shapes and files containing triple-quoted strings (`"""` or `'''`) are refused with
-  `E_CODEX_INSTALL` before any Codex file or backup is written; `doctor` reports the hooks
-  feature as unknown for those strings rather than reading their contents as settings.
+  another table. New dotted keys go after the entire preceding feature statement, including
+  multiline arrays. Multiline basic (`"""`) and literal (`'''`) strings are preserved;
+  their content and array continuation rows are never interpreted as headers or keys.
+  Unsupported feature shapes (including `[[features]]`) or unsafe TOML such as an
+  unterminated string are refused with a specific reason and `E_CODEX_INSTALL` before any
+  Codex file or backup is written. `doctor` reports that the hooks feature **could not be
+  determined** at warn level when unreadable or unsupported; a readable but absent flag
+  is **unset** at error level. A parsed `true` flag is on even with unrelated multiline strings.
   Existing CRLF line endings are retained, including for appended configuration lines.
   Your models, MCP servers, per-project trust levels and Codex's own hook-trust hashes are not reformatted around the one boolean that changes.
-- **`hooks.json` byte-identity holds only under one assumption: the file was already in
-  canonical 2-space JSON, the shape Codex itself writes.** Content correctness (no entry
-  mehmory did not write is ever touched) holds unconditionally either way. But
-  `hooks.json`'s edits re-serialize the whole document, so a hand-edited file in a different
-  indent style comes back reformatted around a change that otherwise touched nothing of its
-  own — see `docs/PRIVACY.md` for the user-facing version of this note.
+- A semantic no-op leaves `hooks.json` byte-identical in any formatting, with no backup;
+  uninstall on a foreign-only file reports **nothing to remove**. Edits that actually change
+  entries re-serialize the document as canonical 2-space JSON, the shape Codex itself writes.
+  Thus an install → uninstall round trip is byte-identical only when the original file was
+  already canonical; foreign entries survive either way — see `docs/PRIVACY.md`.
 
 Uninstall removes only mehmory's entries, prunes the events and groups that empty out as a
 result, and **never turns the hooks feature back off** — the flag is Codex's, and other
@@ -247,15 +251,16 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - `schema_version` drift (see `docs/UPGRADE.md`).
 - Config parseability.
 - KPI budget violations against the amended numbers in the spec's KPI table.
-- The Codex surface, four checks, each carrying a real error code documented in
+- The Codex surface, four checks, whose error findings carry real error codes documented in
   `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
+  an indeterminate hooks flag is a warning without `E_CODEX_HOOKS_DISABLED`.
 
-  | Check | Code | What it means |
-  |---|---|---|
-  | `codex.harness` | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing |
-  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED` | Codex's `[features] hooks` is off or unset, so no hook fires at all |
-  | `codex.hooks` | `E_CODEX_HOOKS_UNWIRED` | one or more Codex events carry no mehmory entry, so those events capture nothing |
-  | `codex.skills` | `E_CODEX_SKILLS_MISSING` | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+  | Check              | Code                      | What it means                                                                                                                   |
+  | ------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+  | `codex.harness`    | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing                     |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED`  | Error when Codex's `[features] hooks` is off or unset; warn without this code when the flag could not be determined; ok when on |
+  | `codex.hooks`      | `E_CODEX_HOOKS_UNWIRED`   | one or more Codex events carry no mehmory entry, so those events capture nothing                                                |
+  | `codex.skills`     | `E_CODEX_SKILLS_MISSING`  | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs)         |
 
   All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
   a Claude-Code-only user gets no findings about a harness they don't run. They appear as

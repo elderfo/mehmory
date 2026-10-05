@@ -146,10 +146,15 @@ the fix — committing the pending removal is.
 `mehmory init --host codex` could not safely edit configuration, install skills, or acquire
 its installation lock. Reasons and stable consequence sentences:
 
-- **Unsupported features shape or triple-quoted TOML:** _`<file>` was left exactly as it is,
-  so no hook registration was changed._ Fix: `$EDITOR <file>`; use a supported table,
-  dotted boolean key, or single-line boolean inline table. Triple-quoted strings are
-  conservatively unsupported, and `doctor` reads their hooks feature as unknown.
+- **Unsupported features shape or unsafe TOML:** _`<file>` was left exactly as it is,
+  so no hook registration was changed._ The refusal names the reason (for example an
+  unterminated multiline string, a non-boolean hooks value, or `[[features]]`, which is
+  an array of tables). Fix: `$EDITOR <file>`; repair the named syntax or use a supported
+  table, dotted boolean key, or single-line boolean inline table. Valid multiline basic
+  (`"""`) and literal (`'''`) strings are supported and preserved, never read as settings.
+  For unreadable or unsupported config, `doctor` says **could not be determined** at
+  **warn** level, not **unset** at error level; running install cannot resolve that warning
+  until the named syntax or read failure is repaired.
 - **Missing hook bundles:** _`<file>` was not modified, so the Codex integration is not in place._
   Fix: `pnpm build` in a checkout, or reinstall a complete package. No configuration is written.
 - **Missing skill sources or symlinked skills paths:** _no mehmory skill was installed for Codex_
@@ -162,7 +167,8 @@ its installation lock. Reasons and stable consequence sentences:
 - **Staged-skill cleanup incomplete:** _Codex integration was removed, but staged skill cleanup is incomplete._
   Hooks and discoverable skills stay removed. Run the error's `rm -r <staging directory>` fix.
 - **Symlinked configuration targets:** resolved `config.toml` and `hooks.json` symlinks are
-  supported; writes and backups go next to their real targets, including outside `$CODEX_HOME`.
+  supported; writes and backups go next to their real targets, including outside `$CODEX_HOME`
+  (for example into a dotfiles repository).
   A dangling or unresolvable target is refused: _`<path>` was not modified, so the Codex integration is not in place._
   Repair the link and check target-directory permissions before retrying.
 - **Write failure during uninstall:** _`<path>` was not modified, so the Codex integration was not removed._
@@ -189,7 +195,11 @@ instead of the uninstall above.
 
 ## E_CODEX_HOOKS_DISABLED (actionable)
 
-Codex's `[features] hooks` flag is `false` or unset in `$CODEX_HOME/config.toml`.
+Codex's `[features] hooks` flag is `false` or unset in readable, supported
+`$CODEX_HOME/config.toml`; `doctor` reports either state at **error** level. An unreadable
+or unsupported config instead produces a **warn** finding saying the flag **could not be determined**,
+without `E_CODEX_HOOKS_DISABLED`. A parsed `true` flag reports **ok**, including when
+unrelated multiline strings are present.
 Consequence: *no hook fires at all* — not mehmory's, and not any other tool's. Fix:
 `mehmory init --host codex`, which turns the flag on without touching the rest of the file.
 

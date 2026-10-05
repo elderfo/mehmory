@@ -161,10 +161,10 @@ Symlinked `config.toml` and `hooks.json` are resolved with realpath and edited a
 targets, preserving the symlinks. Their private backups live next to those targets, which
 may be outside `$CODEX_HOME` (for example, in a dotfiles repository). Unresolvable or dangling
 configuration symlinks are refused without replacement.
-But if `$CODEX_HOME/hooks.json` was not already in
-the canonical 2-space JSON Codex itself writes — hand-edited with different spacing, for
-example — uninstall's rewrite renders the whole file back out in that canonical form. Nothing
-is added, removed, or reordered in the data; the bytes around it can still change. See
+A semantic no-op preserves the exact bytes in any formatting and takes no backup; a
+foreign-only registry reports nothing to remove. When uninstall actually removes mehmory's
+entries, it renders the remaining file as canonical 2-space JSON. Foreign entries survive,
+but the bytes around them can still change if the original file used other formatting. See
 `docs/CLI.md` for the byte-identity guarantee and the assumption it depends on.
 
 Uninstall stages skill directories before removing hooks. A staging or hook-edit failure

@@ -21,6 +21,7 @@
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import {
   atomicWrite,
   createLockExclusive,
@@ -569,7 +570,11 @@ function editCodex(
 
   let rendered: string;
   try {
-    rendered = renderHooksDoc(transform(existing.value), existing.raw);
+    const transformed = transform(existing.value);
+    rendered =
+      existing.raw !== undefined && isDeepStrictEqual(transformed, existing.value)
+        ? existing.raw
+        : renderHooksDoc(transformed, existing.raw);
   } catch (err) {
     return { ok: false, error: writeFailed(hooksFile, err, !enableFeature) };
   }
@@ -836,18 +841,24 @@ type FeatureEdit = string | undefined | { readonly ok: false; readonly error: Me
  */
 export function enableHooksFeature(toml: string): FeatureEdit {
   const lines = toml.split('\n');
-  const scanned = scanTomlLines(toml);
-  if (scanned === undefined) return unsupportedFeatures();
+  const scan = scanTomlLines(toml);
+  if (!scan.ok) return unsupportedFeatures(scan.reason);
+  const scanned = scan.lines;
+  if (scanned.some(line => /^\s*\[\[\s*(?:features|"features"|'features')\s*\]\]/.test(line))) {
+    return unsupportedFeatures('features is an array of tables, not a feature-flag table');
+  }
   const roots = rootFeatureLines(scanned);
   const section = featuresSection(scanned);
   const next = [...lines];
   if (roots.length > 0) {
-    if (section !== undefined) return unsupportedFeatures();
+    if (section !== undefined)
+      return unsupportedFeatures('features is defined by both root keys and a table');
     const inline = roots.find(i =>
       /^\s*(?:features|"features"|'features')\s*=/.test(lines[i] ?? '')
     );
     if (inline !== undefined) {
-      if (roots.length !== 1) return unsupportedFeatures();
+      if (roots.length !== 1)
+        return unsupportedFeatures('features inline table is mixed with dotted keys');
       const edited = editInlineFeatures(lines[inline] ?? '');
       if (typeof edited !== 'string') return edited;
       next[inline] = edited;
@@ -863,7 +874,8 @@ export function enableHooksFeature(toml: string): FeatureEdit {
       if (typeof edited !== 'string') return edited;
       next[hook] = edited;
     } else {
-      const last = roots.at(-1) ?? 0;
+      const start = roots.at(-1) ?? 0;
+      const last = scan.statementEnds[start] ?? start;
       const carriage = toml.includes('\r\n') ? '\r' : '';
       if (last === lines.length - 1) {
         next[last] = `${lines[last] ?? ''}${carriage}`;
@@ -897,14 +909,8 @@ export function enableHooksFeature(toml: string): FeatureEdit {
   return next.join('\n');
 }
 
-function unsupportedFeatures(): { readonly ok: false; readonly error: MehmoryError } {
-  return {
-    ok: false,
-    error: unparseable(
-      codexConfigFile(),
-      'features cannot be safely edited as a single-line boolean setting'
-    ),
-  };
+function unsupportedFeatures(reason: string): { readonly ok: false; readonly error: MehmoryError } {
+  return { ok: false, error: unparseable(codexConfigFile(), reason) };
 }
 
 function enableBooleanLine(line: string): FeatureEdit {
@@ -912,7 +918,7 @@ function enableBooleanLine(line: string): FeatureEdit {
     /^(\s*(?:(?:features|"features"|'features')\s*\.\s*)?(?:hooks|"hooks"|'hooks')\s*=\s*)(true|false)(\s*(?:#.*)?\r?)$/.exec(
       line
     );
-  if (match === null) return unsupportedFeatures();
+  if (match === null) return unsupportedFeatures('hooks is not a single-line boolean');
   return match[2] === 'true' ? undefined : `${match[1] ?? ''}true${match[3] ?? ''}`;
 }
 
@@ -920,13 +926,19 @@ function editInlineFeatures(line: string): FeatureEdit {
   const match = /^(\s*(?:features|"features"|'features')\s*=\s*\{)([^{}]*)(\}\s*(?:#.*)?\r?)$/.exec(
     line
   );
-  if (match === null) return unsupportedFeatures();
+  if (match === null) {
+    if (!line.includes('{')) return unsupportedFeatures('features is not an inline table');
+    if (line.slice(line.indexOf('{') + 1).includes('{')) {
+      return unsupportedFeatures('features inline table contains nested tables');
+    }
+    return unsupportedFeatures('features inline table spans multiple lines or has unsupported trailing syntax');
+  }
   const body = match[2] ?? '';
   const entries = body.trim() === '' ? [] : body.split(',');
   if (
     entries.some(entry => !/^\s*(?:[\w-]+|"[\w-]+"|'[\w-]+')\s*=\s*(?:true|false)\s*$/.test(entry))
   ) {
-    return unsupportedFeatures();
+    return unsupportedFeatures('features inline table contains values other than boolean flags');
   }
   const hook = /((?:^|,)\s*(?:hooks|"hooks"|'hooks')\s*=\s*)(true|false)/;
   if (hook.exec(body)?.[2] === 'true') return undefined;
@@ -937,30 +949,73 @@ function editInlineFeatures(line: string): FeatureEdit {
   return `${match[1] ?? ''}${edited}${match[3] ?? ''}`;
 }
 
-// Continuation rows are not keys or table headers, even when they start with '['.
-// Triple-quoted strings are outside this line editor's supported grammar.
-function scanTomlLines(toml: string): readonly string[] | undefined {
-  if (toml.includes('"""') || toml.includes("'''")) return undefined;
+type TomlScan =
+  | {
+      readonly ok: true;
+      readonly lines: readonly string[];
+      readonly statementEnds: readonly number[];
+    }
+  | { readonly ok: false; readonly reason: string };
+
+// Continuations (including string content) are not keys or table headers.
+function scanTomlLines(toml: string): TomlScan {
   const scanned: string[] = [];
-  let depth = 0;
-  for (const line of toml.split('\n')) {
-    scanned.push(depth === 0 ? line : '');
-    let quote: string | undefined;
+  const statementEnds: number[] = [];
+  const brackets: string[] = [];
+  let multiline: string | undefined;
+  let start = 0;
+  for (const [row, line] of toml.split('\n').entries()) {
+    const continuation = brackets.length > 0 || multiline !== undefined;
+    scanned.push(continuation ? '' : line);
+    if (!continuation) start = row;
+    let quote = multiline;
     let escaped = false;
-    for (const char of line) {
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
       if (quote !== undefined) {
         if (escaped) escaped = false;
         else if (quote === '"' && char === '\\') escaped = true;
-        else if (char === quote) quote = undefined;
+        else if (char === quote) {
+          if (multiline === undefined) quote = undefined;
+          else {
+            let count = 1;
+            while (line[i + count] === quote) count++;
+            if (count >= 3) {
+              if (count > 5)
+                return { ok: false, reason: 'multi-line string closes with more than five quotes' };
+              multiline = undefined;
+              quote = undefined;
+            }
+            i += count - 1;
+          }
+        }
       } else if (char === '#') break;
-      else if (char === '"' || char === "'") quote = char;
-      else if (char === '[' || char === '{') depth++;
-      else if (char === ']' || char === '}') depth--;
-      if (depth < 0) return undefined;
+      else if (char === '"' || char === "'") {
+        quote = char;
+        if (line.slice(i, i + 3) === char.repeat(3)) {
+          multiline = char;
+          i += 2;
+        }
+      } else if (char === '[' || char === '{') brackets.push(char);
+      else if (char === ']' || char === '}') {
+        if (brackets.pop() !== (char === ']' ? '[' : '{')) {
+          return { ok: false, reason: 'unbalanced TOML array or inline-table delimiters' };
+        }
+      }
     }
-    if (quote !== undefined) return undefined;
+    if (quote !== undefined && multiline === undefined) {
+      return { ok: false, reason: 'unterminated single-line TOML string' };
+    }
+    if (brackets.length === 0 && multiline === undefined) statementEnds[start] = row;
   }
-  return depth === 0 ? scanned : undefined;
+  if (multiline !== undefined) {
+    return {
+      ok: false,
+      reason: `unterminated multi-line ${multiline === '"' ? 'basic' : 'literal'} string`,
+    };
+  }
+  if (brackets.length > 0) return { ok: false, reason: 'unterminated TOML array or inline table' };
+  return { ok: true, lines: scanned, statementEnds };
 }
 
 function rootFeatureLines(lines: readonly string[]): number[] {
@@ -974,17 +1029,25 @@ function rootFeatureLines(lines: readonly string[]): number[] {
   return roots;
 }
 
-/** The features hooks value in a table, dotted key, or simple inline table. */
-export function readHooksFeature(toml: string): boolean | undefined {
-  const lines = scanTomlLines(toml);
-  if (lines === undefined) return undefined;
+/** Boolean flag, undefined when unset, or null when it cannot be determined safely. */
+export function readHooksFeature(toml: string): boolean | undefined | null {
+  const edit = enableHooksFeature(toml);
+  if (typeof edit === 'object') return null;
+  if (edit === undefined) return true;
+  const scan = scanTomlLines(toml);
+  if (!scan.ok) return null;
+  const lines = scan.lines;
   const section = featuresSection(lines);
   const keyLine = section === undefined ? undefined : findHooksKey(lines, section);
   const line =
     keyLine === undefined
       ? rootFeatureLines(lines)
           .map(i => lines[i] ?? '')
-          .find(value => /(?:^|[.{,])\s*(?:hooks|"hooks"|'hooks')\s*=/.test(value))
+          .find(value =>
+            /^\s*(?:features|"features"|'features')\s*(?:=|\.\s*(?:hooks|"hooks"|'hooks')\s*=)/.test(
+              value
+            )
+          )
       : lines[keyLine];
   const value = /(?:^|[.{,])\s*(?:hooks|"hooks"|'hooks')\s*=\s*(true|false)\b/.exec(
     line ?? ''
@@ -1066,8 +1129,8 @@ export interface CodexProbe {
   readonly configFile: string;
   /** True when Codex itself has a configuration here — i.e. the harness has been run. */
   readonly harnessPresent: boolean;
-  /** `[features] hooks`, or `undefined` when unset or unreadable. */
-  readonly hooksFeature: boolean | undefined;
+  /** Boolean flag, undefined when unset, or null when unreadable or unsupported. */
+  readonly hooksFeature: boolean | undefined | null;
   /** `hooks.json` exists but does not parse — nothing can be said about wiring. */
   readonly hooksFileBroken: boolean;
   /** Codex events mehmory's entries occupy. */
@@ -1104,7 +1167,7 @@ export function probeCodexInstall(): CodexProbe {
     hooksFile,
     configFile,
     harnessPresent: pathExists(configFile),
-    hooksFeature: undefined,
+    hooksFeature: null,
     hooksFileBroken: pathExists(hooksFile),
     wiredEvents: [],
     missingEvents: CODEX_HOOK_EVENTS,
