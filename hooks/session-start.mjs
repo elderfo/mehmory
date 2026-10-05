@@ -1,51 +1,45 @@
 import {
   MAINTENANCE_ALLOWANCE_TOKENS,
   applyDistillJobResult,
+  archivePage,
   buildScopeInjection,
   claimJob,
   completeJob,
   estimateTokens,
   finalizePendingSessions,
   inboxBytes,
+  openScope,
   runHook,
   scopePaths,
   skillRef,
   storeExists,
   storeIsUnpopulated,
   truncateToTokens
-} from "./chunk-7FSOFKBN.mjs";
+} from "./chunk-7NFDAHS7.mjs";
 import {
-  ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
   currentAgentName,
   isPaused,
   isStalePage,
-  loadConfig,
   parseIndexLine,
-  readFrontmatter,
   readInboxEntries,
   rememberSessionOrigin,
   resumeFinalizedSession,
   runStoreGit,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-WB3BMRQX.mjs";
+} from "./chunk-FR4W5LZ6.mjs";
 import "./chunk-572P3JTD.mjs";
 import {
   atomicWrite,
   failOpen,
-  listDir,
   logError,
-  lstat,
   mehmoryHome,
   mkdir,
   pathExists,
   pendingWarnings,
   readFile,
-  realpath,
-  rename,
-  shellQuote,
-  stat
+  shellQuote
 } from "./chunk-H34NFU7U.mjs";
 
 // src/hooks/session-start.ts
@@ -285,57 +279,40 @@ Every commit has a message summarizing the operation and entry count. The full g
 `;
 
 // src/core/decay.ts
-import { join as join2, relative } from "path";
 function lineRefersTo(line, pageFile) {
   return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, "");
 }
-function decayPass(scopeDir, options = {}) {
+function decayPass(scopeDir, config, options = {}) {
   const empty = { demoted: [], archived: [], rewroteIndex: false };
   return failOpen(
     () => {
-      const config = loadConfig();
       if (!config.decay.enabled) return empty;
       const now = options.now ?? Date.now();
       const archiveDays = options.archiveDays ?? config.decay.archive_days;
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
-      const pagesDir = join2(scopeDir, "pages");
-      const indexPath = join2(scopeDir, "index.md");
-      if (!pathExists(pagesDir)) return empty;
+      const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
+      if (wiki.pages.length === 0) return empty;
       const demoted = [];
       const archived = [];
       const liveOrder = /* @__PURE__ */ new Map();
-      for (const name of listDir(pagesDir)) {
-        if (!name.endsWith(".md")) continue;
-        const pagePath = join2(pagesDir, name);
-        if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
-        const contents = readFile(pagePath);
-        const fields = readFrontmatter(contents);
-        const updatedAt = Date.parse(fields["updated"] ?? "");
-        if (isStalePage(contents, now, purgeDays)) {
-          const archiveDir = join2(scopeDir, ARCHIVE_DIR);
-          if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
-            throw new Error("archive directory must not be a symlink");
-          }
-          mkdir(archiveDir);
-          const suffix = relative(realpath(scopeDir), realpath(archiveDir));
-          if (suffix !== "" && suffix !== ".." && suffix.startsWith("..")) {
-            throw new Error("archive directory must remain inside the scope");
-          }
-          rename(pagePath, join2(archiveDir, name));
+      for (const page of wiki.pages) {
+        const name = `${page.slug}.md`;
+        if (isStalePage(page.frontmatter, now, purgeDays)) {
+          if (!archivePage(wiki.scope, page)) return empty;
           archived.push(name);
-        } else if (isStalePage(contents, now, archiveDays)) {
+        } else if (page.stale) {
           demoted.push(name);
         } else {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
+          liveOrder.set(name, page.updatedAt ?? 0);
         }
       }
-      if (!pathExists(indexPath)) {
+      if (!wiki.index.readable) {
         return { demoted, archived, rewroteIndex: false };
       }
-      const original = readFile(indexPath);
+      const original = wiki.index.body;
       const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
-      atomicWrite(indexPath, rewritten);
+      atomicWrite(wiki.scope.indexFile, rewritten);
       return { demoted, archived, rewroteIndex: true };
     },
     empty,
@@ -384,7 +361,7 @@ function rewriteIndex(contents, liveOrder, demoted, archived) {
 var MAX_MAINTENANCE_LINES = 2;
 function maintenance(sessionId, project, host, config) {
   const finalized = finalizePendingSessions(sessionId, project, host, config);
-  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir));
+  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob("distill-final");
     if (!job) break;

@@ -9,33 +9,12 @@
  */
 
 import { runStoreGit } from './git.js';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 import { mehmoryHome } from './home.js';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { listDir, pathExists, stat } from './fs.js';
+import { openScope } from './wiki.js';
 import { failOpen, peekWarnings } from './errors.js';
 import { readInboxEntries } from './inbox.js';
-import { ARCHIVE_DIR, ARCHIVE_DIVIDER, parseIndexLine } from '../schema/format.js';
-
-/** The files one scope is made of. `global` has no `projects/<key>` directory. */
-export interface ScopeFiles {
-  readonly dir: string;
-  readonly pagesDir: string;
-  readonly indexFile: string;
-  readonly inboxFile: string;
-  readonly logFile: string;
-}
-
-/** Resolve a scope directory to the five files every summary reads. */
-export function scopeFiles(dir: string): ScopeFiles {
-  return {
-    dir,
-    pagesDir: join(dir, 'pages'),
-    indexFile: join(dir, 'index.md'),
-    inboxFile: join(dir, 'inbox.md'),
-    logFile: join(dir, 'log.md'),
-  };
-}
-
 /** Everything `mehmory status` prints, as data. */
 export interface StatusReport {
   /** Resolved project key (or `global`). */
@@ -62,9 +41,10 @@ export interface StatusReport {
 
 /** Summarize one scope. Never throws; an unreadable store yields zeroes (A2/A11). */
 export function buildStatus(key: string, dir: string): StatusReport {
-  const files = scopeFiles(dir);
+  const wiki = openScope(dir);
+  const files = wiki.scope;
   const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
-  const timestamps = entries.map(e => e.ts).sort();
+  const timestamps = entries.map((e) => e.ts).sort();
   const oldest = timestamps[0];
   const integrated = lastIntegrate(files.logFile);
   const commit = lastCommit();
@@ -73,9 +53,9 @@ export function buildStatus(key: string, dir: string): StatusReport {
     key,
     dir,
     pages: countPages(files.pagesDir),
-    indexLines: countIndexLines(files.indexFile),
-    demoted: countDemotedIndexLines(files.indexFile),
-    archived: countPages(join(dir, ARCHIVE_DIR)),
+    indexLines: wiki.index.lines.length,
+    demoted: wiki.index.lines.filter((line) => line.demoted).length,
+    archived: countPages(files.archiveDir),
     inboxEntries: entries.length,
     ...(oldest !== undefined ? { oldestInbox: oldest } : {}),
     ...(integrated !== undefined ? { lastIntegrate: integrated } : {}),
@@ -93,48 +73,11 @@ export function countPages(pagesDir: string): number {
   );
 }
 
-/** Lines of `index.md` that are real index lines (A4: the format constant decides). */
-export function countIndexLines(indexFile: string): number {
-  return failOpen(
-    () =>
-      pathExists(indexFile)
-        ? readFile(indexFile)
-            .split('\n')
-            .filter(line => parseIndexLine(line) !== undefined).length
-        : 0,
-    0,
-    'E_STORE_READ'
-  );
-}
-
-/**
- * Index lines below the `## Archive` divider (A22).
- *
- * Reported so decay is visible rather than silent: a growing demoted count is the
- * user's cue that pages are aging out of the front of the wiki, and the only place
- * that number surfaces without reading `index.md` by hand.
- */
-export function countDemotedIndexLines(indexFile: string): number {
-  return failOpen(
-    () => {
-      if (!pathExists(indexFile)) return 0;
-      const lines = readFile(indexFile).split('\n');
-      const divider = lines.findIndex(line => line.trim() === ARCHIVE_DIVIDER);
-      if (divider < 0) return 0;
-      return lines.slice(divider + 1).filter(line => parseIndexLine(line) !== undefined).length;
-    },
-    0,
-    'E_STORE_READ'
-  );
-}
-
 /** `log.md` lines, newest last. Empty when the file is absent. */
 export function logLines(logFile: string): readonly string[] {
-  return failOpen(
-    () => (pathExists(logFile) ? readFile(logFile).split('\n').filter(l => l.startsWith('## ')) : []),
-    [],
-    'E_STORE_READ'
-  );
+  return openScope(dirname(logFile))
+    .log.split('\n')
+    .filter((l) => l.startsWith('## '));
 }
 
 /** ISO timestamps of every `integrate` entry in a scope's log, oldest first. */

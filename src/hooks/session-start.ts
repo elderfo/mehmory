@@ -31,12 +31,10 @@ import {
   buildScopeInjection,
   finalizePendingSessions,
   inboxBytes,
-  scopePaths,
-  storeExists,
   skillRef,
-  storeIsUnpopulated,
 } from '../core/capture.js';
 import type { Host } from '../core/host.js';
+import { scopePaths, storeExists, storeIsUnpopulated } from '../core/wiki.js';
 
 /** Maintenance-line allowance (U4 / spec gap 14): 2 lines, ~150 tokens. */
 const MAX_MAINTENANCE_LINES = 2;
@@ -59,7 +57,7 @@ function maintenance(
 ): number {
   const finalized = finalizePendingSessions(sessionId, project, host, config);
 
-  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir));
+  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
 
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob('distill-final');

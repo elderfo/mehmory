@@ -112,8 +112,8 @@ Truncation never splits a UTF-16 surrogate pair.
   searchable, scored ×0.5 — lower than the staleness demotion, because archival is an
   explicit act rather than mere drift.
 
-  All three **honored** (`decay.ts`, and `archive_days` additionally by `match.ts` /
-  `search.ts`). Neither demotion multiplier is configurable: they are calibration
+  All three **honored** (`decay.ts`, with retrieval's `archive_days` passed into
+  `wiki.ts`). Neither demotion multiplier is configurable: they are calibration
   constants in `schema/format.ts`, and `archive_days` already controls when demotion
   starts. Nothing is ever excluded from retrieval for age. Both the prompt matcher and
   CLI search skip symlinked pages and symlinked page directories. Prompt `relevant:`

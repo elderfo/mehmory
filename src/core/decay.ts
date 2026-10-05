@@ -11,17 +11,11 @@
  * editorially by `integrate` (run-1 amendment 10, closed by spec gap 19).
  */
 
-import { join, relative } from 'node:path';
-import { atomicWrite, listDir, lstat, mkdir, pathExists, readFile, realpath, rename, stat } from './fs.js';
-import { loadConfig } from './config.js';
+import { atomicWrite } from './fs.js';
+import type { MehmoryConfig } from './config.js';
+import { archivePage, openScope } from './wiki.js';
 import { failOpen } from './errors.js';
-import {
-  ARCHIVE_DIR,
-  ARCHIVE_DIVIDER,
-  isStalePage,
-  parseIndexLine,
-  readFrontmatter,
-} from '../schema/format.js';
+import { ARCHIVE_DIVIDER, isStalePage, parseIndexLine } from '../schema/format.js';
 
 export { readFrontmatter } from '../schema/format.js';
 
@@ -60,65 +54,48 @@ function lineRefersTo(line: string, pageFile: string): boolean {
  */
 export function decayPass(
   scopeDir: string,
+  config: MehmoryConfig,
   options: { now?: number; archiveDays?: number; purgeDays?: number } = {}
 ): DecayResult {
   const empty: DecayResult = { demoted: [], archived: [], rewroteIndex: false };
 
   return failOpen(
     () => {
-      const config = loadConfig();
       if (!config.decay.enabled) return empty;
 
       const now = options.now ?? Date.now();
       const archiveDays = options.archiveDays ?? config.decay.archive_days;
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
 
-      const pagesDir = join(scopeDir, 'pages');
-      const indexPath = join(scopeDir, 'index.md');
-      if (!pathExists(pagesDir)) return empty;
+      const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
+      if (wiki.pages.length === 0) return empty;
 
       const demoted: string[] = [];
       const archived: string[] = [];
       /** page file → updated epoch ms, for the recency re-sort. */
       const liveOrder = new Map<string, number>();
 
-      for (const name of listDir(pagesDir)) {
-        if (!name.endsWith('.md')) continue;
-        const pagePath = join(pagesDir, name);
-        if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
-
-        const contents = readFile(pagePath);
-        const fields = readFrontmatter(contents);
-        const updatedAt = Date.parse(fields['updated'] ?? '');
-
-        if (isStalePage(contents, now, purgeDays)) {
-          const archiveDir = join(scopeDir, ARCHIVE_DIR);
-          if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
-            throw new Error('archive directory must not be a symlink');
-          }
-          mkdir(archiveDir);
-          const suffix = relative(realpath(scopeDir), realpath(archiveDir));
-          if (suffix !== '' && suffix !== '..' && suffix.startsWith('..')) {
-            throw new Error('archive directory must remain inside the scope');
-          }
-          rename(pagePath, join(archiveDir, name));
+      for (const page of wiki.pages) {
+        const name = `${page.slug}.md`;
+        if (isStalePage(page.frontmatter, now, purgeDays)) {
+          if (!archivePage(wiki.scope, page)) return empty;
           archived.push(name);
-        } else if (isStalePage(contents, now, archiveDays)) {
+        } else if (page.stale) {
           demoted.push(name);
         } else {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
+          liveOrder.set(name, page.updatedAt ?? 0);
         }
       }
 
-      if (!pathExists(indexPath)) {
+      if (!wiki.index.readable) {
         return { demoted, archived, rewroteIndex: false };
       }
 
-      const original = readFile(indexPath);
+      const original = wiki.index.body;
       const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
 
-      atomicWrite(indexPath, rewritten);
+      atomicWrite(wiki.scope.indexFile, rewritten);
       return { demoted, archived, rewroteIndex: true };
     },
     empty,
@@ -173,7 +150,7 @@ function rewriteIndex(
   const out = [...preamble];
   if (live.length > 0) {
     live.sort((a, b) => b.updated - a.updated);
-    out.push('', ...live.map(l => l.line));
+    out.push('', ...live.map((l) => l.line));
   }
   if (belowDivider.length > 0) {
     out.push('', ARCHIVE_DIVIDER, '', ...belowDivider);

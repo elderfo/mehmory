@@ -1,81 +1,31 @@
-/**
- * Multi-corpus search scan (criterion 7, A18): pages, archive, and log.md.
- *
- * Extends `match.ts`'s scoring — token frequency, title/filename weighted ×3 — to
- * every corpus a scope holds. `matchPages()` is untouched: the hook keeps its
- * narrower, pages-only scan (criterion 19). This is the only search implementation in
- * the product: no index, no sqlite, no capability probe (A18).
- *
- * ponytail: O(files × tokens) scan per query, same shape as `match.ts`. Ceiling is the
- * file cap below; upgrade path is FTS5 behind this same interface if the corpus ever
- * measurably outgrows a scan (see the plan's judgment entry).
- */
+/** Multi-corpus keyword ranking over a scope wiki: pages, archive and log (A18). */
 
 import { join } from 'node:path';
-import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { countOccurrences, scoreDoc, tokenize } from './match.js';
-import {
-  ARCHIVED_SCORE_MULTIPLIER,
-  isStalePage,
-  STALE_SCORE_MULTIPLIER,
-} from '../schema/format.js';
+import type { Wiki } from './wiki.js';
+import { ARCHIVED_SCORE_MULTIPLIER, STALE_SCORE_MULTIPLIER } from '../schema/format.js';
 
 /** Above this many combined pages+archive files in one scope, scan only the newest. */
 export const DEFAULT_FILE_CAP = 2000;
-
-/** Longest a snippet line is allowed to be before it is truncated. */
 const SNIPPET_MAX_LENGTH = 120;
 
-/** One ranked hit. */
 export interface SearchHit {
   /** Path relative to the scope root, e.g. `pages/deploy.md` or `log.md`. */
   readonly path: string;
-  /** Scope label the caller supplies, carried through so `--all` results stay attributed. */
   readonly scope: string;
   readonly score: number;
   readonly snippet: string;
-  /**
-   * True when the hit was demoted (A22): a page past `staleAfterDays`, or anything under
-   * `archive/`. Demoted hits are never dropped from the result — they rank lower and
-   * carry this flag so the caller can label them.
-   */
+  /** Demoted, never excluded: aged live pages and everything under archive/ (A22). */
   readonly stale: boolean;
 }
 
-/** The files one scope's scan reads. */
-export interface SearchFiles {
-  readonly pagesDir: string;
-  readonly archiveDir: string;
-  readonly logFile: string;
-}
-
 export interface SearchOptions {
-  /** Combined pages+archive file cap. Default `DEFAULT_FILE_CAP`. */
   readonly fileCap?: number;
-  /**
-   * `config.decay.archive_days`. Omitted → no page is judged stale by age; anything
-   * under `archive/` is still demoted, since that needs no clock.
-   */
-  readonly staleAfterDays?: number;
-  /** Clock override for tests. */
-  readonly now?: number;
 }
 
 export interface SearchScan {
   readonly hits: readonly SearchHit[];
-  /** Non-fatal notices, e.g. the file cap having cut the scan short. Never silent. */
   readonly warnings: readonly string[];
-}
-
-interface Doc {
-  readonly path: string;
-  /** Lowercased filename plus first heading (pages/archive) or a fixed label (log). */
-  readonly title: string;
-  readonly body: string;
-  readonly mtimeMs: number;
-  /** Score multiplier for this doc: 1 when live, below 1 when stale or archived. */
-  readonly demotion: number;
-  readonly stale: boolean;
 }
 
 /** The line with the most matched-token occurrences, trimmed to a bounded width. */
@@ -112,71 +62,11 @@ function bestSnippet(tokens: ReadonlySet<string>, body: string): string {
   return best.slice(0, end).trimEnd() + '…';
 }
 
-function markdownDocs(
-  dir: string,
-  pathPrefix: string,
-  archived: boolean,
-  options: SearchOptions,
-  now: number
-): Doc[] {
-  const docs: Doc[] = [];
-  let names: string[];
-  try {
-    if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return docs;
-    names = listDir(dir);
-  } catch {
-    return docs;
-  }
-  for (const name of names) {
-    if (!name.endsWith('.md')) continue;
-    const filePath = join(dir, name);
-    let body: string;
-    let mtimeMs: number;
-    try {
-      if (lstat(filePath)?.isSymbolicLink()) continue;
-      const stats = stat(filePath);
-      if (!stats?.isFile()) continue;
-      mtimeMs = stats.mtime.getTime();
-      body = readFile(filePath);
-    } catch {
-      continue; // unreadable file: skip, never fail the scan
-    }
-    // Archival is the stronger signal, so it wins when a page is both.
-    const agedOut =
-      options.staleAfterDays !== undefined && isStalePage(body, now, options.staleAfterDays);
-    const demotion = archived
-      ? ARCHIVED_SCORE_MULTIPLIER
-      : agedOut
-        ? STALE_SCORE_MULTIPLIER
-        : 1;
-
-    const titleLine = /^#\s+(.*)$/m.exec(body);
-    docs.push({
-      path: join(pathPrefix, name),
-      title: `${name.toLowerCase()} ${(titleLine?.[1] ?? '').toLowerCase()}`,
-      body,
-      mtimeMs,
-      demotion,
-      stale: archived || agedOut,
-    });
-  }
-  return docs;
-}
-
-/**
- * Scan one scope's pages, archive and log for `query`, returning ranked hits with
- * snippets plus any bounding warning.
- *
- * `pagesDir`/`archiveDir` are scanned as directories of `.md` files; `logFile` is
- * scanned as a single line-oriented file — the corpus `matchPages()` structurally
- * cannot reach, since it takes one directory. Over `fileCap` combined pages+archive
- * files, only the newest are scanned and a warning names the cut; the file is never
- * silently dropped.
- */
+/** Rank one scope; the cap keeps the newest pages/archive and always includes the log. */
 export function searchScope(
   query: string,
   scopeLabel: string,
-  files: SearchFiles,
+  wiki: Pick<Wiki, 'pages' | 'archive' | 'log'>,
   options: SearchOptions = {}
 ): SearchScan {
   const tokens = tokenize(query);
@@ -184,15 +74,21 @@ export function searchScope(
   if (tokens.size === 0) return { hits: [], warnings };
 
   const fileCap = options.fileCap ?? DEFAULT_FILE_CAP;
-  const now = options.now ?? Date.now();
   let docs = [
-    ...markdownDocs(files.pagesDir, 'pages', false, options, now),
-    ...markdownDocs(files.archiveDir, 'archive', true, options, now),
+    ...wiki.pages.map((page) => ({
+      page,
+      path: join('pages', `${page.slug}.md`),
+      archived: false,
+    })),
+    ...wiki.archive.map((page) => ({
+      page,
+      path: join('archive', `${page.slug}.md`),
+      archived: true,
+    })),
   ];
-
   if (docs.length > fileCap) {
     const total = docs.length;
-    docs = [...docs].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, fileCap);
+    docs = [...docs].sort((a, b) => b.page.mtimeMs - a.page.mtimeMs).slice(0, fileCap);
     warnings.push(
       `${scopeLabel}: scanned the newest ${String(fileCap)} of ${String(total)} files (file cap)`
     );
@@ -200,45 +96,36 @@ export function searchScope(
 
   const hits: SearchHit[] = [];
   for (const doc of docs) {
-    const score = scoreDoc(tokens, doc.body.toLowerCase(), doc.title);
+    const page = doc.page;
+    const score = scoreDoc(tokens, page.body.toLowerCase(), page.title);
+    const demotion = doc.archived
+      ? ARCHIVED_SCORE_MULTIPLIER
+      : page.stale
+        ? STALE_SCORE_MULTIPLIER
+        : 1;
     if (score > 0) {
       hits.push({
         path: doc.path,
         scope: scopeLabel,
-        // Rounded: a demoted score is fractional, and `12 * 0.7` prints as
-        // 8.399999999999999 in both the text lines and the JSON envelope.
-        score: Math.round(score * doc.demotion * 100) / 100,
-        snippet: bestSnippet(tokens, doc.body),
-        stale: doc.stale,
+        score: Math.round(score * demotion * 100) / 100,
+        snippet: bestSnippet(tokens, page.body),
+        stale: doc.archived || page.stale,
       });
     }
   }
 
-  if (pathExists(files.logFile)) {
-    let logBody: string | undefined;
-    try {
-      if (!lstat(files.logFile)?.isSymbolicLink() && stat(files.logFile)?.isFile()) {
-        logBody = readFile(files.logFile);
-      }
-    } catch {
-      logBody = undefined; // unreadable log: skip, never fail the scan
-    }
-    if (logBody !== undefined) {
-      // The log is an append-only record of what happened, not a claim that can go
-      // stale — it is never demoted.
-      const score = scoreDoc(tokens, logBody.toLowerCase(), 'log.md');
-      if (score > 0) {
-        hits.push({
-          path: 'log.md',
-          scope: scopeLabel,
-          score,
-          snippet: bestSnippet(tokens, logBody),
-          stale: false,
-        });
-      }
-    }
+  // The log records what happened, not a claim that can go stale.
+  const logBody = wiki.log;
+  const logScore = scoreDoc(tokens, logBody.toLowerCase(), 'log.md');
+  if (logScore > 0) {
+    hits.push({
+      path: 'log.md',
+      scope: scopeLabel,
+      score: logScore,
+      snippet: bestSnippet(tokens, logBody),
+      stale: false,
+    });
   }
-
   hits.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return { hits, warnings };
 }

@@ -118,7 +118,7 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
     cursor: v['cursor'],
     stop_count: v['stop_count'],
     ...(topicCache ? { topic: topicCache } : {}),
-    // `project_key` is read back from disk and handed straight to `scopePaths()`, which
+    // `project_key` is read back from disk and handed to wiki's `scopePaths()`, which
     // joins it under `<home>/projects/`. The state file is a read boundary like the inbox
     // and the queue, so the key is re-validated here rather than trusted because the only
     // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred

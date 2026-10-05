@@ -702,7 +702,8 @@ function readFrontmatter(contents) {
 }
 var MS_PER_DAY = 24 * 60 * 60 * 1e3;
 function pageAgeDays(contents, now) {
-  const updated = readFrontmatter(contents)["updated"];
+  const fields = typeof contents === "string" ? readFrontmatter(contents) : contents;
+  const updated = fields["updated"];
   if (!updated) return null;
   const parsed = Date.parse(updated);
   return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
@@ -711,8 +712,9 @@ var ARCHIVE_DIVIDER = "## Archive";
 var ARCHIVE_DIR = "archive";
 var STALE_SCORE_MULTIPLIER = 0.7;
 function isStalePage(contents, now, staleAfterDays) {
-  if ((readFrontmatter(contents)["decay"] ?? "default") !== "default") return false;
-  const age = pageAgeDays(contents, now);
+  const fields = typeof contents === "string" ? readFrontmatter(contents) : contents;
+  if ((fields["decay"] ?? "default") !== "default") return false;
+  const age = pageAgeDays(fields, now);
   return age !== null && age > staleAfterDays;
 }
 var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
@@ -863,7 +865,6 @@ function clearInboxEntries(inboxFile, key, ids) {
 }
 
 // src/core/match.ts
-import { resolve as resolve2 } from "path";
 var MIN_TOKEN_LENGTH = 3;
 var STOPWORDS = /* @__PURE__ */ new Set([
   "the",
@@ -954,38 +955,17 @@ function scoreDoc(tokens, lowerBody, lowerTitle) {
   }
   return score;
 }
-function matchPages(prompt, pagesDir, max = 3, options = {}) {
+function matchPages(prompt, pages, max = 3) {
   const tokens = tokenize(prompt);
-  if (tokens.size === 0 || !pathExists(pagesDir)) return [];
-  const now = options.now ?? Date.now();
+  if (tokens.size === 0) return [];
   const scored = [];
-  let names;
-  try {
-    if (lstat(pagesDir)?.isSymbolicLink()) return [];
-    names = listDir(pagesDir);
-  } catch {
-    return [];
-  }
-  for (const name of names) {
-    if (!name.endsWith(".md")) continue;
-    const filePath = resolve2(pagesDir, name);
-    let contents;
-    try {
-      if (lstat(filePath)?.isSymbolicLink() || !stat(filePath)?.isFile()) continue;
-      contents = readFile(filePath);
-    } catch {
-      continue;
-    }
-    const stale = options.staleAfterDays !== void 0 && isStalePage(contents, now, options.staleAfterDays);
-    const body = contents.toLowerCase();
-    const titleLine = /^#\s+(.*)$/m.exec(body);
-    const title = `${name.toLowerCase()} ${titleLine?.[1] ?? ""}`;
-    const score = scoreDoc(tokens, body, title);
+  for (const page of pages) {
+    const score = scoreDoc(tokens, page.body.toLowerCase(), page.title);
     if (score > 0) {
       scored.push({
-        path: filePath,
-        score: stale ? score * STALE_SCORE_MULTIPLIER : score,
-        stale
+        path: page.path,
+        score: page.stale ? score * STALE_SCORE_MULTIPLIER : score,
+        stale: page.stale
       });
     }
   }
@@ -1059,7 +1039,7 @@ function parseSessionState(raw, sessionId) {
     cursor: v["cursor"],
     stop_count: v["stop_count"],
     ...topicCache ? { topic: topicCache } : {},
-    // `project_key` is read back from disk and handed straight to `scopePaths()`, which
+    // `project_key` is read back from disk and handed to wiki's `scopePaths()`, which
     // joins it under `<home>/projects/`. The state file is a read boundary like the inbox
     // and the queue, so the key is re-validated here rather than trusted because the only
     // writer happens to sanitize. A rejected key is dropped, not repaired: the deferred
@@ -1476,6 +1456,7 @@ export {
   tryProjectLock,
   withSessionLock,
   readFrontmatter,
+  MS_PER_DAY,
   ARCHIVE_DIVIDER,
   ARCHIVE_DIR,
   isStalePage,

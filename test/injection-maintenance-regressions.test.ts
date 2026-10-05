@@ -2,16 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '../src/core/config.js';
-import {
-  buildScopeInjection,
-  inboxBytes,
-  storeIsUnpopulated,
-  staleSessionStartWarning,
-} from '../src/core/capture.js';
+import { buildScopeInjection, inboxBytes, staleSessionStartWarning } from '../src/core/capture.js';
 import { peekWarnings, recordWarning } from '../src/core/errors.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { runDoctor } from '../src/core/doctor.js';
-import { buildStatus, countPages, inboxAgeMs } from '../src/core/status.js';
+import { buildStatus, inboxAgeMs } from '../src/core/status.js';
+import { openScope, storeIsUnpopulated } from '../src/core/wiki.js';
 import { searchScope } from '../src/core/search.js';
 import { tokenize } from '../src/core/match.js';
 import { estimateTokens } from '../src/core/tokens.js';
@@ -195,7 +191,7 @@ describe('read probe and scope regressions', () => {
     seedStore(KEY);
     rmSync(paths(KEY).pages, { recursive: true });
     writeFileSync(paths(KEY).pages, 'not a directory');
-    expect(countPages(paths(KEY).pages)).toBe(0);
+    expect(openScope(paths(KEY).projectDir).pages).toEqual([]);
     mkdirSync(paths(KEY).inbox);
     rmSync(paths(KEY).index);
     mkdirSync(paths(KEY).index);
@@ -253,11 +249,7 @@ describe('retrieval fixture and snippet regressions', () => {
 
   it('does not split a surrogate pair at the search snippet boundary', () => {
     seedStore(KEY, { pages: { 'emoji.md': `deploy ${'x'.repeat(111)}😀tail` } });
-    const hits = searchScope('deploy', KEY, {
-      pagesDir: paths(KEY).pages,
-      archiveDir: join(paths(KEY).projectDir, 'archive'),
-      logFile: paths(KEY).log,
-    }).hits;
+    const hits = searchScope('deploy', KEY, openScope(paths(KEY).projectDir)).hits;
     expect(hits[0]?.snippet).toBe(`deploy ${'x'.repeat(111)}…`);
   });
 });

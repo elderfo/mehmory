@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { join, relative } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { writeCodexRollout, writeTranscript } from './hook-fixture.js';
-import { finalizePendingSessions, finalizeSession, scopePaths } from '../src/core/capture.js';
+import { finalizePendingSessions, finalizeSession } from '../src/core/capture.js';
+import { scopePaths } from '../src/core/wiki.js';
 import { loadConfig, type MehmoryConfig } from '../src/core/config.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
 import { resolveProjectKey } from '../src/core/identity.js';

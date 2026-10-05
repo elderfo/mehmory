@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { decayPass, readFrontmatter } from '../src/core/decay.js';
+import { loadConfig } from '../src/core/config.js';
 import { atomicWrite, pathExists, readFile } from '../src/core/fs.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { ARCHIVE_DIVIDER } from '../src/schema/format.js';
@@ -40,13 +41,13 @@ describe('decayPass', () => {
     writePage(dir, 'mid.md', 10);
     writeIndex(dir, ['- [[old]] — older page', '- [[new]] — newest page', '- [[mid]] — middling']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.demoted).toEqual([]);
     expect(result.archived).toEqual([]);
     const lines = readFile(join(dir, 'index.md'))
       .split('\n')
-      .filter(l => l.startsWith('- '));
+      .filter((l) => l.startsWith('- '));
     expect(lines).toEqual([
       '- [[new]] — newest page',
       '- [[mid]] — middling',
@@ -60,7 +61,7 @@ describe('decayPass', () => {
     writePage(dir, 'aged.md', 70);
     writeIndex(dir, ['- [[fresh]] — current', '- [[aged]] — stale but kept']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.demoted).toEqual(['aged.md']);
     const content = readFile(join(dir, 'index.md'));
@@ -76,7 +77,7 @@ describe('decayPass', () => {
     writePage(dir, 'fresh.md', 2);
     writeIndex(dir, ['- [[ancient]] — long gone', '- [[fresh]] — current']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual(['ancient.md']);
     expect(pathExists(join(dir, 'pages', 'ancient.md'))).toBe(false);
@@ -92,7 +93,7 @@ describe('decayPass', () => {
     writePage(dir, 'normal.md', 400);
     writeIndex(dir, ['- [[forever]]', '- [[scratch]]', '- [[normal]]']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual(['normal.md']);
     expect(pathExists(join(dir, 'pages', 'forever.md'))).toBe(true);
@@ -109,10 +110,10 @@ describe('decayPass', () => {
     writePage(dir, 'fresh.md', 1);
     writeIndex(dir, ['- [[aged]]', '- [[fresh]]']);
 
-    decayPass(dir, { now: NOW });
+    decayPass(dir, loadConfig(), { now: NOW });
     const first = readFile(join(dir, 'index.md'));
 
-    const second = decayPass(dir, { now: NOW });
+    const second = decayPass(dir, loadConfig(), { now: NOW });
     expect(second.rewroteIndex).toBe(false);
     expect(readFile(join(dir, 'index.md'))).toBe(first);
     expect(first).toContain('# Index');
@@ -120,7 +121,7 @@ describe('decayPass', () => {
   });
 
   it('is a no-op on a scope with no pages directory', () => {
-    expect(decayPass(scope('empty'), { now: NOW })).toEqual({
+    expect(decayPass(scope('empty'), loadConfig(), { now: NOW })).toEqual({
       demoted: [],
       archived: [],
       rewroteIndex: false,
@@ -132,7 +133,7 @@ describe('decayPass', () => {
     atomicWrite(join(dir, 'pages', 'nodate.md'), '# no frontmatter at all\n');
     writeIndex(dir, ['- [[nodate]]']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual([]);
     expect(result.demoted).toEqual([]);

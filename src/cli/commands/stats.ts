@@ -7,11 +7,11 @@
  */
 
 import { join } from 'node:path';
-import { storeExists } from '../../core/capture.js';
+import { storeExists, wikiScope } from '../../core/wiki.js';
 import { mehmoryHome } from '../../core/home.js';
 import { listProjects } from '../../core/scopes.js';
 import { aggregateStats } from '../../core/stats-report.js';
-import { inboxAgeMs, integrateTimestamps, scopeFiles } from '../../core/status.js';
+import { inboxAgeMs, integrateTimestamps } from '../../core/status.js';
 import { flagString, parseFlags } from '../args.js';
 import { EXIT, storeMissing, usageError, type Command } from '../command.js';
 import { SCOPE_FLAGS, scopeLabel, selectScope } from '../scope.js';
@@ -130,7 +130,7 @@ export const command: Command = {
 /** The most neglected inbox across the selected scopes — the number worth surfacing. */
 function oldestInboxAgeMs(dirs: readonly string[]): number | undefined {
   const ages = dirs
-    .map(dir => inboxAgeMs(scopeFiles(dir).inboxFile))
+    .map(dir => inboxAgeMs(wikiScope(dir).inboxFile))
     .filter((age): age is number => age !== undefined);
   return ages.length === 0 ? undefined : Math.max(...ages);
 }
@@ -138,7 +138,7 @@ function oldestInboxAgeMs(dirs: readonly string[]): number | undefined {
 /** Mean days between integrates across the selected scopes; undefined below two. */
 function integrateCadenceDays(dirs: readonly string[]): number | undefined {
   const stamps = dirs
-    .flatMap(dir => integrateTimestamps(scopeFiles(dir).logFile))
+    .flatMap(dir => integrateTimestamps(wikiScope(dir).logFile))
     .map(ts => Date.parse(ts))
     .filter(ms => Number.isFinite(ms))
     .sort((a, b) => a - b);
