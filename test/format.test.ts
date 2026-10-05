@@ -8,6 +8,8 @@ import {
   USER_ERROR_TEMPLATE,
   formatIndexLine,
   parseIndexLine,
+  serializeInboxEntry,
+  parseInboxEntries,
 } from '../src/schema/format.js';
 
 describe('format constants', () => {
@@ -122,5 +124,60 @@ describe('index line format', () => {
     expect(parseIndexLine('The deploy-process page covers staging.')).toBeUndefined();
     expect(parseIndexLine('## Archive')).toBeUndefined();
     expect(parseIndexLine('')).toBeUndefined();
+  });
+});
+
+describe('inbox text escaping', () => {
+  it('preserves literal backslash escapes instead of interpreting them twice', () => {
+    const line = serializeInboxEntry({
+      id: '0123456789abcdef',
+      text: 'literal \\n and --\\> and --!\\>',
+      src: 'session',
+      ts: '2026-10-05T00:00:00Z',
+    });
+    expect(line).toBe(
+      '- literal \\\\n and --\\\\> and --!\\\\> <!--mehmory id=0123456789abcdef src=session host=claude-code ts=2026-10-05T00:00:00Z-->'
+    );
+    expect(parseInboxEntries(line)[0]?.text).toBe('literal \\n and --\\> and --!\\>');
+  });
+
+  it('round-trips every combination of tricky text without trimming', () => {
+    const parts = [
+      '',
+      'plain',
+      ' ',
+      '\t',
+      '\n',
+      '\r',
+      '\\',
+      '\\n',
+      '-->',
+      '--!>',
+      '--\\>',
+      '--!\\>',
+      '\u2028',
+      '\u2029',
+      '\0',
+      '雪',
+    ];
+    for (const left of parts) {
+      for (const right of parts) {
+        const text = left + right;
+        const line = serializeInboxEntry({
+          id: '0123456789abcdef',
+          text,
+          src: 'session',
+          ts: '2026-10-05T00:00:00Z',
+        });
+        expect(line).not.toMatch(/[\r\n\u2028\u2029]/);
+        expect(parseInboxEntries(line)[0]?.text).toBe(text);
+      }
+    }
+  });
+
+  it('preserves the decoding of legacy text with no original backslash', () => {
+    const legacy =
+      '- line1\\nline2 --\\> --!\\> <!--mehmory id=0123456789abcdef src=session ts=2026-10-05T00:00:00Z-->';
+    expect(parseInboxEntries(legacy)[0]?.text).toBe('line1\nline2 --> --!>');
   });
 });

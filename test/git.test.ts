@@ -4,10 +4,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { statePath } from '../src/core/home.js';
-import { commitPaths } from '../src/core/git.js';
+import { commitPaths, ensureGitBaseline } from '../src/core/git.js';
+import { peekWarnings, pendingWarnings } from '../src/core/errors.js';
 
 // Setup a temporary git repo for testing
 function setupTestRepo(): { readonly dir: string; readonly cleanup: () => void } {
@@ -96,7 +97,7 @@ describe('commitPaths (done-when 8)', () => {
     }
   });
 
-  it('returns { ok: false, deferred: true } when index.lock persists after retry', () => {
+  it('disables post-index-change hooks that would interfere with staging', () => {
     const { dir, cleanup } = setupTestRepo();
 
     try {
@@ -116,22 +117,15 @@ describe('commitPaths (done-when 8)', () => {
       const hookScript = join(hooksDir, 'post-index-change');
       writeFileSync(
         hookScript,
-        '#!/bin/sh\n' +
-        'touch "' + lockPath.replace(/"/g, '\\"') + '"\n' +
-        'exit 0\n'
+        '#!/bin/sh\n' + 'touch "' + lockPath.replace(/"/g, '\\"') + '"\n' + 'exit 0\n'
       );
       execFileSync('chmod', ['+x', hookScript], { stdio: 'pipe' });
 
       try {
-        // Call commitPaths: git add succeeds and triggers the hook which creates the lock
-        // Then git commit sees the lock and defers
-        const result = commitPaths([join(dir, 'file1.txt')], 'deferred commit', dir);
+        const result = commitPaths([join(dir, 'file1.txt')], 'without staging hooks', dir);
 
-        // Assert the discriminated union: ok: false branch with deferred: true
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-          expect(result.deferred).toBe(true);
-        }
+        expect(result).toEqual({ ok: true });
+        expect(existsSync(lockPath)).toBe(false);
       } finally {
         // Clean up lock if still there
         if (existsSync(lockPath)) {
@@ -188,6 +182,123 @@ describe('commitPaths (done-when 8)', () => {
     // Staging error is not a deferral (index.lock is not involved)
     if (!result.ok) {
       expect(result.deferred).toBeUndefined();
+    }
+  });
+});
+
+describe('git child isolation', () => {
+  it('terminates a hung git child even when it ignores SIGTERM', () => {
+    const bin = statePath('fake-bin');
+    const pidFile = statePath('hung-git.pid');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nprocess.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n`,
+      { mode: 0o755 }
+    );
+    const started = Date.now();
+    try {
+      const child = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          "import { commitPaths } from './dist/core/git.js'; console.log(JSON.stringify(commitPaths(['note.md'], 'test')));",
+        ],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, PATH: `${bin}:${process.env['PATH'] ?? ''}` },
+          timeout: 3000,
+          killSignal: 'SIGKILL',
+          encoding: 'utf8',
+        }
+      );
+      expect(child.status).toBe(0);
+      expect(child.stdout.trim()).toBe('{"ok":false}');
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally {
+      if (existsSync(pidFile)) {
+        try {
+          process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+        } catch {
+          // The fixed wrapper already reaped its child.
+        }
+      }
+    }
+  });
+
+  it('treats an unchanged tree as success without recording an error', () => {
+    const { dir, cleanup } = setupTestRepo();
+    try {
+      writeFileSync(join(dir, 'note.md'), 'unchanged');
+      expect(commitPaths(['note.md'], 'initial', dir)).toEqual({ ok: true });
+      pendingWarnings();
+      expect(commitPaths(['note.md'], 'no changes', dir)).toEqual({ ok: true });
+      expect(peekWarnings()).toEqual([]);
+      expect(existsSync(statePath('errors.log'))).toBe(false);
+      expect(
+        execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+      ).toBe('1');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('ignores inherited repository-location variables for baseline and commits', () => {
+    const store = setupTestRepo();
+    const user = setupTestRepo();
+    const saved = { ...process.env };
+    try {
+      writeFileSync(join(user.dir, 'private.md'), 'user content');
+      expect(commitPaths(['private.md'], 'user initial', user.dir)).toEqual({ ok: true });
+      const userHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: user.dir,
+        encoding: 'utf8',
+      });
+      writeFileSync(join(store.dir, 'note.md'), 'memory');
+      process.env['GIT_DIR'] = join(user.dir, '.git');
+      process.env['GIT_WORK_TREE'] = user.dir;
+      process.env['GIT_INDEX_FILE'] = join(user.dir, '.git/index');
+      process.env['GIT_OBJECT_DIRECTORY'] = join(user.dir, '.git/objects');
+      expect(ensureGitBaseline(store.dir)).toEqual({ ok: true });
+      writeFileSync(join(store.dir, 'note.md'), 'new memory');
+      expect(commitPaths(['note.md'], 'memory update', store.dir)).toEqual({ ok: true });
+      expect(process.env['GIT_DIR']).toBe(join(user.dir, '.git'));
+      process.env = saved;
+      expect(
+        execFileSync('git', ['show', 'HEAD:note.md'], { cwd: store.dir, encoding: 'utf8' })
+      ).toBe('new memory');
+      expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: user.dir, encoding: 'utf8' })).toBe(
+        userHead
+      );
+    } finally {
+      process.env = saved;
+      store.cleanup();
+      user.cleanup();
+    }
+  });
+
+  it('ignores ambient core.hooksPath for pre-commit and post-commit hooks', () => {
+    const { dir, cleanup } = setupTestRepo();
+    const saved = { ...process.env };
+    try {
+      const hookDir = join(dir, 'ambient-hooks');
+      mkdirSync(hookDir);
+      const marker = join(dir, 'hook-ran');
+      for (const hook of ['pre-commit', 'post-commit']) {
+        writeFileSync(join(hookDir, hook), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, {
+          mode: 0o755,
+        });
+      }
+      process.env['GIT_CONFIG_COUNT'] = '4';
+      process.env['GIT_CONFIG_KEY_3'] = 'core.hooksPath';
+      process.env['GIT_CONFIG_VALUE_3'] = hookDir;
+      writeFileSync(join(dir, 'note.md'), 'memory');
+      expect(commitPaths(['note.md'], 'without hooks', dir)).toEqual({ ok: true });
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      process.env = saved;
+      cleanup();
     }
   });
 });

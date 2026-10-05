@@ -28,6 +28,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Inbox text round-trips exactly.** Backslashes, line separators, comment terminators, and surrounding whitespace survive serialization without being reinterpreted or discarded.
+- **Atomic writes preserve symlinks and flush replacements.** Writes update the real target, flush the temporary file before rename and the directory afterward (best-effort), and clean up temporary files on failure.
+- **Memory commits are bounded and isolated.** Every git invocation has a timeout, inherited repository-location variables and hooks cannot redirect or block it, and an unchanged tree is a successful no-op.
+- **Concurrent warnings are not overwritten or cleared accidentally.** Immutable records replace read-modify-write warning storage, drains claim only published records, legacy warnings remain readable, and detail paths honor `MEHMORY_HOME`.
+- **Append and warning directory failures stay fail-open.** An unusable parent directory returns an append failure or skips warning storage instead of throwing into the harness.
+
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

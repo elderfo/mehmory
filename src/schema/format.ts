@@ -217,8 +217,8 @@ export function inboxEntryId(seed: string): string {
  *
  * Embedded newlines are JSON-escaped (`\n` → `\\n`) so the one-line invariant holds
  * before the record reaches `appendRecord`, whose escape pass is then a no-op.
- * Carriage returns are dropped; a comment terminator in the text would break the
- * comment, so it is neutralized.
+ * Backslashes are escaped first, and carriage returns and Unicode line separators
+ * are escaped too. A comment terminator in the text is neutralized.
  *
  * Both spellings are neutralized: HTML ends a comment on `--!>` as well as `-->`, and
  * escaping only the latter left the other one live (CodeQL js/bad-tag-filter). The
@@ -227,10 +227,12 @@ export function inboxEntryId(seed: string): string {
  */
 export function serializeInboxEntry(entry: InboxEntry): string {
   const text = entry.text
-    .replace(/\r/g, '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n')
-    .replace(/--(!?)>/g, '--$1\\>')
-    .trim();
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+    .replace(/--(!?)>/g, '--$1\\>');
   if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
     throw new Error('inbox entry source contains unsafe metadata characters');
   }
@@ -273,7 +275,25 @@ export function parseInboxEntries(content: string): InboxEntry[] {
     const agent = rawAgent !== undefined && isSafeAgentName(rawAgent) ? rawAgent : undefined;
     entries.push({
       id,
-      text: text.replace(/--(!?)\\>/g, '--$1>').replace(/\\n/g, '\n'),
+      // One pass prevents an escaped backslash from becoming a second escape.
+      text: text.replace(
+        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
+        (_match, escape: string | undefined, bang: string | undefined) => {
+          if (escape === undefined) return `--${bang ?? ''}>`;
+          switch (escape) {
+            case 'n':
+              return '\n';
+            case 'r':
+              return '\r';
+            case 'u2028':
+              return '\u2028';
+            case 'u2029':
+              return '\u2029';
+            default:
+              return '\\';
+          }
+        }
+      ),
       src,
       host,
       ...(agent !== undefined ? { agent } : {}),

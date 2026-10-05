@@ -18,7 +18,7 @@ import {
   removeDir,
   stat,
   statePath
-} from "./chunk-NTSIN6Z2.mjs";
+} from "./chunk-B6KFCQBF.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -79,7 +79,7 @@ function inboxEntryId(seed) {
   return createHash("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }
 function serializeInboxEntry(entry) {
-  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
+  const text = entry.text.replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/--(!?)>/g, "--$1\\>");
   if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
     throw new Error("inbox entry source contains unsafe metadata characters");
   }
@@ -103,7 +103,25 @@ function parseInboxEntries(content) {
     const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
     entries.push({
       id,
-      text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
+      // One pass prevents an escaped backslash from becoming a second escape.
+      text: text.replace(
+        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
+        (_match, escape, bang) => {
+          if (escape === void 0) return `--${bang ?? ""}>`;
+          switch (escape) {
+            case "n":
+              return "\n";
+            case "r":
+              return "\r";
+            case "u2028":
+              return "\u2028";
+            case "u2029":
+              return "\u2029";
+            default:
+              return "\\";
+          }
+        }
+      ),
       src,
       host,
       ...agent !== void 0 ? { agent } : {},

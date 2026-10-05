@@ -21,9 +21,11 @@ import {
   unlinkSync,
   realpathSync,
   chmodSync,
+  fsyncSync,
+  readlinkSync,
   constants,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, sep } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
 
 // ─── Bounds (A8) ───
@@ -202,23 +204,68 @@ export function createLockExclusive(path: string, owner = ''): boolean {
  *               callers are unaffected.
  */
 export function atomicWrite(path: string, contents: string, mode?: number): void {
-  const dir = dirname(path);
+  const destination = resolveWriteTarget(path);
+  const dir = dirname(destination);
   mkdir(dir);
-
-  // Write to temp file with random suffix
-  const tempPath = path + '.tmp-' + Math.random().toString(36).slice(2, 8);
-  const target = mode ?? existingMode(path);
-  if (target !== undefined) {
-    writeFileSync(tempPath, contents, { encoding: 'utf-8', mode: target });
-    // umask can still mask bits out of the mode passed to writeFileSync,
-    // so force the exact target mode rather than trust the create-time result.
-    chmodSync(tempPath, target);
-  } else {
-    writeFileSync(tempPath, contents, 'utf-8');
+  const tempPath = destination + '.tmp-' + Math.random().toString(36).slice(2, 8);
+  const targetMode = mode ?? existingMode(destination);
+  let created = false;
+  try {
+    const fd = openSync(tempPath, 'wx', targetMode);
+    created = true;
+    try {
+      writeFileSync(fd, contents, 'utf-8');
+      if (targetMode !== undefined) chmodSync(tempPath, targetMode);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tempPath, destination);
+    // Some filesystems do not support directory fsync; the replacement still succeeded.
+    try {
+      const directoryFd = openSync(dir, 'r');
+      try {
+        fsyncSync(directoryFd);
+      } finally {
+        closeSync(directoryFd);
+      }
+    } catch {
+      // Best-effort directory durability.
+    }
+  } catch (error) {
+    if (created) {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // Preserve the original write/rename error if cleanup also fails.
+      }
+    }
+    throw error;
   }
+}
 
-  // Atomic rename on POSIX
-  rename(tempPath, path);
+/** Follow even dangling final symlinks; realpath alone cannot resolve those. */
+function resolveWriteTarget(path: string): string {
+  let target = path;
+  const seen = new Set<string>();
+  for (;;) {
+    if (seen.has(target)) throw new Error('atomic write target contains a symlink cycle');
+    seen.add(target);
+    try {
+      // Native resolution keeps '..' after a directory symlink physical, not lexical.
+      return realpathSync.native(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let link: string;
+    try {
+      link = readlinkSync(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return target;
+      throw error;
+    }
+    target = isAbsolute(link) ? link : `${realpathSync.native(dirname(target))}${sep}${link}`;
+  }
 }
 
 /** Permission bits of an existing file, or undefined when it does not exist. */
@@ -272,7 +319,10 @@ export function appendRecord(
     try {
       lockPath(key, () => {
         mkdir(dirname(path));
-        const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+        const fd = openSync(
+          path,
+          constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+        );
         try {
           writeSync(fd, escaped + '\n', null, 'utf-8');
         } finally {
@@ -287,10 +337,12 @@ export function appendRecord(
     }
   } else {
     // Direct O_APPEND write for atomicity (POSIX guarantee)
-    mkdir(dirname(path));
-
     try {
-      const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW);
+      mkdir(dirname(path));
+      const fd = openSync(
+        path,
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+      );
       try {
         writeSync(fd, escaped + '\n', null, 'utf-8');
       } finally {
