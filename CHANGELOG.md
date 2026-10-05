@@ -28,6 +28,36 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Inbox text round-trips exactly.** Backslashes, line separators, comment terminators,
+  and surrounding whitespace survive new serialization without reinterpretation or loss.
+- **Legacy inbox backslashes have one-way escape semantics.** Raw `\\` and `\r` in old
+  entries now decode as a backslash and carriage return; review backslash-heavy facts
+  before integrating. The schema and upgrade guide document the entry-text escapes.
+- **Atomic writes replace symlinks and flush replacements.** A planted destination
+  symlink is replaced, never written through or used to create its target's parent.
+  Writes flush the temporary file before rename and the directory afterward (best-effort),
+  and clean up temporary files on failure.
+- **Memory commits use recoverable timeouts.** Git receives SIGTERM, with 500 ms for cheap
+  probes and 10 s for other store operations. Timeouts log the manual remedy;
+  real lock contention retries once then defers.
+- **Git timeouts never delete another process's index lock.** Git cleans up its own lock
+  on SIGTERM; mehmory leaves all index locks untouched and logs the safe manual remedy.
+- **Old index locks no longer defer silently forever.** Locks older than 30 s trigger a
+  rate-limited warning with the manual remedy, without deleting a possibly live lock.
+- **Store history reads disable signature display.** Ambient `log.showSignature` cannot
+  trigger signature verification or contaminate the last-commit summary.
+- **Every store git call is isolated.** Init, config, status, and history reads now share
+  the commit runner's stripped repository environment, disabled hooks and fsmonitor,
+  literal pathspec support, and C locale. Project identity retains the caller's repo
+  environment with bounded reads. An unchanged tree remains a successful no-op.
+- **Concurrent warnings are not overwritten or cleared accidentally.** Immutable records
+  replace read-modify-write storage, drains claim only published records, legacy warnings
+  remain readable, and detail paths honor `MEHMORY_HOME`.
+- **Warning drains recover safely.** Corrupt claimed JSON is discarded instead of retried
+  forever, failed claims fall back to read-only delivery, and claims left by crashes are
+  reclaimed after a minute.
+- **Append and warning directory failures stay fail-open.** An unusable parent directory
+  returns an append failure or skips warning storage instead of throwing into the harness.
 - **Capture retries keep their delta.** Cursors advance only after a successful inbox append
   or durable enqueue, and failed captures retain the Stop counter.
 - **Swept live sessions resume without SessionStart.** Later transcript activity restores the
@@ -105,12 +135,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A git install no longer fails without dev dependencies.** `prepare` ran `husky install`,
   which exited 127 under `npm install --omit=dev` (how Pi installs a git package). It now
   tolerates husky being absent, and a dev checkout still installs the git hooks.
-
-- **Purge and inbox transactions stay inside the memory store.** Page selectors, inbox paths, and snapshot tokens are validated before destructive or rewriting operations, and purge commits only its requested paths.
-- **Interrupted capture jobs are recoverable.** Stale queue claims are returned to the pending queue instead of being discarded, while malformed secret settings continue to use built-in redaction.
-- **Codex setup and inbox rewrites fail safely.** Configuration writes are preflighted and rolled back on failure, new Codex config files use private permissions, and inbox clears never rewrite without their project lock.
-- **Remember facts are serialized safely.** Fact text no longer gets interpolated into shell JSON.
-
+- **Purge and inbox transactions stay inside the memory store.** Page selectors, inbox
+  paths, and snapshot tokens are validated before destructive or rewriting operations,
+  and purge commits only its requested paths.
+- **Interrupted capture jobs are recoverable.** Stale queue claims are returned to the
+  pending queue instead of being discarded, while malformed secret settings continue to
+  use built-in redaction.
+- **Codex setup and inbox rewrites fail safely.** Configuration writes are preflighted and
+  rolled back on failure, new Codex config files use private permissions, and inbox clears
+  never rewrite without their project lock.
+- **Remember facts are serialized safely.** Fact text no longer gets interpolated into
+  shell JSON.
 - **A resumed session is finalized again instead of being written off forever.** The
   finalization marker meant "this id is done", not "the transcript up to here is
   captured", so once a harness reused a session id on resume every later `SessionEnd` for
@@ -124,7 +159,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and was skipped. Session state now carries a generation, and both the marker and that
   tag are keyed by id and generation. Generation 0 keeps the original tag spelling, so
   existing `log.md` content still matches.
-
 - **A session in the middle of a long turn is no longer finalized while it is alive.**
   Idle detection read the state file's mtime, which only moves when a hook writes. A
   session waiting on a slow build or a long tool call fires no hooks, looked abandoned
@@ -139,14 +173,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   loses one. A rollout flushed after `SessionEnd` (#43) waits out the window from its own
   mtime, and a transcript that has not landed at all still falls back to the state mtime,
   so it stays eligible rather than waiting forever for a file that is absent.
-
 - **Session-state writes are serialized.** `updateSessionState` was an unlocked
   read-modify-write, and hooks for one session really do overlap -- a Stop alongside a
   UserPromptSubmit, a `SessionEnd` racing a trailing Stop. The later writer discarded the
   earlier one's field, which could roll an advanced cursor backwards into a re-distill. A
   per-session lock now covers read and write together. It gets much tighter retry bounds
   than the project lock, which busy-waits: this one is taken on every prompt.
-
 - **A project key that would escape the store is rejected at every read boundary.**
   `project_key` is joined under `<home>/projects/`, and now that it is written on every
   hook it reaches that join routinely. It is re-validated where it is read back -- the
@@ -155,13 +187,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never passed through the remote-key sanitizer. Containment is now a separate check from
   the `host/owner/repo` shape check, so a one-segment alias such as `my-custom-key`
   remains valid.
-
 - **An alias that is not a string no longer takes down every hook for that project.**
   `identity.aliases` is typed `Record<string, string>`, but `config.json` is user JSON and
   nothing enforced the value type at runtime. A number reached `String.prototype.split`
   and threw out of `resolveProjectKey`, which `runHook` catches fail-open -- so the hook
   produced no capture, no injection and no error the user would see.
-
 - **A finalized session's state is no longer resurrected.** A hook firing after
   finalization rebuilt `.state/<id>.json` from scratch, cursor back at 0.
   `finalizeSession` short-circuits on the marker before it would delete state again, so

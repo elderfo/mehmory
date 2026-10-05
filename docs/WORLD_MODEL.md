@@ -65,7 +65,12 @@ A8 defines bounds for fail-open operations in one module so later runs can overr
   owner liveness (`LOCK_MAX_AGE_MS` in `lock.ts`)
 - Reclaim guard abandonment: after 30 s (`LOCK_STALE_MS`); a guard serializes the file
   identity/owner recheck and unlink, and abandoned guards use the same guarded protocol
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **Lock age-cap decision.** A PID can be reused after its original owner exits, so a liveness
 probe alone could protect an abandoned lock forever. The five-minute cap deliberately favors
@@ -240,6 +245,16 @@ Injection, pointers and capture must complete. Decay, queue claims and sweeps ru
 when uncontended (first-attempt lock, ≤1 job) and skip silently otherwise — the next
 session retries.
 
+Atomic replacements fsync the temporary file before rename and the containing directory
+best-effort afterward. Budget approximately 1–2 ms per write on SSD, more on network or
+WSL mounts. Git add/commit/diff belong to SessionEnd, purge, or maintenance, not the
+response lane, so their 10 s timeout is deliberately larger than cheap read probes.
+Store git calls strip repository-location and pathspec-mode environment overrides,
+disable hooks and fsmonitor, suppress signature display in history reads, and use
+`LC_ALL=C`; discovery ceilings are retained.
+Project-identity reads retain the caller's repository environment because they name the
+user's repo rather than the store, but remain bounded by the cheap-probe timeout.
+
 **Rejected:** Maintenance on the response path (the spec's own bounds compose to a 5 s
 lock wait inside a <1 s budget); a background daemon (nothing in v1 owns a resident
 process, and the durable queue exists precisely so short-lived processes can hand work
@@ -255,7 +270,12 @@ protocol family. A8's bound list now reads:
 - Lock retry (default lane): 50 × 100 ms then proceed lock-free
 - **Lock retry (hook-maintenance lane): 1 attempt, then skip and defer to the next
   session** — the injection path must never sit inside a retry loop
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **WORLD_MODEL check.** A12 upholds A1/A3/A9/A11/U2; A13 amends the run-1 cursor contract
 (named amendment, raised at the gate); A14 extends A4; A15 upholds A2/A6; A16 upholds A2

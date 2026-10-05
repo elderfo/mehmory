@@ -1,4 +1,6 @@
 import {
+  INDEX_LOCK_RETRY_COUNT,
+  INDEX_LOCK_RETRY_INTERVAL_MS,
   LOCK_RETRY_COUNT,
   LOCK_RETRY_INTERVAL_MS,
   LOCK_STALE_MS,
@@ -12,12 +14,14 @@ import {
   mehmoryHome,
   mkdir,
   pathExists,
+  peekWarnings,
   readFile,
   realpath,
   remove,
+  shellQuote,
   stat,
   statePath
-} from "./chunk-2IVUMMAS.mjs";
+} from "./chunk-PL4QONDN.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -78,7 +82,7 @@ function inboxEntryId(seed) {
   return createHash("sha256").update(seed).digest("hex").slice(0, INBOX_ENTRY_ID_LENGTH);
 }
 function serializeInboxEntry(entry) {
-  const text = entry.text.replace(/\r/g, "").replace(/\n/g, "\\n").replace(/--(!?)>/g, "--$1\\>").trim();
+  const text = entry.text.replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/--(!?)>/g, "--$1\\>");
   if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
     throw new Error("inbox entry source contains unsafe metadata characters");
   }
@@ -102,7 +106,25 @@ function parseInboxEntries(content) {
     const agent = rawAgent !== void 0 && isSafeAgentName(rawAgent) ? rawAgent : void 0;
     entries.push({
       id,
-      text: text.replace(/--(!?)\\>/g, "--$1>").replace(/\\n/g, "\n"),
+      // One pass prevents an escaped backslash from becoming a second escape.
+      text: text.replace(
+        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
+        (_match, escape, bang) => {
+          if (escape === void 0) return `--${bang ?? ""}>`;
+          switch (escape) {
+            case "n":
+              return "\n";
+            case "r":
+              return "\r";
+            case "u2028":
+              return "\u2028";
+            case "u2029":
+              return "\u2029";
+            default:
+              return "\\";
+          }
+        }
+      ),
       src,
       host,
       ...agent !== void 0 ? { agent } : {},
@@ -334,11 +356,199 @@ function describe(value) {
 
 // src/core/lock.ts
 import { createHash as createHash3, randomBytes } from "crypto";
-import { join as join2 } from "path";
+import { join as join3 } from "path";
 
 // src/core/identity.ts
-import { execFileSync } from "child_process";
+import { execFileSync as execFileSync2 } from "child_process";
 import { createHash as createHash2 } from "crypto";
+
+// src/core/git.ts
+import { execFileSync } from "child_process";
+import { join as join2 } from "path";
+var GIT_PROBE_TIMEOUT_MS = 500;
+var GIT_OPERATION_TIMEOUT_MS = 1e4;
+var GIT_LOCATION_ENV = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_INTERNAL_SUPER_PREFIX",
+  "GIT_CONFIG",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_QUARANTINE_PATH",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_NAMESPACE",
+  "GIT_PREFIX",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
+];
+var GIT_PREFIX = [
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.useBuiltinFSMonitor=false"
+];
+function gitOptions(cwd, timeout) {
+  const env = { ...process.env, LC_ALL: "C" };
+  for (const name of GIT_LOCATION_ENV) Reflect.deleteProperty(env, name);
+  return {
+    stdio: "pipe",
+    timeout,
+    // Git removes its own index lock on SIGTERM; SIGKILL strands it.
+    killSignal: "SIGTERM",
+    env,
+    ...cwd ? { cwd } : {}
+  };
+}
+function isGitTimeout(error) {
+  return error?.code === "ETIMEDOUT";
+}
+function runStoreGit(args, cwd) {
+  const timeout = args[0] === "rev-parse" ? GIT_PROBE_TIMEOUT_MS : GIT_OPERATION_TIMEOUT_MS;
+  try {
+    const command = args[0] === "log" ? ["log", "--no-show-signature", ...args.slice(1)] : args;
+    return execFileSync("git", [...GIT_PREFIX, ...command], gitOptions(cwd, timeout));
+  } catch (error) {
+    if (isGitTimeout(error)) {
+      const lock = join2(cwd ?? process.cwd(), ".git", "index.lock");
+      logError({
+        code: "E_GIT_COMMIT",
+        kind: "informational",
+        what: `git ${args[0] ?? ""} timed out after ${String(timeout)} ms; index.lock left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
+        consequence: "Git operation failed; memory may be left uncommitted"
+      });
+    }
+    throw error;
+  }
+}
+function warnStaleIndexLock(cwd) {
+  const lock = join2(cwd ?? process.cwd(), ".git", "index.lock");
+  try {
+    const mtime = lstat(lock)?.mtime.getTime();
+    if (mtime === void 0 || Date.now() - mtime <= LOCK_STALE_MS) return;
+    if (peekWarnings().some((warning) => warning.startsWith("E_GIT_COMMIT "))) return;
+    logError({
+      code: "E_GIT_COMMIT",
+      kind: "informational",
+      what: `index.lock is older than ${String(LOCK_STALE_MS)} ms; left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
+      consequence: "Commit deferred; memory may be left uncommitted"
+    });
+  } catch {
+  }
+}
+function commitPaths(paths, message, cwd, strictPaths = false) {
+  try {
+    runStoreGit(["rev-parse", "--git-dir"], cwd);
+  } catch (caught) {
+    if (isGitTimeout(caught)) return { ok: false };
+    const error = {
+      code: "E_GIT_COMMIT",
+      kind: "informational",
+      what: "Not in a git repository",
+      consequence: "Commit failed; memory was not recorded"
+    };
+    logError(error);
+    return { ok: false };
+  }
+  let stagePaths = paths;
+  try {
+    runStoreGit(["rev-parse", "--verify", "HEAD"], cwd);
+  } catch (error) {
+    if (isGitTimeout(error)) return { ok: false };
+    if (paths.length === 0) stagePaths = ["."];
+  }
+  for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
+    try {
+      runStoreGit(["add", "-A", "--", ...stagePaths], cwd);
+      break;
+    } catch (err) {
+      const what = err instanceof Error ? err.message : String(err);
+      if (!isGitTimeout(err) && what.includes("index.lock")) {
+        if (attempt < INDEX_LOCK_RETRY_COUNT) {
+          const end = Date.now() + INDEX_LOCK_RETRY_INTERVAL_MS;
+          while (Date.now() < end) {
+          }
+          continue;
+        }
+        warnStaleIndexLock(cwd);
+        return { ok: false, deferred: true };
+      }
+      logError({
+        code: "E_GIT_COMMIT",
+        kind: "informational",
+        what,
+        consequence: "Failed to stage paths; commit aborted"
+      });
+      return { ok: false };
+    }
+  }
+  try {
+    const staged = runStoreGit(["diff", "--cached", "--name-only"], cwd).toString().split("\n").filter(Boolean);
+    if (staged.length === 0) return { ok: true };
+    if (strictPaths) {
+      const allowed = paths.map(
+        (path) => path.replace(/^:\(top,literal\)/, "").replace(/\\/g, "/")
+      );
+      const unrelated = staged.some(
+        (file) => !allowed.some((path) => file === path || file.startsWith(path + "/"))
+      );
+      if (unrelated) {
+        logError({
+          code: "E_GIT_COMMIT",
+          kind: "informational",
+          what: "unrelated changes are already staged in the memory store",
+          consequence: "Purge left the store dirty rather than committing user changes"
+        });
+        return { ok: false };
+      }
+    }
+  } catch {
+    return { ok: false };
+  }
+  for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
+    try {
+      runStoreGit(["commit", "--no-verify", "--no-gpg-sign", "-m", message], cwd);
+      return { ok: true };
+    } catch (err) {
+      const stderr = err instanceof Error ? err.message : String(err);
+      const failure = err;
+      if (failure.status === 1 && /nothing to commit|nothing added to commit/.test(failure.stdout?.toString() ?? "")) {
+        return { ok: true };
+      }
+      const isIndexLock = !isGitTimeout(err) && (stderr.includes("index.lock") || stderr.includes("fatal: Unable to process"));
+      if (isIndexLock && attempt < INDEX_LOCK_RETRY_COUNT) {
+        const end = Date.now() + INDEX_LOCK_RETRY_INTERVAL_MS;
+        while (Date.now() < end) {
+        }
+        continue;
+      }
+      if (isIndexLock) {
+        warnStaleIndexLock(cwd);
+        return { ok: false, deferred: true };
+      }
+      const error = {
+        code: "E_GIT_COMMIT",
+        kind: "informational",
+        what: stderr,
+        consequence: "Commit failed; tree left staged for manual recovery"
+      };
+      logError(error);
+      return { ok: false, deferred: true };
+    }
+  }
+  return { ok: false };
+}
+
+// src/core/identity.ts
 var projectKeyCache = /* @__PURE__ */ new Map();
 function configuredAlias(config, key) {
   const identity = config.identity;
@@ -398,10 +608,12 @@ function resolveProjectKey(cwd = process.cwd()) {
 }
 function tryGetGitToplevel(cwd) {
   try {
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    const top = execFileSync2("git", ["rev-parse", "--show-toplevel"], {
       cwd,
       encoding: "utf-8",
-      stdio: "pipe"
+      stdio: "pipe",
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: "SIGTERM"
     }).trim();
     return top || void 0;
   } catch {
@@ -410,11 +622,18 @@ function tryGetGitToplevel(cwd) {
 }
 function tryGetGitRemoteKey(cwd) {
   try {
-    execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "pipe" });
-    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+    execFileSync2("git", ["rev-parse", "--git-dir"], {
+      cwd,
+      stdio: "pipe",
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: "SIGTERM"
+    });
+    const remoteUrl = execFileSync2("git", ["config", "--get", "remote.origin.url"], {
       cwd,
       encoding: "utf-8",
-      stdio: "pipe"
+      stdio: "pipe",
+      timeout: GIT_PROBE_TIMEOUT_MS,
+      killSignal: "SIGTERM"
     }).trim();
     if (!remoteUrl) {
       return void 0;
@@ -455,7 +674,7 @@ var SESSION_LOCK_RETRY_COUNT = 10;
 var SESSION_LOCK_RETRY_INTERVAL_MS = 20;
 function lockFilePath(key) {
   const name = isContainedProjectKey(key) ? key.replace(/\//g, "_") : createHash3("sha256").update(key).digest("hex");
-  return join2(statePath("locks"), name + ".lock");
+  return join3(statePath("locks"), name + ".lock");
 }
 function reclaimLock(path, observed, marker, owner) {
   const guardPath = `${path}.reclaim`;
@@ -646,7 +865,7 @@ function clearInboxEntries(inboxFile, key, ids) {
 }
 
 // src/core/match.ts
-import { basename, join as join3 } from "path";
+import { basename, join as join4 } from "path";
 var MIN_TOKEN_LENGTH = 3;
 var STOPWORDS = /* @__PURE__ */ new Set([
   "the",
@@ -738,7 +957,7 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
   const scored = [];
   for (const name of listDir(pagesDir)) {
     if (!name.endsWith(".md")) continue;
-    const filePath = join3(pagesDir, name);
+    const filePath = join4(pagesDir, name);
     let contents;
     try {
       if (!stat(filePath)?.isFile()) continue;
@@ -756,7 +975,7 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
     }
     if (score > 0) {
       scored.push({
-        path: join3(prefix, name),
+        path: join4(prefix, name),
         score: stale ? score * STALE_SCORE_MULTIPLIER : score,
         stale
       });
@@ -768,7 +987,7 @@ function matchPages(prompt, pagesDir, max = 3, options = {}) {
 
 // src/core/session.ts
 import { createHash as createHash4 } from "crypto";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 
 // src/core/cursor.ts
 function freshCursor() {
@@ -997,7 +1216,7 @@ function listPendingSessions(idleMs = PENDING_FINALIZE_IDLE_MS) {
   for (const name of listDir(dir)) {
     if (!name.endsWith(".json") || name.endsWith(".finalized.json")) continue;
     try {
-      const path = join4(dir, name);
+      const path = join5(dir, name);
       const mtime = stat(path)?.mtimeMs;
       const raw = readFile(path);
       const id = JSON.parse(raw)["session_id"];
@@ -1034,7 +1253,7 @@ function sweepSessionState(maxAgeDays) {
   let deleted = 0;
   for (const name of listDir(dir)) {
     if (!name.endsWith(".json")) continue;
-    const path = join4(dir, name);
+    const path = join5(dir, name);
     try {
       const mtime = stat(path)?.mtimeMs;
       if (mtime === void 0 || mtime > cutoff) continue;
@@ -1082,7 +1301,7 @@ function isPaused(sessionId) {
 }
 
 // src/core/redact.ts
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 var REDACTION_PLACEHOLDER = "[REDACTED]";
 var SECRET_PATTERNS = [
   // AWS: AKIA... access keys (20 chars after AKIA)
@@ -1132,7 +1351,7 @@ function compileUserPatterns(patterns) {
         kind: "actionable",
         what: `secrets.patterns entry ${String(patterns.indexOf(raw))} is not a usable regex (${err instanceof Error ? err.message : String(err)})`,
         consequence: "That pattern is skipped; the built-in secret patterns still apply",
-        fix: `$EDITOR ${join5(mehmoryHome(), "config.json")}`
+        fix: `$EDITOR ${join6(mehmoryHome(), "config.json")}`
       });
     }
   }
@@ -1199,6 +1418,8 @@ export {
   MAX_INJECTION_BUDGET_TOKENS,
   loadConfig,
   currentAgentName,
+  runStoreGit,
+  commitPaths,
   isContainedProjectKey,
   resolveProjectKey,
   withProjectLock,

@@ -3,6 +3,7 @@ import {
   MAX_INJECTION_BUDGET_TOKENS,
   advanceSessionCursorUnlocked,
   appendInboxEntries,
+  commitPaths,
   currentAgentName,
   deleteSessionState,
   ensureSessionActiveUnlocked,
@@ -20,14 +21,12 @@ import {
   sessionGeneration,
   withProjectLock,
   withSessionLock
-} from "./chunk-TNX3HPPL.mjs";
+} from "./chunk-6E6AUIDR.mjs";
 import {
   readPiSession,
   readTranscript
-} from "./chunk-ZLN3ZXCW.mjs";
+} from "./chunk-MQAFAKX4.mjs";
 import {
-  INDEX_LOCK_RETRY_COUNT,
-  INDEX_LOCK_RETRY_INTERVAL_MS,
   QUEUE_CLAIM_ATTEMPTS,
   QUEUE_STALE_MS,
   appendRecord,
@@ -50,7 +49,7 @@ import {
   rename,
   stat,
   statePath
-} from "./chunk-2IVUMMAS.mjs";
+} from "./chunk-PL4QONDN.mjs";
 
 // src/core/stats.ts
 function statsPath() {
@@ -372,92 +371,6 @@ function estimateTokens(text) {
 // src/core/capture.ts
 import { homedir } from "os";
 import { dirname, join as join2, relative, resolve, sep } from "path";
-
-// src/core/git.ts
-import { execFileSync } from "child_process";
-function commitPaths(paths, message, cwd, strictPaths = false) {
-  const opts = cwd ? { stdio: "pipe", cwd } : { stdio: "pipe" };
-  try {
-    execFileSync("git", ["rev-parse", "--git-dir"], opts);
-  } catch {
-    const error = {
-      code: "E_GIT_COMMIT",
-      kind: "informational",
-      what: "Not in a git repository",
-      consequence: "Commit failed; memory was not recorded"
-    };
-    logError(error);
-    return { ok: false };
-  }
-  let stagePaths = paths;
-  try {
-    execFileSync("git", ["rev-parse", "--verify", "HEAD"], opts);
-  } catch {
-    if (paths.length === 0) stagePaths = ["."];
-  }
-  try {
-    execFileSync("git", ["add", "-A", "--", ...stagePaths], opts);
-  } catch (err) {
-    const error = {
-      code: "E_GIT_COMMIT",
-      kind: "informational",
-      what: err instanceof Error ? err.message : String(err),
-      consequence: "Failed to stage paths; commit aborted"
-    };
-    logError(error);
-    return { ok: false };
-  }
-  if (strictPaths) {
-    try {
-      const staged = execFileSync("git", ["diff", "--cached", "--name-only"], opts).toString().split("\n").filter(Boolean);
-      const allowed = paths.map((path) => path.replace(/^:\(top,literal\)/, "").replace(/\\/g, "/"));
-      const unrelated = staged.some(
-        (file) => !allowed.some((path) => file === path || file.startsWith(path + "/"))
-      );
-      if (unrelated) {
-        logError({
-          code: "E_GIT_COMMIT",
-          kind: "informational",
-          what: "unrelated changes are already staged in the memory store",
-          consequence: "Purge left the store dirty rather than committing user changes"
-        });
-        return { ok: false };
-      }
-    } catch {
-      return { ok: false };
-    }
-  }
-  for (let attempt = 0; attempt <= INDEX_LOCK_RETRY_COUNT; attempt++) {
-    try {
-      execFileSync("git", ["commit", "--no-gpg-sign", "-m", message], {
-        ...opts,
-        stdio: "pipe"
-      });
-      return { ok: true };
-    } catch (err) {
-      const stderr = err instanceof Error ? err.message : String(err);
-      const isIndexLock = stderr.includes("index.lock") || stderr.includes("fatal: Unable to process");
-      if (isIndexLock && attempt < INDEX_LOCK_RETRY_COUNT) {
-        const end = Date.now() + INDEX_LOCK_RETRY_INTERVAL_MS;
-        while (Date.now() < end) {
-        }
-        continue;
-      }
-      if (isIndexLock) {
-        return { ok: false, deferred: true };
-      }
-      const error = {
-        code: "E_GIT_COMMIT",
-        kind: "informational",
-        what: stderr,
-        consequence: "Commit failed; tree left staged for manual recovery"
-      };
-      logError(error);
-      return { ok: false, deferred: true };
-    }
-  }
-  return { ok: false };
-}
 
 // src/core/injection.ts
 function buildInjection(parts, options = {}) {

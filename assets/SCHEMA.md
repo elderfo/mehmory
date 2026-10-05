@@ -59,7 +59,7 @@ Lines below a `## Archive` heading are pages the mechanical decay pass demoted; 
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. `\\`, `\n`, `\r`, and `--\>` are escape sequences in entry text (backslash, newline, carriage return, and `-->` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the `remember:` prompt prefix.

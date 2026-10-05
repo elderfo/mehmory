@@ -8,7 +8,7 @@
  * channel, so a `status` that used it would silently steal the user's warning.
  */
 
-import { execFileSync } from 'node:child_process';
+import { runStoreGit } from './git.js';
 import { join } from 'node:path';
 import { mehmoryHome } from './home.js';
 import { listDir, pathExists, readFile, stat } from './fs.js';
@@ -164,11 +164,9 @@ export function inboxAgeMs(inboxFile: string, now: number = Date.now()): number 
 /** `<short-sha> <date> <subject>` of the store's last commit, or undefined. */
 export function lastCommit(): string | undefined {
   try {
-    const out = execFileSync(
-      'git',
-      ['-C', mehmoryHome(), 'log', '-1', '--date=short', '--format=%h %ad %s'],
-      { stdio: 'pipe', encoding: 'utf-8' }
-    ).trim();
+    const out = runStoreGit(['log', '-1', '--date=short', '--format=%h %ad %s'], mehmoryHome())
+      .toString()
+      .trim();
     return out === '' ? undefined : out;
   } catch {
     // No repo, or no commits yet. Both are "nothing to report", not a failure.
@@ -179,11 +177,8 @@ export function lastCommit(): string | undefined {
 /** Paths git reports as dirty in the store, or undefined when the store is not a repo. */
 export function dirtyPaths(): readonly string[] | undefined {
   try {
-    const out = execFileSync('git', ['-C', mehmoryHome(), 'status', '--porcelain'], {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-    });
-    return out.split('\n').filter(line => line.trim() !== '');
+    const out = runStoreGit(['status', '--porcelain'], mehmoryHome()).toString();
+    return out.split('\n').filter((line) => line.trim() !== '');
   } catch {
     return undefined;
   }
