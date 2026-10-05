@@ -55,6 +55,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   well as filesystem problems.
 - **Unexpected CLI exceptions use `E_INTERNAL`.** They no longer incorrectly report an
   append failure.
+- **Architecture lint rules handle Windows paths and checkout boundaries.** All five rules
+  normalize backslashes and checkout-relative paths; a checkout under `test/` no longer
+  exempts production code from the filesystem boundary.
+- **The no-exit rule catches process aliases and assignment destructuring.** Static
+  template-literal property keys can no longer bypass the core's exit/abort ban.
+- **Module boundary rules check static template literals.** Dynamic imports and `require`
+  calls using expression-free templates now enforce the filesystem and CLI boundaries.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the
