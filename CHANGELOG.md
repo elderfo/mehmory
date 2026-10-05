@@ -32,6 +32,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unreadable files and non-file `.md` entries no longer inflate live or archived page counts.
 - **Decay keeps archives inside their scope.** A destination resolving to exactly the scope's
   parent is refused by the same canonical containment rule used for wiki reads.
+- **Decay no longer follows symlinked index or pages paths.** A symlinked `index.md` or `pages/`
+  is left untouched instead of rewriting or archiving files outside the store.
+- **Unreadable wiki directories are logged.** Prompt matching, search and SessionStart now record
+  informational `E_STORE_READ` instead of failing silently.
 - **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one
   staleness rule, so exempt decay classes get no age label or ranking demotion.
 - **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep
