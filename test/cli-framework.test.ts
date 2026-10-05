@@ -6,9 +6,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempDir } from './helpers.js';
+import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI_JSON_SCHEMA } from '../src/cli/envelope.js';
 import { CLI, envelopeOf, fakeInstalledPlugin, runCli } from './cli-fixture.js';
 
@@ -116,6 +117,28 @@ describe('exit 2 — store missing where required', () => {
 });
 
 describe('exit 3 — operation failed', () => {
+  it('reports unexpected exceptions as E_INTERNAL, not an append failure', () => {
+    const preload = join(createTempDir('mehmory-cli-exception'), 'throw-cwd.mjs');
+    writeFileSync(preload, "process.cwd = () => { throw new Error('unexpected cwd failure'); };\n");
+    const result = spawnSync(process.execPath, ['--import', preload, CLI, 'status', '--json'], {
+      env: hermeticEnv({ HOME: createTempDir('mehmory-claude-home') }),
+      encoding: 'utf-8',
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toBe('');
+    expect(
+      (
+        envelopeOf({ status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr })[
+          'errors'
+        ] as Record<string, unknown>[]
+      )[0]
+    ).toEqual({
+      code: 'E_INTERNAL',
+      what: 'unexpected cwd failure',
+      consequence: 'The command stopped before it finished',
+    });
+  });
+
   it('exits 3 when the store path cannot be created', () => {
     // A regular file where the store's parent directory should be: `mkdir` fails with
     // ENOTDIR, which is `initStore` reporting a real write failure rather than a

@@ -249,6 +249,11 @@ through.
   currently changes nothing — the values here describe the built-in behavior but do not
   configure it.
 
+Locks older than 30 seconds are reclaimed when their recorded owner has exited. A live
+owner, including a PID probe returning `EPERM`, retains its lock until the five-minute
+maximum age. Contended retries sleep between attempts. Reclamation rechecks the file's
+identity and owner before removal; release keeps the shared locks directory in place.
+
 ## `queue`
 
 ```json
@@ -260,6 +265,10 @@ through.
 - `max_claims` and `stale_ms` — **not honored.** `src/core/queue.ts` uses its own hardcoded
   `QUEUE_STALE_MS` constant for staleness, and nothing reads `max_claims` at all. Setting
   either currently changes nothing.
+
+New claim filenames include the claim time. Their 30-second stale window starts when a
+worker claims the job, even if it has been pending for hours. Existing claims without a
+timestamp still use their file mtime and remain recoverable.
 
 ## `distill`
 
