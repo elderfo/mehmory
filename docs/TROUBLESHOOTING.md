@@ -158,7 +158,8 @@ A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fi
 ## E_SESSION_STATE (informational)
 
 Either a session's state file (`.state/<sha256(session-id)>.json`) was corrupt or unreadable and got
-reset, or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
+reset, a session state write failed after a capture had already landed (the Stop counter is
+kept, so the next threshold retries), or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
 to fresh; the transcript may be re-distilled once_, or _The invocation was skipped; no session
 state was read or written._ No `Fix:` — both are self-healing.
 

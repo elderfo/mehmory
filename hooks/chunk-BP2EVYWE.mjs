@@ -1679,6 +1679,11 @@ function parseState(raw, sessionId) {
     stop_count: v["stop_count"],
     ...topicCache ? { topic: topicCache } : {},
     ...typeof v["generation"] === "number" && Number.isInteger(v["generation"]) ? { generation: v["generation"] } : {},
+    // `project_key` is read back from disk and handed to wiki's `scopePaths()`, which joins
+    // it under `<home>/projects/`. The state file is a read boundary like the inbox and the
+    // queue, so the key is re-validated here rather than trusted because the only writer
+    // happens to sanitize. A rejected key is dropped, not repaired: a deferred finalize then
+    // falls back to the sweeping session's key, which is wrong but in-store.
     ...typeof v["project_key"] === "string" && isContainedProjectKey(v["project_key"]) ? { project_key: v["project_key"] } : {},
     ...typeof v["transcript_path"] === "string" ? { transcript_path: v["transcript_path"] } : {},
     ...host !== void 0 ? { host } : {},
