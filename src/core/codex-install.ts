@@ -770,13 +770,22 @@ function withoutMehmoryHooks(doc: JsonObject): JsonObject {
       kept[event] = groups;
       continue;
     }
+    const removedHere = (groups as readonly unknown[]).some(
+      group =>
+        isJsonObject(group) &&
+        Array.isArray(group['hooks']) &&
+        (group['hooks'] as readonly unknown[]).some(e => isMehmoryHook(e))
+    );
     const survivors = (groups as readonly unknown[]).flatMap(group => {
       if (!isJsonObject(group) || !Array.isArray(group['hooks'])) return [group];
-      const entries = (group['hooks'] as readonly unknown[]).filter(e => !isMehmoryHook(e));
+      const original = group['hooks'] as readonly unknown[];
+      const entries = original.filter(e => !isMehmoryHook(e));
+      if (entries.length === original.length) return [group];
       if (entries.length === 0) return [];
       return [{ ...group, hooks: entries }];
     });
-    if (survivors.length > 0) kept[event] = survivors;
+    // Prune only what lost a mehmory entry; empty foreign events and groups are not ours.
+    if (survivors.length > 0 || !removedHere) kept[event] = survivors;
   }
   return { ...doc, hooks: kept };
 }

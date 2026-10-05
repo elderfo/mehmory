@@ -355,6 +355,21 @@ describe('mehmory init --host codex', () => {
     expect(treeDigest(fixture.codexHome)).toBe(before);
   });
 
+  it.each([
+    '{"hooks":{"Stop":[]}}\n',
+    '{"hooks":{"Stop":[{"hooks":[]}]}}\n',
+    '{"hooks": {"Stop": [{"hooks": []}], "SessionStart": [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}\n',
+  ])('uninstall keeps empty foreign events and groups untouched: %s', hooks => {
+    const fixture = codexFixture({ hooks });
+    const before = treeDigest(fixture.codexHome);
+    const result = init(fixture, '--uninstall');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('nothing to remove');
+    expect(readFileSync(fixture.hooksFile, 'utf-8')).toBe(hooks);
+    expect(existsSync(`${fixture.hooksFile}.mehmory.bak`)).toBe(false);
+    expect(treeDigest(fixture.codexHome)).toBe(before);
+  });
+
   it.each(['existing', 'absent'])('uninstall leaves a never-installed %s home untouched', state => {
     const fixture = codexFixture();
     const home = state === 'absent' ? join(fixture.codexHome, 'absent') : fixture.codexHome;
