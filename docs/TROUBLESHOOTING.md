@@ -103,11 +103,16 @@ you don't have to notice on your own.
 Git probes have a 500 ms timeout; add, commit, diff, init, config, status, and log have
 10 s. A timeout sends SIGTERM so git can release its lock. A stale `.git/index.lock`
 left by an interrupted git (especially older builds using SIGKILL) can block every later
-commit. After a timeout mehmory removes a lock only if its mtime is at or after that
-call's start and logs the recovery and remedy. An older lock is left alone because it
-may belong to another process. If no git process is still using the store, the manual
-remedy is `rm <store>/.git/index.lock` (replace `<store>` with the resolved store home),
-then retry. A timed-out repository probe is reported as a timeout, not a missing repo.
+commit. Mehmory never deletes an index lock: neither its age nor its creation during
+our call proves ownership. Timeouts log that the lock is left untouched and include the
+manual remedy. Deferral on a lock older than 30 s also logs that remedy and queues an
+`E_GIT_COMMIT` warning through the existing hourly rate limit; fresh contention is silent.
+If no git process is running, the manual remedy is `rm <store>/.git/index.lock`
+(replace `<store>` with the resolved store home), then retry. A timed-out repository
+probe is reported as a timeout, not a missing repo.
+
+Store operations assume git >= 2.37, which interprets `core.fsmonitor=false` as a boolean
+to disable fsmonitor rather than as the name of an executable hook.
 
 ## E_QUEUE_CLAIM (informational)
 

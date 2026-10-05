@@ -55,9 +55,11 @@ A8 defines bounds for fail-open operations in one module so later runs can overr
 - Warning rate limit: 1 per hour per error code
 - Lock retry: 50 × 100 ms then proceed lock-free
 - Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
-- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; timeout recovery removes only
-  an `index.lock` whose mtime is at or after that call's start
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **Rejected:** Hardcoded bounds (scattered magic numbers make overrides fragile).
 
@@ -190,7 +192,8 @@ best-effort afterward. Budget approximately 1–2 ms per write on SSD, more on n
 WSL mounts. Git add/commit/diff belong to SessionEnd, purge, or maintenance, not the
 response lane, so their 10 s timeout is deliberately larger than cheap read probes.
 Store git calls strip repository-location and pathspec-mode environment overrides,
-disable hooks and fsmonitor, and use `LC_ALL=C`; discovery ceilings are retained.
+disable hooks and fsmonitor, suppress signature display in history reads, and use
+`LC_ALL=C`; discovery ceilings are retained.
 Project-identity reads retain the caller's repository environment because they name the
 user's repo rather than the store, but remain bounded by the cheap-probe timeout.
 
@@ -210,9 +213,11 @@ protocol family. A8's bound list now reads:
 - **Lock retry (hook-maintenance lane): 1 attempt, then skip and defer to the next
   session** — the injection path must never sit inside a retry loop
 - Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
-- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; timeout recovery removes only
-  an `index.lock` whose mtime is at or after that call's start
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **WORLD_MODEL check.** A12 upholds A1/A3/A9/A11/U2; A13 amends the run-1 cursor contract
 (named amendment, raised at the gate); A14 extends A4; A15 upholds A2/A6; A16 upholds A2

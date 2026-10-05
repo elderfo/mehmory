@@ -14,6 +14,7 @@ import {
   mehmoryHome,
   mkdir,
   pathExists,
+  peekWarnings,
   readFile,
   realpath,
   remove,
@@ -21,7 +22,7 @@ import {
   shellQuote,
   stat,
   statePath
-} from "./chunk-FJJSKSKJ.mjs";
+} from "./chunk-B37S7SCY.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -370,6 +371,7 @@ function gitOptions(cwd, timeout) {
   return {
     stdio: "pipe",
     timeout,
+    // Git removes its own index lock on SIGTERM; SIGKILL strands it.
     killSignal: "SIGTERM",
     env,
     ...cwd ? { cwd } : {}
@@ -380,29 +382,35 @@ function isGitTimeout(error) {
 }
 function runStoreGit(args, cwd) {
   const timeout = args[0] === "rev-parse" ? GIT_PROBE_TIMEOUT_MS : GIT_OPERATION_TIMEOUT_MS;
-  const started = Date.now();
   try {
-    return execFileSync("git", [...GIT_PREFIX, ...args], gitOptions(cwd, timeout));
+    const command = args[0] === "log" ? ["log", "--no-show-signature", ...args.slice(1)] : args;
+    return execFileSync("git", [...GIT_PREFIX, ...command], gitOptions(cwd, timeout));
   } catch (error) {
     if (isGitTimeout(error)) {
       const lock = join2(cwd ?? process.cwd(), ".git", "index.lock");
-      let removed = false;
-      try {
-        const info = lstat(lock);
-        if (info && info.mtimeMs >= started) {
-          remove(lock);
-          removed = true;
-        }
-      } catch {
-      }
       logError({
         code: "E_GIT_COMMIT",
         kind: "informational",
-        what: `git ${args[0] ?? ""} timed out after ${String(timeout)} ms; ${removed ? "removed new index.lock" : "no new index.lock removed"}; after checking no git is running, remedy: rm ${shellQuote(lock)}`,
+        what: `git ${args[0] ?? ""} timed out after ${String(timeout)} ms; index.lock left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
         consequence: "Git operation failed; memory may be left uncommitted"
       });
     }
     throw error;
+  }
+}
+function warnStaleIndexLock(cwd) {
+  const lock = join2(cwd ?? process.cwd(), ".git", "index.lock");
+  try {
+    const mtime = lstat(lock)?.mtime.getTime();
+    if (mtime === void 0 || Date.now() - mtime <= LOCK_STALE_MS) return;
+    if (peekWarnings().some((warning) => warning.startsWith("E_GIT_COMMIT "))) return;
+    logError({
+      code: "E_GIT_COMMIT",
+      kind: "informational",
+      what: `index.lock is older than ${String(LOCK_STALE_MS)} ms; left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
+      consequence: "Commit deferred; memory may be left uncommitted"
+    });
+  } catch {
   }
 }
 function commitPaths(paths, message, cwd, strictPaths = false) {
@@ -439,6 +447,7 @@ function commitPaths(paths, message, cwd, strictPaths = false) {
           }
           continue;
         }
+        warnStaleIndexLock(cwd);
         return { ok: false, deferred: true };
       }
       logError({
@@ -491,6 +500,7 @@ function commitPaths(paths, message, cwd, strictPaths = false) {
         continue;
       }
       if (isIndexLock) {
+        warnStaleIndexLock(cwd);
         return { ok: false, deferred: true };
       }
       const error = {

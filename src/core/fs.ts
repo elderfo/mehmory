@@ -191,8 +191,9 @@ export function createLockExclusive(path: string, owner = ''): boolean {
 
 /**
  * Write contents atomically: write to a temp file in the same directory,
- * then rename into place, replacing a destination symlink rather than following it.
- * Creates parent directories.
+ * then rename into place, replacing a symlink only at the final path component.
+ * A symlinked parent directory still redirects the write; store directories are trusted
+ * as part of the store. Creates parent directories.
  *
  * The rename carries the *temp* file's permissions, so without this the destination's
  * mode is silently replaced by whatever the umask gives — a 0600 file rewritten in place

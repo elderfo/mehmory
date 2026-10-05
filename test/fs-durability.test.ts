@@ -43,6 +43,16 @@ describe('atomicWrite durability', () => {
     expect(fs.readFileSync(destination, 'utf8')).toBe('memory index');
   });
 
+  it('follows a trusted symlinked parent directory when replacing a file', () => {
+    const parent = statePath('linked-directory');
+    const target = statePath('trusted-directory');
+    fs.mkdirSync(target, { recursive: true });
+    fs.symlinkSync(target, parent);
+    atomicWrite(join(parent, 'index.md'), 'memory index');
+    expect(fs.lstatSync(parent).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(join(target, 'index.md'), 'utf8')).toBe('memory index');
+  });
+
   it('flushes the temp file before rename and the directory afterward', () => {
     const events: string[] = [];
     const realRename = vi.mocked(fs.renameSync).getMockImplementation();

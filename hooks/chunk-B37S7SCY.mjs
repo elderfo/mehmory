@@ -271,6 +271,9 @@ function warningLines(warnings) {
     return `${w.code} (${kind}, ${String(w.count)} occurrences): see ${statePath("errors.log")}`;
   });
 }
+function peekWarnings() {
+  return warningLines(readWarnings());
+}
 function pendingWarnings() {
   return warningLines(readWarnings(true));
 }
@@ -488,6 +491,7 @@ export {
   shellQuote,
   logError,
   failOpen,
+  peekWarnings,
   pendingWarnings,
   LOCK_RETRY_COUNT,
   LOCK_RETRY_INTERVAL_MS,

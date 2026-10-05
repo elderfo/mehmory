@@ -5,8 +5,13 @@
 
 import { execFileSync, type ExecFileSyncOptionsWithBufferEncoding } from 'node:child_process';
 import { join } from 'node:path';
-import { logError, shellQuote, type MehmoryError } from './errors.js';
-import { INDEX_LOCK_RETRY_COUNT, INDEX_LOCK_RETRY_INTERVAL_MS, lstat, remove } from './fs.js';
+import { logError, peekWarnings, shellQuote, type MehmoryError } from './errors.js';
+import {
+  INDEX_LOCK_RETRY_COUNT,
+  INDEX_LOCK_RETRY_INTERVAL_MS,
+  LOCK_STALE_MS,
+  lstat,
+} from './fs.js';
 
 export const GIT_PROBE_TIMEOUT_MS = 500;
 export const GIT_OPERATION_TIMEOUT_MS = 10000;
@@ -50,6 +55,7 @@ function gitOptions(
   return {
     stdio: 'pipe',
     timeout,
+    // Git removes its own index lock on SIGTERM; SIGKILL strands it.
     killSignal: 'SIGTERM',
     env,
     ...(cwd ? { cwd } : {}),
@@ -63,27 +69,16 @@ function isGitTimeout(error: unknown): boolean {
 /** Internal subprocess primitive: callers catch failures at their fail-open boundary. */
 export function runStoreGit(args: string[], cwd?: string): Buffer {
   const timeout = args[0] === 'rev-parse' ? GIT_PROBE_TIMEOUT_MS : GIT_OPERATION_TIMEOUT_MS;
-  const started = Date.now();
   try {
-    return execFileSync('git', [...GIT_PREFIX, ...args], gitOptions(cwd, timeout));
+    const command = args[0] === 'log' ? ['log', '--no-show-signature', ...args.slice(1)] : args;
+    return execFileSync('git', [...GIT_PREFIX, ...command], gitOptions(cwd, timeout));
   } catch (error) {
     if (isGitTimeout(error)) {
       const lock = join(cwd ?? process.cwd(), '.git', 'index.lock');
-      let removed = false;
-      try {
-        // Do not remove a lock that predates this call: another git may still own it.
-        const info = lstat(lock);
-        if (info && info.mtimeMs >= started) {
-          remove(lock);
-          removed = true;
-        }
-      } catch {
-        // SIGTERM normally cleans the lock; missing or unwritable locks are harmless here.
-      }
       logError({
         code: 'E_GIT_COMMIT',
         kind: 'informational',
-        what: `git ${args[0] ?? ''} timed out after ${String(timeout)} ms; ${removed ? 'removed new index.lock' : 'no new index.lock removed'}; after checking no git is running, remedy: rm ${shellQuote(lock)}`,
+        what: `git ${args[0] ?? ''} timed out after ${String(timeout)} ms; index.lock left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
         consequence: 'Git operation failed; memory may be left uncommitted',
       });
     }
@@ -91,11 +86,29 @@ export function runStoreGit(args: string[], cwd?: string): Buffer {
   }
 }
 
+function warnStaleIndexLock(cwd: string | undefined): void {
+  const lock = join(cwd ?? process.cwd(), '.git', 'index.lock');
+  try {
+    const mtime = lstat(lock)?.mtime.getTime();
+    if (mtime === undefined || Date.now() - mtime <= LOCK_STALE_MS) return;
+    if (peekWarnings().some((warning) => warning.startsWith('E_GIT_COMMIT '))) return;
+    logError({
+      code: 'E_GIT_COMMIT',
+      kind: 'informational',
+      what: `index.lock is older than ${String(LOCK_STALE_MS)} ms; left untouched; only if no git process is running, remedy: rm ${shellQuote(lock)}`,
+      consequence: 'Commit deferred; memory may be left uncommitted',
+    });
+  } catch {
+    // The owner may have released its lock since git reported contention.
+  }
+}
+
 /**
  * Stage specific paths and commit.
  * Returns { ok: true } on success.
  * On index.lock held after one retry, returns { ok: false, deferred: true }
- * with the tree left staged, and emits nothing (normal operation, not an error).
+ * with the tree left staged. Fresh lock contention is silent; an old lock queues a
+ * rate-limited warning with a manual remedy.
  * Accumulation is explicit: the next call commits both this call's paths and any deferred ones.
  * @param paths - Paths to stage
  * @param message - Commit message
@@ -164,6 +177,7 @@ export function commitPaths(
           }
           continue;
         }
+        warnStaleIndexLock(cwd);
         return { ok: false, deferred: true };
       }
       logError({
@@ -243,7 +257,7 @@ export function commitPaths(
 
       // Second failure or not index.lock: leave staged and return deferred
       if (isIndexLock) {
-        // Normal deferral, no error logged
+        warnStaleIndexLock(cwd);
         return { ok: false, deferred: true };
       }
 

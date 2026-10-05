@@ -38,8 +38,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Writes flush the temporary file before rename and the directory afterward (best-effort),
   and clean up temporary files on failure.
 - **Memory commits use recoverable timeouts.** Git receives SIGTERM, with 500 ms for cheap
-  probes and 10 s for other store operations. Timeout recovery removes only newly-created
-  index locks and logs the manual remedy; real lock contention retries once then defers.
+  probes and 10 s for other store operations. Timeouts log the manual remedy;
+  real lock contention retries once then defers.
+- **Git timeouts never delete another process's index lock.** Git cleans up its own lock
+  on SIGTERM; mehmory leaves all index locks untouched and logs the safe manual remedy.
+- **Old index locks no longer defer silently forever.** Locks older than 30 s trigger a
+  rate-limited warning with the manual remedy, without deleting a possibly live lock.
+- **Store history reads disable signature display.** Ambient `log.showSignature` cannot
+  trigger signature verification or contaminate the last-commit summary.
 - **Every store git call is isolated.** Init, config, status, and history reads now share
   the commit runner's stripped repository environment, disabled hooks and fsmonitor,
   literal pathspec support, and C locale. Project identity retains the caller's repo

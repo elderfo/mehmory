@@ -3,6 +3,7 @@ import * as cp from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { commitPaths, ensureGitBaseline } from '../src/core/git.js';
+import { peekWarnings } from '../src/core/errors.js';
 import { initStore } from '../src/core/store.js';
 import { lastCommit, dirtyPaths } from '../src/core/status.js';
 import { resolveProjectKey, clearProjectKeyCache } from '../src/core/identity.js';
@@ -78,29 +79,97 @@ describe('git runtime recovery', () => {
     }
   });
 
-  it.each(['add', 'diff', 'commit'])(
-    'removes a lock created during a timed-out %s and records the recovery remedy',
+  it.each(['rev-parse', 'add', 'diff', 'commit'])(
+    'preserves a concurrent process lock during a timed-out %s and logs the remedy',
+    async (command) => {
+      repo(mehmoryHome());
+      writeFileSync(join(mehmoryHome(), 'note.md'), 'changed');
+      const lock = join(mehmoryHome(), '.git/index.lock');
+      let owner: cp.ChildProcess | undefined;
+      let exited: Promise<void> | undefined;
+      timeoutOn(command, () => {
+        owner = cp.spawn(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `import { writeFileSync, openSync } from 'node:fs'; const fd = openSync(${JSON.stringify(lock)}, 'wx'); writeFileSync(fd, 'concurrent process'); setInterval(() => {}, 1000);`,
+          ],
+          { stdio: 'ignore' }
+        );
+        exited = new Promise((resolve) => {
+          owner?.once('exit', () => {
+            resolve();
+          });
+        });
+        const deadline = Date.now() + 3000;
+        while (!existsSync(lock) && Date.now() < deadline) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        expect(readFileSync(lock, 'utf8')).toBe('concurrent process');
+        const time = new Date(Date.now() + 1000);
+        utimesSync(lock, time, time);
+      });
+      try {
+        expect(commitPaths(['note.md'], 'timeout', mehmoryHome())).toEqual(
+          command === 'commit' ? { ok: false, deferred: true } : { ok: false }
+        );
+        expect(readFileSync(lock, 'utf8')).toBe('concurrent process');
+        expect(owner?.kill(0)).toBe(true);
+        const log = readFileSync(statePath('errors.log'), 'utf8');
+        expect(log).toContain(`E_GIT_COMMIT: git ${command} timed out`);
+        expect(log).toContain('index.lock left untouched');
+        expect(log).toContain(`only if no git process is running, remedy: rm '${lock}'`);
+      } finally {
+        owner?.kill('SIGTERM');
+        await exited;
+      }
+    }
+  );
+
+  it.each(['add', 'commit'])(
+    'warns once with the remedy when an old index.lock keeps %s deferred',
     (command) => {
       repo(mehmoryHome());
       writeFileSync(join(mehmoryHome(), 'note.md'), 'changed');
       const lock = join(mehmoryHome(), '.git/index.lock');
-      timeoutOn(command, () => {
-        writeFileSync(lock, 'abandoned');
-        const time = new Date(Date.now() + 1000);
+      const createOldLock = () => {
+        writeFileSync(lock, 'older build');
+        const time = new Date(Date.now() - 60000);
         utimesSync(lock, time, time);
-      });
-      expect(commitPaths(['note.md'], 'timeout', mehmoryHome())).toEqual(
-        command === 'commit' ? { ok: false, deferred: true } : { ok: false }
-      );
-      expect(existsSync(lock)).toBe(false);
+      };
+      if (command === 'add') createOldLock();
+      else {
+        vi.mocked(cp.execFileSync).mockImplementation((file, args, options) => {
+          if (args?.includes('commit') && !existsSync(lock)) createOldLock();
+          return actualCp.execFileSync(file, args, options);
+        });
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(commitPaths(['note.md'], 'deferred', mehmoryHome())).toEqual({
+          ok: false,
+          deferred: true,
+        });
+      }
+      expect(readFileSync(lock, 'utf8')).toBe('older build');
       const log = readFileSync(statePath('errors.log'), 'utf8');
-      expect(log).toContain(`E_GIT_COMMIT: git ${command} timed out`);
-      expect(log).toContain(`rm '${lock}'`);
-      vi.mocked(cp.execFileSync).mockImplementation(actualCp.execFileSync);
-      writeFileSync(join(mehmoryHome(), 'note.md'), 'recovered');
-      expect(commitPaths(['note.md'], 'recovered', mehmoryHome())).toEqual({ ok: true });
+      expect(log.split('\n').filter(Boolean)).toHaveLength(1);
+      expect(log).toContain('E_GIT_COMMIT: index.lock is older than 30000 ms; left untouched');
+      expect(log).toContain(`only if no git process is running, remedy: rm '${lock}'`);
+      expect(peekWarnings()).toEqual([
+        `E_GIT_COMMIT (informational, 1 occurrences): see ${statePath('errors.log')}`,
+      ]);
     }
   );
+
+  it('suppresses signature display in store history despite ambient configuration', () => {
+    repo(mehmoryHome());
+    cp.execFileSync('git', ['config', 'log.showSignature', 'true'], { cwd: mehmoryHome() });
+    vi.mocked(cp.execFileSync).mockClear();
+    expect(lastCommit()).toContain('initial');
+    const call = vi.mocked(cp.execFileSync).mock.calls.find(([, args]) => args?.includes('log'));
+    expect(call?.[1]).toContain('--no-show-signature');
+  });
 
   it('never removes a lock older than the timed-out call', () => {
     repo(mehmoryHome());
