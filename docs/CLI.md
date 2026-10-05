@@ -326,7 +326,9 @@ command to re-run. `--yes` skips both invocations and deletes immediately.
   nothing piped in — exits 4 and changes nothing.
 - Purge validates every file, directory and index target before any export or mutation.
   Unsafe targets, including symlinks escaping the store, abort with exit 3: nothing is
-  exported or deleted, and catalog lines stay intact.
+  deleted and catalog lines stay intact. A symlink nested inside a whole-scope target is
+  found during `--export`, so files copied before it may remain in the export directory;
+  nothing from outside the store is copied.
 - `--export <path>` copies the targets before deleting and checks each source, including
   nested files, for store containment. If the export fails, the command aborts with exit 3
   and deletes nothing.

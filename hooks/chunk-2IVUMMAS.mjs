@@ -328,9 +328,6 @@ function rename(from, to) {
 function remove(path) {
   unlinkSync2(path);
 }
-function removeDir(path) {
-  rmSync(path, { recursive: true, force: true });
-}
 function realpath(path) {
   try {
     return realpathSync(path);
@@ -442,7 +439,6 @@ export {
   mkdir,
   rename,
   remove,
-  removeDir,
   realpath,
   listDir,
   createLockExclusive,

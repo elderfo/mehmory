@@ -55,6 +55,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   well as filesystem problems.
 - **Unexpected CLI exceptions use `E_INTERNAL`.** They no longer incorrectly report an
   append failure.
+- **Queue claims start their stale window at claim time.** Jobs pending for hours are not
+  immediately claimed twice.
+- **Stale-lock reclamation is serialized.** A reclaim guard protects the owner/file-identity
+  recheck and unlink, including recovery of abandoned guards. Live and permission-protected
+  owners receive retry delays; a five-minute age cap allows recovery from PID reuse but can
+  supersede a longer-running live holder. Lock release retains the shared directory.
+- **`pnpm test` builds only when the build is missing or stale.** Vitest global setup builds
+  when `dist/cli.mjs` is absent or older than `src/`, so a fresh checkout works and tests never
+  run against stale code, while CI's explicit build is not repeated.
 - **Architecture lint rules handle Windows paths and checkout boundaries.** All five rules
   normalize backslashes and checkout-relative paths; a checkout under `test/` no longer
   exempts production code from the filesystem boundary.
