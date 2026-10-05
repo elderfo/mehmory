@@ -1,18 +1,12 @@
 import {
-  captureDelta,
-  runHook,
+  runHook
+} from "./chunk-G6TCZEZQ.mjs";
+import {
+  captureAtStop,
   scopePaths,
   skillRef
-} from "./chunk-CN7YET36.mjs";
-import {
-  incrementStopCount,
-  isPaused,
-  resetStopCount
-} from "./chunk-FR4W5LZ6.mjs";
-import "./chunk-572P3JTD.mjs";
-import {
-  logError
-} from "./chunk-H34NFU7U.mjs";
+} from "./chunk-BP2EVYWE.mjs";
+import "./chunk-ZQKNVQBL.mjs";
 
 // src/hooks/stop.ts
 import { dirname } from "path";
@@ -47,25 +41,18 @@ ${appendCommand(key, sessionId)}` : `${skillRef(host, "remember")} saves them.`;
   ].join(" ");
 }
 runHook("Stop", (input, project, host, config) => {
-  if (input.stop_hook_active === true) return {};
-  if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
-  const count = incrementStopCount(input.session_id);
-  const threshold = Math.max(1, Math.ceil(config.stop.capture_threshold));
-  const firstCrossing = count === threshold;
-  const retry = count > threshold && (count - threshold - 1) % threshold === 0;
-  if (!firstCrossing && !retry) return { stats: { stop_count: count } };
-  const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
-  if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
-  else if (count === threshold + 1) {
-    logError({
-      code: "E_APPEND_FAILED",
-      kind: "informational",
-      what: `Stop capture still failing for session ${input.session_id}`,
-      consequence: "The delta is retained; silent retries now wait one threshold window"
-    });
-  }
+  const { count, captured, nudge } = captureAtStop(
+    input.session_id,
+    input.transcript_path,
+    project,
+    host,
+    config,
+    input.stop_hook_active
+  );
+  if (count === void 0) return {};
+  if (captured === void 0) return { stats: { stop_count: count } };
   return {
-    ...firstCrossing ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host)) : {},
+    ...nudge ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host)) : {},
     stats: { stop_count: count, captured_entries: captured.appended }
   };
 });

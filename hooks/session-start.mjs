@@ -1,4 +1,8 @@
 import {
+  runHook
+} from "./chunk-G6TCZEZQ.mjs";
+import {
+  ARCHIVE_DIVIDER,
   MAINTENANCE_ALLOWANCE_TOKENS,
   applyDistillJobResult,
   archivePage,
@@ -6,29 +10,20 @@ import {
   claimJob,
   completeJob,
   estimateTokens,
-  finalizePendingSessions,
   inboxBytes,
+  isPaused,
+  isStalePage,
+  maintainSessions,
   openScope,
-  runHook,
+  readInboxEntries,
+  runStoreGit,
   scopePaths,
   skillRef,
   storeExists,
   storeIsUnpopulated,
-  truncateToTokens
-} from "./chunk-CN7YET36.mjs";
-import {
-  ARCHIVE_DIVIDER,
-  currentAgentName,
-  isPaused,
-  isStalePage,
-  readInboxEntries,
-  rememberSessionOrigin,
-  resumeFinalizedSession,
-  runStoreGit,
-  sweepSessionState,
+  truncateToTokens,
   tryProjectLock
-} from "./chunk-FR4W5LZ6.mjs";
-import "./chunk-572P3JTD.mjs";
+} from "./chunk-BP2EVYWE.mjs";
 import {
   atomicWrite,
   failOpen,
@@ -39,7 +34,7 @@ import {
   pendingWarnings,
   readFile,
   shellQuote
-} from "./chunk-H34NFU7U.mjs";
+} from "./chunk-ZQKNVQBL.mjs";
 
 // src/hooks/session-start.ts
 import assert from "assert/strict";
@@ -354,7 +349,7 @@ function rewriteIndex(index, liveOrder, demoted, archived) {
 // src/hooks/session-start.ts
 var MAX_MAINTENANCE_LINES = 2;
 function maintenance(sessionId, project, host, config) {
-  const finalized = finalizePendingSessions(sessionId, project, host, config);
+  const { finalized } = maintainSessions(sessionId, project, host, config);
   tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob("distill-final");
@@ -371,19 +366,10 @@ function maintenance(sessionId, project, host, config) {
       });
     }
   }
-  sweepSessionState();
   return finalized;
 }
 runHook("SessionStart", (input, project, host, config) => {
   if (!config.hooks.session_start.enabled) return {};
-  resumeFinalizedSession(input.session_id);
-  rememberSessionOrigin(
-    input.session_id,
-    input.transcript_path,
-    host,
-    project,
-    currentAgentName(config)
-  );
   if (isPaused(input.session_id)) return {};
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);

@@ -1,3 +1,4 @@
+import { changeSession } from './session-fixture.js';
 /**
  * Codex host end-to-end: recall (#22) and capture (#23) through the built bundles.
  *
@@ -27,7 +28,7 @@ import {
   writeTranscript,
   TODAY,
 } from './hook-fixture.js';
-import { setPaused, updateSessionState } from '../src/core/session.js';
+import { setPaused } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
 import { estimateTokens } from '../src/core/tokens.js';
 import { parseInboxEntries } from '../src/schema/format.js';
@@ -117,7 +118,7 @@ function stopThreshold(): number {
 
 /** Put the session one Stop away from the capture threshold. */
 function primeCounter(sessionId: string): void {
-  updateSessionState(sessionId, state => ({ ...state, stop_count: stopThreshold() - 1 }));
+  changeSession(sessionId, state => ({ ...state, stop_count: stopThreshold() - 1 }));
 }
 
 describe('Codex recall (#22)', () => {

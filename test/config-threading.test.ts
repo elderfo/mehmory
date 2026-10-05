@@ -1,3 +1,4 @@
+import { stateFileFor } from './session-fixture.js';
 /**
  * Plan criterion 13: the three documented-but-dead config keys reach the code that
  * uses them, threaded as parameters rather than read ambiently.
@@ -14,7 +15,7 @@ import { loadConfig } from '../src/core/config.js';
 import { redact } from '../src/core/redact.js';
 import { buildInjection } from '../src/core/injection.js';
 import { buildScopeInjection } from '../src/core/capture.js';
-import { sessionStatePath } from '../src/core/session.js';
+
 import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
@@ -201,7 +202,7 @@ describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
     expect(run.status).toBe(0);
     expect(run.stdout.trim()).toBe('');
     expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
-    expect(existsSync(sessionStatePath('s1'))).toBe(false);
+    expect(existsSync(stateFileFor('s1'))).toBe(false);
     expect(statsLines().at(-1)).toMatchObject({
       project: key,
       hook: 'UserPromptSubmit',

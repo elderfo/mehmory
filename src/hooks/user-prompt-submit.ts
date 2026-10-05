@@ -11,7 +11,8 @@ import { openProjectWiki, scopePaths } from '../core/wiki.js';
 import { runHook } from '../core/hook.js';
 import { appendInboxEntries } from '../core/inbox.js';
 import { matchPages, tokenize } from '../core/match.js';
-import { isPaused, readSessionState, rememberTopic, topicCacheHit } from '../core/session.js';
+import { isPaused, rememberTopic, topicCacheHit } from '../core/session.js';
+import { inspectSession } from '../core/session-lifecycle.js';
 import { rememberEntry, staleSessionStartWarning } from '../core/capture.js';
 
 /** Prefix that turns a prompt into an explicit inbox capture (gate item T2). */
@@ -39,7 +40,7 @@ runHook('UserPromptSubmit', (input, project, host, config) => {
   // Thresholds come from the config this hook already loaded — topicCacheHit would
   // otherwise re-read and re-parse it on the hot path.
   const thresholds = { jaccard: config.match.jaccard, ttlMs: config.match.cache_ttl_ms };
-  if (topicCacheHit(readSessionState(input.session_id), tokens, Date.now(), thresholds)) {
+  if (topicCacheHit(inspectSession(input.session_id).state, tokens, Date.now(), thresholds)) {
     return { stats: { pointers_offered: 0, topic_cache_hit: true } };
   }
 

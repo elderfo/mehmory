@@ -214,7 +214,7 @@ export function tryProjectLock<T>(key: string, fn: () => T): T | undefined {
 /**
  * Acquire exclusive access to one session's state file, execute fn, then release.
  *
- * Session state is read-modify-write (`updateSessionState`), and hooks for one session
+ * Session state is read-modify-write (`observeSession`), and hooks for one session
  * genuinely overlap: a Stop and a UserPromptSubmit can be in flight together, and a
  * SessionEnd can race a trailing Stop. Without this, two processes read the same state,
  * change different fields, and the later write silently discards the earlier one -- a

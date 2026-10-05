@@ -4,15 +4,13 @@ import {
   clearInboxEntries,
   currentAgentName,
   inboxEntryId,
+  inspectSession,
   isContainedProjectKey,
-  isSessionFinalized,
   loadConfig,
   readInboxEntries,
-  readSessionState,
   redact,
-  sessionStatePath,
   setPaused
-} from "./chunk-FR4W5LZ6.mjs";
+} from "./chunk-BP2EVYWE.mjs";
 import {
   atomicWrite,
   lstat,
@@ -22,7 +20,7 @@ import {
   realpath,
   remove,
   statePath
-} from "./chunk-H34NFU7U.mjs";
+} from "./chunk-ZQKNVQBL.mjs";
 
 // src/core/inbox-tx.ts
 import { randomBytes } from "crypto";
@@ -128,7 +126,7 @@ function doAppend(input, config) {
     if (!/^[A-Za-z0-9._:-]+$/.test(src)) {
       throw new TxError('"src" contains unsafe comment characters');
     }
-    const entryHost = host ?? readSessionState(src).host;
+    const entryHost = host ?? inspectSession(src).state.host;
     return {
       id: inboxEntryId(src + text),
       text,
@@ -168,7 +166,11 @@ function doClear(input) {
 }
 function doPause(input, paused) {
   const sessionId = requireString(input, "session_id");
-  if (sessionId.trim() === "" || !isSessionFinalized(sessionId) && !pathExists(sessionStatePath(sessionId))) {
+  const session = inspectSession(sessionId, { requireAvailable: true });
+  if (!session.available) {
+    throw new TxError("session is busy or finalized; retry after the next turn");
+  }
+  if (sessionId.trim() === "" || !session.finalized && !session.exists) {
     throw new TxError("unknown session_id; use the current live session id");
   }
   if (!setPaused(sessionId, paused)) {

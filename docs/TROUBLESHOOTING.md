@@ -72,6 +72,12 @@ A single-line append to the store (inbox, log, or stats) failed — usually perm
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
 disk space" is prose, not a command, so it's omitted rather than printed as if it were one.
 
+Capture append exceptions also use this code, not `E_SESSION_STATE`; their cursor stays available
+for retry. A retirement marker write logs `E_APPEND_FAILED: SessionEnd hook failed: ...` after
+final-delta handling. Its stats retain `captured_entries`, set `marker_failed: true`, and leave
+`deferred: false`: the queued work already landed, but removed state is not pending for a sweep.
+A repeated SessionEnd uses the log's generation tag to avoid duplicating the queued delta or log.
+
 During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
 count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
 wait for a busy store's write lock to become available, or repair the named inbox (it must
@@ -152,7 +158,8 @@ A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fi
 ## E_SESSION_STATE (informational)
 
 Either a session's state file (`.state/<sha256(session-id)>.json`) was corrupt or unreadable and got
-reset, or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
+reset, a session state write failed after a capture had already landed (the Stop counter is
+kept, so the next threshold retries), or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
 to fresh; the transcript may be re-distilled once_, or _The invocation was skipped; no session
 state was read or written._ No `Fix:` — both are self-healing.
 

@@ -1,21 +1,20 @@
 import {
-  openProjectWiki,
-  rememberEntry,
-  runHook,
-  scopePaths,
-  staleSessionStartWarning
-} from "./chunk-CN7YET36.mjs";
+  runHook
+} from "./chunk-G6TCZEZQ.mjs";
 import {
   appendInboxEntries,
+  inspectSession,
   isPaused,
   matchPages,
-  readSessionState,
+  openProjectWiki,
+  rememberEntry,
   rememberTopic,
+  scopePaths,
+  staleSessionStartWarning,
   tokenize,
   topicCacheHit
-} from "./chunk-FR4W5LZ6.mjs";
-import "./chunk-572P3JTD.mjs";
-import "./chunk-H34NFU7U.mjs";
+} from "./chunk-BP2EVYWE.mjs";
+import "./chunk-ZQKNVQBL.mjs";
 
 // src/hooks/user-prompt-submit.ts
 var REMEMBER_PREFIX = /^remember:\s*/i;
@@ -34,7 +33,7 @@ runHook("UserPromptSubmit", (input, project, host, config) => {
   }
   const tokens = tokenize(prompt);
   const thresholds = { jaccard: config.match.jaccard, ttlMs: config.match.cache_ttl_ms };
-  if (topicCacheHit(readSessionState(input.session_id), tokens, Date.now(), thresholds)) {
+  if (topicCacheHit(inspectSession(input.session_id).state, tokens, Date.now(), thresholds)) {
     return { stats: { pointers_offered: 0, topic_cache_hit: true } };
   }
   const wiki = openProjectWiki(project, { staleAfterDays: config.decay.archive_days });

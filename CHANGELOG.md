@@ -36,6 +36,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is left untouched instead of rewriting or archiving files outside the store.
 - **Unreadable wiki directories are logged.** Prompt matching, search and SessionStart now record
   informational `E_STORE_READ` instead of failing silently.
+- **Pause gates remain lock-free under contention.** A busy session cannot capture a paused
+  `remember:` prompt or hide its topic cache behind fresh defaults.
+- **Capture failures keep their operation error codes.** Append and retirement marker errors
+  report `E_APPEND_FAILED`, not corrupt session state.
+- **Failed retirement markers do not claim pending work.** SessionEnd keeps the completed capture
+  count and reports `marker_failed`, not `deferred`, after final-delta handling has landed.
 - **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one
   staleness rule, so exempt decay classes get no age label or ranking demotion.
 - **SessionStart's memory frame fits its budget, framing included.** Maintenance notices keep

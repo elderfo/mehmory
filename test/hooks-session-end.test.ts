@@ -1,3 +1,4 @@
+import { stateFileFor } from './session-fixture.js';
 /** SessionEnd fixture tests (criteria 13, 16). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -15,7 +16,7 @@ import {
   writeTranscript,
 } from './hook-fixture.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
-import { sessionStatePath } from '../src/core/session.js';
+
 
 describe('SessionEnd hook', () => {
   let cwd: string;
@@ -40,7 +41,7 @@ describe('SessionEnd hook', () => {
     expect(queued).toHaveLength(1);
 
     expect(readIfPresent(paths(key).log)).toContain('session-end');
-    expect(existsSync(sessionStatePath('s1'))).toBe(false);
+    expect(existsSync(stateFileFor('s1'))).toBe(false);
 
     const log = execFileSync('git', ['-C', mehmoryHome(), 'log', '--oneline'], {
       encoding: 'utf-8',

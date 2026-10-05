@@ -1,3 +1,4 @@
+import { sessionState, changeSession } from './session-fixture.js';
 /** Stop fixture tests (criteria 11, 14, 16, 19). */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -14,7 +15,7 @@ import {
   statsLines,
   writeTranscript,
 } from './hook-fixture.js';
-import { readSessionState, updateSessionState } from '../src/core/session.js';
+
 import { loadConfig } from '../src/core/config.js';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { statePath } from '../src/core/home.js';
@@ -34,7 +35,7 @@ const TRANSCRIPT = [
 
 /** Put the session one Stop away from the capture threshold. */
 function primeCounter(sessionId: string): void {
-  updateSessionState(sessionId, (state) => ({
+  changeSession(sessionId, (state) => ({
     ...state,
     stop_count: stopThreshold() - 1,
   }));
@@ -59,7 +60,7 @@ describe('Stop hook', () => {
     // `{}`, not silence: Codex parses Stop output on every Stop, and the
     // below-threshold Stop is the most frequent one (D9).
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
   });
 
   it('keeps the threshold counter and cursor when the append fails', () => {
@@ -68,11 +69,11 @@ describe('Stop hook', () => {
     const lock = statePath('locks', '__store__.lock');
     writeFileSync(lock, String(process.pid));
     runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
-    expect(readSessionState('s1').stop_count).toBe(stopThreshold());
-    expect(readSessionState('s1').cursor.offset).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(stopThreshold());
+    expect(sessionState('s1').cursor.offset).toBe(0);
     rmSync(lock);
     runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
-    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(0);
     expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
   });
 
@@ -92,10 +93,10 @@ describe('Stop hook', () => {
         .map((line) => line['stop_count'])
     ).toEqual([3, 4, 7]);
     expect(errorsLog().match(/Stop capture still failing/g)).toHaveLength(1);
-    expect(readSessionState('s1').cursor.offset).toBe(0);
+    expect(sessionState('s1').cursor.offset).toBe(0);
     rmSync(paths(key).inbox, { recursive: true });
     runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
-    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(0);
     expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
   });
 
@@ -116,7 +117,7 @@ describe('Stop hook', () => {
     const inbox = readIfPresent(paths(key).inbox);
     expect(inbox).toContain('fly.io');
     expect(inbox).not.toContain('AKIAIOSFODNN7EXAMPLE');
-    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(0);
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop' });
   });
 
@@ -162,7 +163,7 @@ describe('Stop hook', () => {
     const next = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(next.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
   });
 
   it('is a no-op when stop_hook_active is set', () => {
@@ -176,7 +177,7 @@ describe('Stop hook', () => {
 
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(stopThreshold() - 1);
+    expect(sessionState('s1').stop_count).toBe(stopThreshold() - 1);
   });
 
   it('stays silent when PreCompact already reset the counter', () => {
@@ -186,6 +187,6 @@ describe('Stop hook', () => {
     const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
   });
 });

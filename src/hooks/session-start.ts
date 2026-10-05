@@ -12,13 +12,8 @@ import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
 import { logError, pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
-import {
-  isPaused,
-  rememberSessionOrigin,
-  resumeFinalizedSession,
-  sweepSessionState,
-} from '../core/session.js';
-import { currentAgentName } from '../core/agent.js';
+import { isPaused } from '../core/session.js';
+import { maintainSessions } from '../core/session-lifecycle.js';
 import { readInboxEntries } from '../core/inbox.js';
 import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
@@ -29,7 +24,6 @@ import { truncateToTokens } from '../core/injection.js';
 import {
   applyDistillJobResult,
   buildScopeInjection,
-  finalizePendingSessions,
   inboxBytes,
   skillRef,
 } from '../core/capture.js';
@@ -42,10 +36,8 @@ const MAX_MAINTENANCE_LINES = 2;
 /**
  * Run the best-effort lane. Every step yields rather than waits (A16).
  *
- * Pending finalization goes first, ahead of both the queue drain and the state sweep,
- * which would otherwise be free to delete a pending session's state before anyone read it
- * (issue #24). The drain claims `queue.claims_per_start` jobs — 1 by default — so a
- * session finalized here normally has its delta applied at the *next* start, not this one.
+ * The lifecycle module recovers pending tails before sweeping their state (issue #24).
+ * The queue drain claims at most `queue.claims_per_start` jobs — 1 by default.
  *
  * @returns number of abandoned sessions finalized
  */
@@ -55,7 +47,7 @@ function maintenance(
   host: Host,
   config: MehmoryConfig
 ): number {
-  const finalized = finalizePendingSessions(sessionId, project, host, config);
+  const { finalized } = maintainSessions(sessionId, project, host, config);
 
   tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
 
@@ -75,23 +67,12 @@ function maintenance(
     }
   }
 
-  sweepSessionState();
   return finalized;
 }
 
 runHook('SessionStart', (input, project, host, config) => {
   if (!config.hooks.session_start.enabled) return {};
 
-  // Explicit resume clears a retired session's pause before origin recording can
-  // detect activity and preserve it instead. An ordinary live session stays paused.
-  resumeFinalizedSession(input.session_id);
-  rememberSessionOrigin(
-    input.session_id,
-    input.transcript_path,
-    host,
-    project,
-    currentAgentName(config)
-  );
   if (isPaused(input.session_id)) return {};
 
   const justInitialized = !storeExists() && initStore().ok;

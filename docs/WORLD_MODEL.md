@@ -165,10 +165,14 @@ gets the same deduplication without a dispatch layer).
 
 One `.state/<sha256(session-id)>.json` per session holds the transcript cursor, the Stop
 counter, the topic cache, the project key and agent the session ran under, the generation
-(which run of a reused session id this is), and the pause flag. The public `./core/session`
-export records that origin through
-`rememberSessionOrigin(sessionId, transcriptPath, host, projectKey, agent)`;
-the former `setCachedProjectKey` export is removed. The project key is recorded as the
+(which run of a reused session id this is), and the pause flag. `./core/session-lifecycle`
+owns opening/observing, origin recording, resumption, finalization and ordered recovery/sweep.
+Its `openSession` records origin and resumes before recording a SessionStart origin;
+`observeSession` holds one loaded state across a mutation, and `finalizeSession` uses that
+same snapshot for generation, pause, delta cursor and retirement. Marker files and generation
+transitions are private; `./core/session` retains the cursor/counter/topic/pause value helpers,
+and `./core/session-state` holds their shared types and fresh defaults.
+The former `setCachedProjectKey` export is removed. The project key is recorded as the
 session's origin rather than cached for speed: a deferred finalize runs inside another
 session's hook, so this file is the only surviving record of which project the transcript
 belongs to. This **amends run 1's global
@@ -179,12 +183,19 @@ is free now and expensive after run 3.
 Capture holds the session lock across reading a delta and its durable append or enqueue.
 The cursor advances only after every append succeeds (dedup skips count as success) or the
 final-delta job is enqueued; failure leaves the delta and Stop counter available for retry.
-`distillDelta` is a preview and does not advance the cursor by itself.
+`distillDelta` is a preview and does not advance the cursor by itself. Read-only pause and
+topic gates use lock-free `inspectSession` snapshots, so contention never substitutes a fresh,
+unpaused state. Only inbox-tx requests a locked availability probe before its locked mutation.
+Callback failures in `observeSession` use the caller's operation error code; state I/O keeps
+`E_SESSION_STATE`. Finalization reports `E_APPEND_FAILED` on marker-write failure and retains
+its completed capture count with `markerFailed`, not `deferred`: removed state cannot be picked
+up by a later sweep. SessionEnd exposes that outcome as `marker_failed` in stats.jsonl.
 
-Finalized markers block unchanged trailing hooks, not a session's later work. SessionStart
-explicitly resumes the id before origin recording, clearing a retired session's saved pause
-and running injection and maintenance regardless of transcript timing. Ordinary capture and
-mutations also resume it under the session lock when its transcript exists and has grown beyond
+Finalized markers block unchanged trailing hooks, not a session's later work. The lifecycle
+module explicitly resumes a SessionStart id before origin recording, clearing a retired
+session's saved pause before injection regardless of transcript timing. `maintainSessions`
+finalizes pending tails before sweeping their state; hook callers cannot invert that order.
+Ordinary capture and mutations also resume it under the session lock when its transcript exists and has grown beyond
 both the saved cursor offset and file size. Only without a real cursor (`file_id` is empty or
 absent) does modification after the marker count instead. An already-present incomplete tail,
 an mtime bump with a real cursor, or truncation is not new activity.

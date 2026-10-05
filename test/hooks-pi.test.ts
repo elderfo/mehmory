@@ -1,3 +1,4 @@
+import { changeSession } from './session-fixture.js';
 /**
  * Pi host end-to-end through the built bundles, invoked exactly as the Pi extension
  * invokes them: `argv[2] === 'pi'` and a payload carrying `session_id`,
@@ -24,7 +25,7 @@ import {
   writePiSession,
   TODAY,
 } from './hook-fixture.js';
-import { setPaused, updateSessionState } from '../src/core/session.js';
+import { setPaused } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
 import { parseInboxEntries } from '../src/schema/format.js';
 
@@ -67,7 +68,7 @@ function payload(
 
 function primeCounter(): void {
   const threshold = loadConfig().stop.capture_threshold;
-  updateSessionState(PI_SESSION, (state) => ({ ...state, stop_count: threshold - 1 }));
+  changeSession(PI_SESSION, (state) => ({ ...state, stop_count: threshold - 1 }));
 }
 
 describe('Pi host through the hook bundles', () => {
