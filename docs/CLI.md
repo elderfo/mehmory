@@ -385,7 +385,7 @@ the newest state file is unsafe with concurrent sessions. State filenames are SH
 of ids, not the ids themselves. These operations never edit config or re-enable hooks disabled
 there. Busy sessions fail without changing state. A finalized session resumes from its saved
 cursor only after SessionStart or evidence of later transcript activity; otherwise it reports
-`session is busy or finalized; retry after SessionStart resumes it`, not an unknown id.
+`session is busy or finalized; retry after the next turn`, not an unknown id.
 
 Without `--json`, stdout is exactly the result object above on one line — identical to
 `hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the
