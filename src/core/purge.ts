@@ -72,8 +72,17 @@ export interface PageCandidates {
   readonly scopes: readonly string[];
 }
 
+/** Scope identity stays distinct from its display label. */
+export interface PageLocation {
+  readonly scope: string;
+  readonly kind: 'global' | 'project' | 'agent';
+  readonly key: string;
+  readonly dir: string;
+  readonly path: string;
+}
+
 /** Where a page with a given slug lives. */
-export function findPages(slug: string): readonly { scope: string; path: string }[] {
+export function findPages(slug: string): readonly PageLocation[] {
   if (slug !== basename(slug) || slug === '.' || slug === '..' || slug.includes('\u0000'))
     return [];
 
@@ -90,16 +99,26 @@ export function findPages(slug: string): readonly { scope: string; path: string 
                 stat(join(agents, name))?.isDirectory()
             )
           : [];
-      const found: { scope: string; path: string }[] = [];
-      const candidates = [
-        { scope: 'global', dir: join(home, 'global') },
-        ...listProjects().map(p => ({ scope: p.key, dir: p.dir })),
-        ...agentNames.map(name => ({ scope: `agent/${name}`, dir: join(agents, name) })),
+      const found: PageLocation[] = [];
+      const candidates: Omit<PageLocation, 'path'>[] = [
+        { scope: 'global', kind: 'global', key: 'global', dir: join(home, 'global') },
+        ...listProjects().map(p => ({
+          scope: p.key,
+          kind: 'project' as const,
+          key: p.key,
+          dir: p.dir,
+        })),
+        ...agentNames.map(name => ({
+          scope: `agent/${name}`,
+          kind: 'agent' as const,
+          key: name,
+          dir: join(agents, name),
+        })),
       ];
-      for (const { scope, dir } of candidates) {
+      for (const candidate of candidates) {
         for (const corpus of ['pages', ARCHIVE_DIR]) {
-          const path = join(dir, corpus, `${slug}.md`);
-          if (pathExists(path)) found.push({ scope, path });
+          const path = join(candidate.dir, corpus, `${slug}.md`);
+          if (pathExists(path)) found.push({ ...candidate, path });
         }
       }
       return found.sort((a, b) => a.scope.localeCompare(b.scope));
@@ -148,21 +167,27 @@ export function planSession(sessionId: string): PurgePlan {
   };
 }
 
+// The shared parser accepts summary-less decay links; purge removes only normative catalog lines.
+function isPageIndexLine(line: string, slug: string): boolean {
+  return parseIndexLine(line)?.slug === slug && /\]\]\s+—/u.test(line);
+}
+
 /** The plan for a bare page slug, once it has been resolved to exactly one scope. */
 export function planPage(slug: string, path: string, scope: string): PurgePlan {
-  const indexFile = join(dirname(dirname(path)), 'index.md');
+  const scopeDir = resolve(dirname(dirname(path)));
+  const indexFile = join(scopeDir, 'index.md');
   const lines = pathExists(indexFile)
     ? failOpen(
         () =>
           readFile(indexFile)
             .split('\n')
-            .filter(line => parseIndexLine(line)?.slug === slug),
+            .filter(line => isPageIndexLine(line, slug)),
         [],
         'E_PURGE_FAILED'
       )
     : [];
   const copies = findPages(slug)
-    .filter(page => page.scope === scope)
+    .filter(page => resolve(page.dir) === scopeDir)
     .map(page => page.path);
   return {
     form: 'page',
@@ -170,7 +195,7 @@ export function planPage(slug: string, path: string, scope: string): PurgePlan {
     token: slug,
     paths: [...new Set([path, ...copies])],
     inboxEdits: [],
-    indexEdits: pathExists(indexFile) ? [{ indexFile, key: scope, slug, lines }] : [],
+    indexEdits: lines.length > 0 ? [{ indexFile, key: scope, slug, lines }] : [],
   };
 }
 
@@ -308,12 +333,12 @@ function assertNoSymlinkComponents(path: string): void {
   }
 }
 
-function copyTree(from: string, to: string): void {
+function copyTree(from: string, to: string, home: string): void {
+  if (!isSafeStoreTarget(from, home)) throw new Error(`refusing unsafe export source ${from}`);
   assertNoSymlinkComponents(to);
-  if (lstat(from)?.isSymbolicLink()) throw new Error(`refusing symlink export source ${from}`);
   if (stat(from)?.isDirectory() === true) {
     mkdir(to);
-    for (const name of listDir(from)) copyTree(join(from, name), join(to, name));
+    for (const name of listDir(from)) copyTree(join(from, name), join(to, name), home);
     return;
   }
   atomicWrite(to, readFileFromNoFollow(from, 0));
@@ -330,17 +355,21 @@ function exportTargets(plan: PurgePlan, dest: string): void {
   assertNoSymlinkComponents(dest);
   const home = mehmoryHome();
   for (const path of plan.paths) {
-    copyTree(path, join(dest, relative(home, path)));
+    copyTree(path, join(dest, relative(home, path)), home);
   }
   for (const edit of plan.indexEdits) {
+    if (!isSafeStoreTarget(edit.indexFile, home))
+      throw new Error(`refusing unsafe export source ${edit.indexFile}`);
     const output = join(dest, relative(home, edit.indexFile));
     assertNoSymlinkComponents(output);
     const lines = readFileFromNoFollow(edit.indexFile, 0)
       .split('\n')
-      .filter(line => parseIndexLine(line)?.slug === edit.slug);
+      .filter(line => isPageIndexLine(line, edit.slug));
     atomicWrite(output, lines.length > 0 ? lines.join('\n') + '\n' : '');
   }
   for (const edit of plan.inboxEdits) {
+    if (!isSafeStoreTarget(edit.inboxFile, home))
+      throw new Error(`refusing unsafe export source ${edit.inboxFile}`);
     const output = join(dest, relative(home, edit.inboxFile));
     assertNoSymlinkComponents(output);
     const doomed = new Set(edit.ids);
@@ -398,6 +427,25 @@ export function executePurge(plan: PurgePlan, exportTo: string | undefined): Pur
 
 function executePurgeUnlocked(plan: PurgePlan, exportTo: string | undefined): PurgeOutcome {
   const home = mehmoryHome();
+  const targets = [
+    ...plan.paths,
+    ...plan.indexEdits.map(edit => edit.indexFile),
+    ...plan.inboxEdits.map(edit => edit.inboxFile),
+  ];
+  const unsafe = targets.find(path => !isSafeStoreTarget(path, home));
+  if (unsafe !== undefined) {
+    return {
+      ok: false,
+      deleted: false,
+      error: {
+        code: 'E_PURGE_FAILED',
+        kind: 'actionable',
+        what: `refusing unsafe purge target ${unsafe}`,
+        consequence: 'Nothing was deleted',
+        fix: `git -C ${shellQuote(home)} status`,
+      },
+    };
+  }
 
   if (exportTo !== undefined) {
     const destination = resolve(exportTo);
@@ -479,7 +527,7 @@ function executePurgeUnlocked(plan: PurgePlan, exportTo: string | undefined): Pu
           if (!isSafeStoreTarget(edit.indexFile, home))
             throw new Error(`refusing unsafe index target ${edit.indexFile}`);
           const lines = readFile(edit.indexFile).split('\n');
-          const kept = lines.filter(line => parseIndexLine(line)?.slug !== edit.slug);
+          const kept = lines.filter(line => !isPageIndexLine(line, edit.slug));
           const count = lines.length - kept.length;
           if (count > 0) atomicWrite(edit.indexFile, kept.join('\n'));
           return count;

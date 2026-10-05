@@ -35,7 +35,7 @@ export const command: Command = {
     '  --global          distill cross-project preferences into the global inbox',
     '  --dry-run         preview what would be distilled; writes nothing',
     '  --sessions N      transcripts to distill, newest first (default 30)',
-    '  --max-bytes N     distilled-output cap in bytes (default 512000)',
+    '  --max-bytes N     distilled-output cap in bytes, at least 1 (default 512000)',
     '  --projects N      transcript directories to scan (default 50)',
     '  --resume          continue an interrupted run with the same scope',
     '  --json            emit the single-line JSON envelope instead of text',
@@ -75,6 +75,9 @@ export const command: Command = {
     for (const name of Object.keys(caps)) {
       const value = flagInteger(parsed.flags, name);
       if (!value.ok) return usageError(value.what, 'mehmory onboard --help');
+      if (name === 'max-bytes' && value.value === 0) {
+        return usageError('`--max-bytes` must be at least 1', 'mehmory onboard --help');
+      }
       if (value.value !== undefined) caps[name] = value.value;
     }
 

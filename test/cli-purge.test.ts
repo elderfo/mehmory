@@ -7,7 +7,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, runCli, treeDigest, type CliRun } from './cli-fixture.js';
@@ -162,7 +170,7 @@ describe('mehmory purge', () => {
     expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(false);
   });
 
-  it('previews and removes every matching catalog line with the page, preserving other lines', () => {
+  it('previews and removes only normative catalog lines, preserving other lines', () => {
     seedStore();
     const index = write(
       `projects/${KEY}/index.md`,
@@ -170,15 +178,17 @@ describe('mehmory purge', () => {
     );
     const preview = runCli(['purge', 'deploy', '--dry-run']);
     expect(preview.status).toBe(0);
-    expect(preview.stdout).toContain(`  clear  2 index lines in projects/${KEY}/index.md`);
+    expect(preview.stdout).toContain(`  clear  1 index lines in projects/${KEY}/index.md`);
     expect(preview.stdout).toContain('- [[deploy]] — deleted summary');
     expect(readFileSync(index, 'utf-8')).toContain('deleted summary');
 
     const dest = createTempDir('mehmory-page-export');
     expect(runCli(['purge', 'deploy', '--yes', '--export', dest]).status).toBe(0);
-    expect(readFileSync(index, 'utf-8')).toBe('# Index\n- [[shared]] — keep summary\n');
+    expect(readFileSync(index, 'utf-8')).toBe(
+      '# Index\n  - [[deploy]]\n- [[shared]] — keep summary\n'
+    );
     expect(readFileSync(join(dest, 'projects', KEY, 'index.md'), 'utf-8')).toBe(
-      '- [[deploy]] — deleted summary\n  - [[deploy]]\n'
+      '- [[deploy]] — deleted summary\n'
     );
     expect(
       spawnSync('git', ['status', '--porcelain'], { cwd: home(), encoding: 'utf-8' }).stdout
@@ -241,18 +251,21 @@ describe('mehmory purge', () => {
     ).toBe('private log\n');
   });
 
-  it.each(['', 'short', '1234567'])('rejects session id %j with exit 2 before confirmation', id => {
-    seedStore();
-    write(
-      'global/inbox.md',
-      `- empty source <!--mehmory id=00000000000000a3 src=${id} ts=2026-07-30T10:00:00Z-->\n`
-    );
-    const before = treeDigest(home());
-    const run = runCliTyped(['purge', `--session=${id}`, '--json'], '');
-    expect(run.status).toBe(2);
-    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['code']).toBe('E_USAGE');
-    expect(treeDigest(home())).toBe(before);
-  });
+  it.each(['', 'short', '1234567', 'session with spaces'])(
+    'rejects session id %j with exit 1 before confirmation',
+    id => {
+      seedStore();
+      write(
+        'global/inbox.md',
+        `- empty source <!--mehmory id=00000000000000a3 src=${id} ts=2026-07-30T10:00:00Z-->\n`
+      );
+      const before = treeDigest(home());
+      const run = runCliTyped(['purge', `--session=${id}`, '--json'], '');
+      expect(run.status).toBe(1);
+      expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['code']).toBe('E_USAGE');
+      expect(treeDigest(home())).toBe(before);
+    }
+  );
 
   it('reports partial inbox clears and uncommitted deletions precisely', () => {
     seedStore();
@@ -279,6 +292,164 @@ describe('mehmory purge', () => {
         encoding: 'utf-8',
       }).stdout.trim()
     ).toBe('init: store');
+  });
+
+  it('refuses a symlinked page before changing its index or exporting anything', () => {
+    seedStore();
+    const index = write(`projects/${KEY}/index.md`, '- [[deploy]] — keep summary\n');
+    const outside = createTempDir('mehmory-outside');
+    const source = join(outside, 'deploy.md');
+    writeFileSync(source, 'outside secret\n');
+    const page = join(home(), 'projects', KEY, 'pages', 'deploy.md');
+    rmSync(page);
+    symlinkSync(source, page);
+    const before = treeDigest(home());
+    const refused = runCli(['purge', 'deploy', '--yes', '--json']);
+    expect(refused.status).toBe(3);
+    expect((envelopeOf(refused)['data'] as Record<string, unknown>)['deleted']).toBe(false);
+    expect(readFileSync(index, 'utf-8')).toBe('- [[deploy]] — keep summary\n');
+    expect(treeDigest(home())).toBe(before);
+    const dest = createTempDir('mehmory-export');
+    const run = runCli(['purge', 'deploy', '--yes', '--export', dest, '--json']);
+    expect(run.status).toBe(3);
+    const envelope = envelopeOf(run);
+    expect((envelope['data'] as Record<string, unknown>)['deleted']).toBe(false);
+    expect((envelope['errors'] as Record<string, unknown>[])[0]?.['consequence']).toBe(
+      'Nothing was deleted'
+    );
+    expect(readFileSync(index, 'utf-8')).toBe('- [[deploy]] — keep summary\n');
+    expect(readFileSync(source, 'utf-8')).toBe('outside secret\n');
+    expect(readdirSync(dest)).toEqual([]);
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it('preflights every copy before touching the catalog without export', () => {
+    seedStore();
+    const index = write(`projects/${KEY}/index.md`, '- [[deploy]] — keep summary\n');
+    const outside = join(createTempDir('mehmory-outside'), 'deploy.md');
+    writeFileSync(outside, 'outside archive\n');
+    mkdirSync(join(home(), 'projects', KEY, 'archive'), { recursive: true });
+    symlinkSync(outside, join(home(), 'projects', KEY, 'archive', 'deploy.md'));
+    const before = treeDigest(home());
+    const run = runCli(['purge', 'deploy', '--yes', '--json']);
+    expect(run.status).toBe(3);
+    expect((envelopeOf(run)['data'] as Record<string, unknown>)['deleted']).toBe(false);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['consequence']).toBe(
+      'Nothing was deleted'
+    );
+    expect(readFileSync(index, 'utf-8')).toBe('- [[deploy]] — keep summary\n');
+    expect(readFileSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'), 'utf-8')).toBe(
+      '# deploy\n'
+    );
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it.each(['pages', 'archive'])(
+    'refuses a symlinked %s directory before export and deletion',
+    corpus => {
+      seedStore();
+      const outside = createTempDir('mehmory-outside');
+      writeFileSync(join(outside, 'deploy.md'), 'outside secret\n');
+      const dir = join(home(), 'projects', KEY, corpus);
+      rmSync(dir, { recursive: true, force: true });
+      symlinkSync(outside, dir);
+      const before = treeDigest(home());
+      const dest = createTempDir('mehmory-export');
+      const run = runCli(['purge', 'deploy', '--yes', '--export', dest, '--json']);
+      expect(run.status).toBe(3);
+      expect((envelopeOf(run)['data'] as Record<string, unknown>)['deleted']).toBe(false);
+      expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['consequence']).toBe(
+        'Nothing was deleted'
+      );
+      expect(readdirSync(dest)).toEqual([]);
+      expect(readFileSync(join(outside, 'deploy.md'), 'utf-8')).toBe('outside secret\n');
+      expect(treeDigest(home())).toBe(before);
+    }
+  );
+
+  it('preflights the index before exporting the page', () => {
+    seedStore();
+    const outside = join(createTempDir('mehmory-outside'), 'index.md');
+    writeFileSync(outside, '- [[deploy]] — outside summary\n');
+    symlinkSync(outside, join(home(), 'projects', KEY, 'index.md'));
+    const dest = createTempDir('mehmory-export');
+    const run = runCli(['purge', 'deploy', '--yes', '--export', dest, '--json']);
+    expect(run.status).toBe(3);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['consequence']).toBe(
+      'Nothing was deleted'
+    );
+    expect(readdirSync(dest)).toEqual([]);
+    expect(readFileSync(outside, 'utf-8')).toBe('- [[deploy]] — outside summary\n');
+    expect(existsSync(join(home(), 'projects', KEY, 'pages', 'deploy.md'))).toBe(true);
+  });
+
+  it('resolves an ambiguous agent page with the suggested agent qualifier', () => {
+    seedStore();
+    const page = write('agents/helper/pages/shared.md', '# shared (agent)\n');
+    const ambiguous = runCli(['purge', 'shared', '--json']);
+    expect(ambiguous.status).toBe(1);
+    expect((envelopeOf(ambiguous)['errors'] as Record<string, unknown>[])[0]?.['fix']).toBe(
+      'mehmory purge shared --agent helper'
+    );
+    const run = runCli(['purge', 'shared', '--agent', 'helper', '--yes']);
+    expect(run.status).toBe(0);
+    expect(existsSync(page)).toBe(false);
+    expect(readFileSync(join(home(), 'global', 'pages', 'shared.md'), 'utf-8')).toBe(
+      '# shared (global)\n'
+    );
+    expect(readFileSync(join(home(), 'projects', KEY, 'pages', 'shared.md'), 'utf-8')).toBe(
+      '# shared (project)\n'
+    );
+  });
+
+  it.each(['../helper', '', 'with space'])('validates the agent qualifier %j', agent => {
+    seedStore();
+    const before = treeDigest(home());
+    const run = runCli(['purge', 'shared', `--agent=${agent}`, '--yes', '--json']);
+    expect(run.status).toBe(1);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['what']).toBe(
+      '`--agent` requires a safe single-segment agent name'
+    );
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it('requires a page slug for the agent qualifier', () => {
+    seedStore();
+    const run = runCli(['purge', '--agent', 'helper', '--yes', '--json']);
+    expect(run.status).toBe(1);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['what']).toBe(
+      '`--agent` requires a page slug'
+    );
+  });
+
+  it('keeps agent and aliased project scopes distinct when their labels collide', () => {
+    seedStore();
+    write('config.json', JSON.stringify({ identity: { aliases: { [KEY]: 'agent/helper' } } }));
+    rmSync(join(home(), 'projects', KEY), { recursive: true });
+    write('projects/agent/helper/inbox.md', '');
+    const projectPage = write('projects/agent/helper/pages/collision.md', '# project copy\n');
+    const agentPage = write('agents/helper/pages/collision.md', '# agent copy\n');
+    const ambiguous = runCli(['purge', 'collision', '--yes', '--json']);
+    expect(ambiguous.status).toBe(1);
+    expect(readFileSync(projectPage, 'utf-8')).toBe('# project copy\n');
+    expect(readFileSync(agentPage, 'utf-8')).toBe('# agent copy\n');
+    expect(runCli(['purge', 'collision', '--project', KEY, '--yes']).status).toBe(0);
+    expect(existsSync(projectPage)).toBe(false);
+    expect(readFileSync(agentPage, 'utf-8')).toBe('# agent copy\n');
+    write('projects/agent/helper/pages/collision.md', '# project copy\n');
+    expect(runCli(['purge', 'collision', '--agent', 'helper', '--yes']).status).toBe(0);
+    expect(existsSync(agentPage)).toBe(false);
+    expect(readFileSync(projectPage, 'utf-8')).toBe('# project copy\n');
+  });
+
+  it('omits empty index edits from text and JSON previews', () => {
+    seedStore();
+    write(`projects/${KEY}/index.md`, '- [[shared]] — keep summary\n');
+    const preview = runCli(['purge', 'deploy', '--dry-run']);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).not.toContain('clear  0 index lines');
+    const json = runCli(['purge', 'deploy', '--dry-run', '--json']);
+    expect((envelopeOf(json)['data'] as Record<string, unknown>)['indexEdits']).toEqual([]);
   });
 
   it('--yes skips the prompt', () => {

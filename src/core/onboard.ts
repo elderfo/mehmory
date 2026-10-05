@@ -423,8 +423,8 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
       error: {
         code: 'E_APPEND_FAILED',
         kind: 'actionable',
-        what: `could not append ${String(failed)} entries to ${inboxFile}; check the inbox path, permissions and disk space`,
-        consequence: `${String(appended)} entries were appended; progress was saved in ${onboardStateFile()}; repair the inbox and resume`,
+        what: `could not append ${String(failed)} entries to ${inboxFile}; the store may be busy, or the inbox path, permissions or disk space may need repair`,
+        consequence: `${String(appended)} entries were appended; progress was saved in ${onboardStateFile()}; retry when the store is available or repaired`,
         fix: `mehmory onboard --resume ${options.isGlobal ? '--global' : `--project ${shellQuote(options.scopeLabel)}`}`,
       },
     };

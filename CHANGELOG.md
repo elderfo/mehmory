@@ -28,14 +28,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Page purges remove and preview matching index summaries, preventing deleted content from remaining in SessionStart's catalog.
-- Page purges discover archived and agent-scope pages and remove live/archive copies together within the selected scope.
-- `purge --global` removes the entire global scope, including its index, inbox, log and archive, without rewriting git history.
-- `purge --session` rejects ids shorter than eight characters or containing whitespace before confirmation (exit 2).
-- Partial inbox purge failures report deleted and remaining entry counts, disclose that no purge commit was made, and suggest inspecting the store's git status.
-- Byte-capped and append-failed onboard runs retain progress for `--resume`; append failures return exit 3 instead of success.
-- Unexpected CLI exceptions use `E_INTERNAL` rather than incorrectly reporting an append failure.
-
+- **Page purges remove catalog summaries too.** Matching normative `- [[slug]] — summary`
+  lines are previewed and removed, preventing deleted summaries from remaining in
+  SessionStart's catalog. Freeform references and lines without the summary separator stay.
+- **Page purges reach archived and agent pages.** Live and archived copies are removed
+  together within the selected scope.
+- **Purge validates all targets before export or mutation.** Refused pages or indices leave
+  catalog lines intact, and every export source is checked for store containment so
+  symlinked `pages/` or `archive/` directories cannot leak outside-store content.
+- **Ambiguous agent pages can be selected explicitly.** `purge <slug> --agent <name>`
+  restricts deletion to that agent, and ambiguity errors name the correct qualifier.
+- **Scope labels no longer determine deletion identity.** A project aliased to `agent/<name>`
+  remains distinct from the agent scope with the same label.
+- **Empty catalog edits no longer clutter purge previews.** An index without matching
+  lines is omitted from text and JSON index edits.
+- **`purge --global` removes the whole global scope.** Its index, inbox, log and archive go
+  too, without rewriting git history.
+- **Invalid purge session ids are usage errors.** Ids shorter than eight characters or
+  containing whitespace are rejected before confirmation with exit 1 and `E_USAGE`.
+- **Partial inbox purge failures report their reach.** Deleted and remaining entry counts
+  disclose that no purge commit was made and suggest inspecting the store's git status.
+- **Interrupted onboard runs retain progress.** Byte-capped and append-failed runs can
+  continue with `--resume`; append failures return exit 3 instead of success.
+- **Onboard rejects zero byte caps.** `--max-bytes 0` returns a usage error instead of
+  creating a run that cannot progress. Append-failure messages cover busy write locks as
+  well as filesystem problems.
+- **Unexpected CLI exceptions use `E_INTERNAL`.** They no longer incorrectly report an
+  append failure.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

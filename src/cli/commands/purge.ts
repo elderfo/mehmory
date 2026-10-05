@@ -27,8 +27,10 @@ import {
   planSession,
   plannedEntries,
   shellQuote,
+  type PageLocation,
   type PurgePlan,
 } from '../../core/purge.js';
+import { isSafeAgentName } from '../../core/agent-name.js';
 import { flagString, parseFlags } from '../args.js';
 import {
   EXIT,
@@ -59,13 +61,14 @@ export const command: Command = {
   name: 'purge',
   summary: 'delete memory from the working tree and commit the removal',
   usage:
-    'mehmory purge <page-slug> | --session <id> | --project [<key>] | --global | --all [--dry-run] [--export <path>] [--yes]',
+    'mehmory purge <page-slug> [--agent <name>] | --session <id> | --project [<key>] | --global | --all [--dry-run] [--export <path>] [--yes]',
   help: [
     '  <page-slug>       live and archived copies in one scope, plus matching index lines;',
     '                    includes agent scopes; ambiguous across scopes lists candidates,',
-    '                    which `--project <key>` or `--global` beside the slug resolves',
+    '                    which `--project <key>`, `--global` or `--agent <name>` resolves',
     '  --session <id>    un-integrated inbox entries; at least 8 characters, no whitespace',
     '  --project [<key>] one project; bare means the current directory',
+    '  --agent <name>    qualify a page slug with a safe single-segment agent name',
     '  --global          the entire global/ directory (including index, inbox, log, archive)',
     '  --all             everything in the store',
     '  --dry-run         preview the targets; deletes nothing',
@@ -86,6 +89,7 @@ export const command: Command = {
     const parsed = parseFlags(ctx.argv, {
       ...SCOPE_FLAGS,
       session: 'value',
+      agent: 'value',
       'dry-run': 'boolean',
       export: 'value',
       yes: 'boolean',
@@ -102,6 +106,7 @@ export const command: Command = {
     const forms = [
       parsed.flags.has('session') ? '--session' : undefined,
       parsed.flags.has('project') ? '--project' : undefined,
+      parsed.flags.has('agent') ? '--agent' : undefined,
       parsed.flags.has('global') ? '--global' : undefined,
       parsed.flags.has('all') ? '--all' : undefined,
     ].filter((form): form is string => form !== undefined);
@@ -121,15 +126,22 @@ export const command: Command = {
         'mehmory purge --help'
       );
     }
+    const agent = flagString(parsed.flags, 'agent');
+    if (agent !== undefined && !isSafeAgentName(agent)) {
+      return usageError(
+        '`--agent` requires a safe single-segment agent name',
+        'mehmory purge --help'
+      );
+    }
+    if (parsed.flags.has('agent') && slug === undefined) {
+      return usageError('`--agent` requires a page slug', 'mehmory purge --help');
+    }
     const session = flagString(parsed.flags, 'session');
     if (session !== undefined && (session.length < 8 || /\s/u.test(session))) {
-      return {
-        ...usageError(
-          '`--session` requires at least 8 characters with no whitespace',
-          'mehmory purge --help'
-        ),
-        exit: 2,
-      };
+      return usageError(
+        '`--session` requires at least 8 characters with no whitespace',
+        'mehmory purge --help'
+      );
     }
     if (!storeExists()) return storeMissing('purge');
 
@@ -255,35 +267,40 @@ function buildPlan(
   if (slug !== undefined) {
     // An optional scope qualifier, which is what makes the ambiguity error's `fix` a
     // command that actually resolves it.
-    let restrict: string | undefined;
+    let restrict: { kind: PageLocation['kind']; key: string } | undefined;
     if (flags.has('global')) {
-      restrict = 'global';
+      restrict = { kind: 'global', key: 'global' };
     } else if (flags.has('project')) {
       const scoped = selectScope(flags, ctx.cwd, ctx.config);
       if (!scoped.ok) return { result: scoped.result };
-      restrict = scoped.scope.kind === 'project' ? scoped.scope.key : undefined;
+      if (scoped.scope.kind === 'project') restrict = { kind: 'project', key: scoped.scope.key };
+    } else {
+      const agent = flagString(flags, 'agent');
+      if (agent !== undefined) restrict = { kind: 'agent', key: agent };
     }
 
-    const pages = findPages(slug).filter(page => restrict === undefined || page.scope === restrict);
+    const pages = findPages(slug).filter(
+      page => restrict === undefined || (page.kind === restrict.kind && page.key === restrict.key)
+    );
     const page = pages[0];
     if (page === undefined) {
       return {
         result: usageError(
-          `no page \`${slug}\`${restrict === undefined ? ' in any scope' : ` in ${restrict}`}`,
+          `no page \`${slug}\`${restrict === undefined ? ' in any scope' : ` in ${restrict.kind} ${restrict.key}`}`,
           `mehmory search ${slug}`
         ),
       };
     }
-    const scopes = [...new Set(pages.map(p => p.scope))];
+    const scopes = [...new Map(pages.map(p => [p.dir, p])).values()];
     if (scopes.length > 1) {
       // Never both. The user names the scope and runs it again.
-      const other = pages.find(p => p.scope !== 'global');
+      const other = scopes.find(p => p.kind !== 'global');
       return {
         result: usageError(
-          `\`${slug}\` exists in ${String(scopes.length)} scopes: ${scopes.join(', ')}`,
+          `\`${slug}\` exists in ${String(scopes.length)} scopes: ${scopes.map(p => p.scope).join(', ')}`,
           other === undefined
             ? `mehmory purge ${slug} --global`
-            : `mehmory purge ${slug} --project ${other.scope}`
+            : `mehmory purge ${slug} --${other.kind === 'agent' ? 'agent' : 'project'} ${other.key}`
         ),
       };
     }

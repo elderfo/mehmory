@@ -55,7 +55,7 @@ Two consequences, same code:
   No `Fix:` — there's no single runnable command that's right for every cause; check the
   `<what>` text this once, since there's no other lead.
 
-## E_APPEND_FAILED (informational or actionable)
+## E_APPEND_FAILED (actionable)
 
 A single-line append to the store (inbox, log, or stats) failed — usually permissions or
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
@@ -68,8 +68,9 @@ the generic *Operation failed; using fallback* consequence instead, so match on 
 
 During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
 count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
-repair the named inbox (it must be a writable file, not a directory or symlink) or disk-space
-problem before resuming. A byte-capped run also retains progress and names `--resume`, but
+wait for a busy store's write lock to become available, or repair the named inbox (it must
+be a writable file, not a directory or symlink), permissions or disk-space problem before
+resuming. A byte-capped run also retains progress and names `--resume`, but
 is not an error. Completed sessions are skipped; a partially appended session is retried
 with entry-id deduplication.
 
@@ -259,10 +260,10 @@ The command didn't run: an unknown command or flag, wrong arity, a flag missing 
 mutually exclusive forms at once, or a scope selector that matched more than one project.
 Consequence: *The command did not run.* Fix: always a runnable command — usually
 `mehmory <command> --help`, and for an ambiguous purge slug the disambiguated command itself
-(`mehmory purge <slug> --project <key>`). Exit code **1**, except that `purge --session`
-rejects ids shorter than 8 characters or containing whitespace with **2**. This is the code you will see most
-often, and it is the one a script should treat as "I called it wrong", never as "the store is
-broken".
+(`mehmory purge <slug> --project <key>`, `--global`, or `--agent <name>`). Exit code **1**,
+including invalid purge session ids and zero onboard byte caps. This is the code you will
+see most often, and it is the one a script should treat as "I called it wrong", never as
+"the store is broken".
 
 ### E_ABORTED (actionable)
 

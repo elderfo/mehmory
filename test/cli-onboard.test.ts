@@ -174,6 +174,47 @@ describe('mehmory onboard', () => {
     expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(false);
   });
 
+  it('rejects a zero byte cap without creating a dead-end resume state', () => {
+    const project = fakeProject();
+    const claudeHome = createFakeClaudeHome({
+      [project]: { s: transcript('s', ['a useful deployment decision']) },
+    });
+    expect(runCli(['init'], { cwd: project, claudeHome }).status).toBe(0);
+    const before = treeDigest(home());
+    const run = runCli(['onboard', '--max-bytes', '0', '--json'], { cwd: project, claudeHome });
+    expect(run.status).toBe(1);
+    expect((envelopeOf(run)['errors'] as Record<string, unknown>[])[0]?.['what']).toBe(
+      '`--max-bytes` must be at least 1'
+    );
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(false);
+    expect(treeDigest(home())).toBe(before);
+  });
+
+  it('describes lock contention as well as filesystem causes on append failure', () => {
+    const project = fakeProject();
+    const claudeHome = createFakeClaudeHome({
+      [project]: { s: transcript('s', ['a useful deployment decision']) },
+    });
+    expect(runCli(['init'], { cwd: project, claudeHome }).status).toBe(0);
+    const locks = join(home(), '.state', 'locks');
+    mkdirSync(locks, { recursive: true });
+    writeFileSync(join(locks, '__store__.lock'), String(process.pid));
+    const run = runCli(['onboard', '--json'], { cwd: project, claudeHome });
+    expect(run.status).toBe(3);
+    const envelope = envelopeOf(run);
+    const key = keyFromEnvelope(run);
+    expect((envelope['errors'] as Record<string, unknown>[])[0]?.['what']).toBe(
+      `could not append 1 entries to ${join(home(), 'projects', key, 'inbox.md')}; the store may be busy, or the inbox path, permissions or disk space may need repair`
+    );
+    expect((envelope['errors'] as Record<string, unknown>[])[0]?.['consequence']).toBe(
+      `0 entries were appended; progress was saved in ${join(home(), '.state', 'onboard.json')}; retry when the store is available or repaired`
+    );
+    expect(existsSync(join(home(), '.state', 'onboard.json'))).toBe(true);
+    rmSync(join(locks, '__store__.lock'));
+    expect(runCli(['onboard', '--resume'], { cwd: project, claudeHome }).status).toBe(0);
+    expect(inboxOf(key)).toContain('a useful deployment decision');
+  });
+
   it('keeps byte-capped progress so --resume processes older sessions', () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
