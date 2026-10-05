@@ -11,17 +11,11 @@
  * editorially by `integrate` (run-1 amendment 10, closed by spec gap 19).
  */
 
-import { join, relative } from 'node:path';
-import { atomicWrite, listDir, lstat, mkdir, pathExists, readFile, realpath, rename, stat } from './fs.js';
-import { loadConfig } from './config.js';
+import { atomicWrite } from './fs.js';
+import type { MehmoryConfig } from './config.js';
+import { archivePage, openScope, type WikiIndex } from './wiki.js';
 import { failOpen } from './errors.js';
-import {
-  ARCHIVE_DIR,
-  ARCHIVE_DIVIDER,
-  isStalePage,
-  parseIndexLine,
-  readFrontmatter,
-} from '../schema/format.js';
+import { ARCHIVE_DIVIDER, isStalePage } from '../schema/format.js';
 
 export { readFrontmatter } from '../schema/format.js';
 
@@ -33,17 +27,6 @@ export interface DecayResult {
   archived: string[];
   /** True when index.md was rewritten. */
   rewroteIndex: boolean;
-}
-
-/**
- * True when an index line refers to this page.
- *
- * Association is by the `format.ts` grammar (run-2 amendment 26 promoted this from
- * run 2's heuristic), so a prose line that merely *names* a page is no longer
- * mistaken for that page's index line.
- */
-function lineRefersTo(line: string, pageFile: string): boolean {
-  return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, '');
 }
 
 /**
@@ -60,65 +43,48 @@ function lineRefersTo(line: string, pageFile: string): boolean {
  */
 export function decayPass(
   scopeDir: string,
+  config: MehmoryConfig,
   options: { now?: number; archiveDays?: number; purgeDays?: number } = {}
 ): DecayResult {
   const empty: DecayResult = { demoted: [], archived: [], rewroteIndex: false };
 
   return failOpen(
     () => {
-      const config = loadConfig();
       if (!config.decay.enabled) return empty;
 
       const now = options.now ?? Date.now();
       const archiveDays = options.archiveDays ?? config.decay.archive_days;
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
 
-      const pagesDir = join(scopeDir, 'pages');
-      const indexPath = join(scopeDir, 'index.md');
-      if (!pathExists(pagesDir)) return empty;
+      const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
+      if (!wiki.pagesReadable) return empty;
 
       const demoted: string[] = [];
       const archived: string[] = [];
       /** page file → updated epoch ms, for the recency re-sort. */
       const liveOrder = new Map<string, number>();
 
-      for (const name of listDir(pagesDir)) {
-        if (!name.endsWith('.md')) continue;
-        const pagePath = join(pagesDir, name);
-        if (lstat(pagePath)?.isSymbolicLink() || !stat(pagePath)?.isFile()) continue;
-
-        const contents = readFile(pagePath);
-        const fields = readFrontmatter(contents);
-        const updatedAt = Date.parse(fields['updated'] ?? '');
-
-        if (isStalePage(contents, now, purgeDays)) {
-          const archiveDir = join(scopeDir, ARCHIVE_DIR);
-          if (pathExists(archiveDir) && lstat(archiveDir)?.isSymbolicLink()) {
-            throw new Error('archive directory must not be a symlink');
-          }
-          mkdir(archiveDir);
-          const suffix = relative(realpath(scopeDir), realpath(archiveDir));
-          if (suffix !== '' && suffix !== '..' && suffix.startsWith('..')) {
-            throw new Error('archive directory must remain inside the scope');
-          }
-          rename(pagePath, join(archiveDir, name));
+      for (const page of wiki.pages) {
+        const name = `${page.slug}.md`;
+        if (isStalePage(page.frontmatter, now, purgeDays)) {
+          if (!archivePage(wiki.scope, page)) return empty;
           archived.push(name);
-        } else if (isStalePage(contents, now, archiveDays)) {
+        } else if (page.stale) {
           demoted.push(name);
         } else {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
+          liveOrder.set(name, page.updatedAt ?? 0);
         }
       }
 
-      if (!pathExists(indexPath)) {
+      if (!wiki.index.readable) {
         return { demoted, archived, rewroteIndex: false };
       }
 
-      const original = readFile(indexPath);
-      const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
+      const original = wiki.index.body;
+      const rewritten = rewriteIndex(wiki.index, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
 
-      atomicWrite(indexPath, rewritten);
+      atomicWrite(wiki.scope.indexFile, rewritten);
       return { demoted, archived, rewroteIndex: true };
     },
     empty,
@@ -130,31 +96,30 @@ export function decayPass(
  * Rebuild index.md: live page lines newest-first, then `## Archive` with the demoted
  * lines, with every non-page line (frontmatter, headings, prose) kept in place.
  *
- * Index lines are recognized by `INDEX_LINE_PATTERN` (`format.ts`); everything else
- * — frontmatter, headings, prose — is preamble and is kept in place.
+ * The wiki reader supplies parsed line positions; everything else remains preamble.
  */
 function rewriteIndex(
-  contents: string,
+  index: WikiIndex,
   liveOrder: ReadonlyMap<string, number>,
   demoted: readonly string[],
   archived: readonly string[]
 ): string {
-  const lines = contents.split('\n');
+  const lines = index.body.split('\n');
   const preamble: string[] = [];
   const live: { line: string; updated: number }[] = [];
   const belowDivider: string[] = [];
 
-  const findPage = (line: string): string | undefined => {
-    for (const name of [...liveOrder.keys(), ...demoted, ...archived]) {
-      if (lineRefersTo(line, name)) return name;
-    }
-    return undefined;
-  };
+  const known = new Set([...liveOrder.keys(), ...demoted, ...archived]);
+  const pageLines = new Map(
+    index.lines
+      .filter((entry) => known.has(`${entry.slug}.md`))
+      .map((entry) => [entry.line, `${entry.slug}.md`])
+  );
 
-  for (const line of lines) {
+  for (const [offset, line] of lines.entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) continue; // re-emitted below if still needed
 
-    const page = findPage(line);
+    const page = pageLines.get(offset);
     if (page === undefined) {
       preamble.push(line);
       continue;
@@ -173,7 +138,7 @@ function rewriteIndex(
   const out = [...preamble];
   if (live.length > 0) {
     live.sort((a, b) => b.updated - a.updated);
-    out.push('', ...live.map(l => l.line));
+    out.push('', ...live.map((l) => l.line));
   }
   if (belowDivider.length > 0) {
     out.push('', ARCHIVE_DIVIDER, '', ...belowDivider);

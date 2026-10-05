@@ -57,6 +57,7 @@
     "./core/decay": "./dist/core/decay.js",
     "./core/stats": "./dist/core/stats.js",
     "./core/match": "./dist/core/match.js",
+    "./core/wiki": "./dist/core/wiki.js",
     "./core/store": "./dist/core/store.js",
     "./core/redact": "./dist/core/redact.js",
     "./core/tokens": "./dist/core/tokens.js",

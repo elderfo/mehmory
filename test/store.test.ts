@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { initStore, TEMPLATE_SCHEMA_VERSION } from '../src/core/store.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { pathExists, readFile, mkdir, atomicWrite, listDir } from '../src/core/fs.js';
-import { agentScopePaths } from '../src/core/capture.js';
+import { agentScopePaths } from '../src/core/wiki.js';
 import { createTempDir, cleanupTempDir } from './helpers.js';
 
 // Note: test/setup.ts already guards MEHMORY_HOME to prevent touching ~/.mehmory

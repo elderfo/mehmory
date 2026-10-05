@@ -30,7 +30,7 @@ import {
   shellQuote,
   stat,
   statePath
-} from "./chunk-PWN6QP6F.mjs";
+} from "./chunk-ZQKNVQBL.mjs";
 
 // src/core/config.ts
 import { join } from "path";
@@ -680,7 +680,8 @@ function readFrontmatter(contents) {
 }
 var MS_PER_DAY = 24 * 60 * 60 * 1e3;
 function pageAgeDays(contents, now) {
-  const updated = readFrontmatter(contents)["updated"];
+  const fields = typeof contents === "string" ? readFrontmatter(contents) : contents;
+  const updated = fields["updated"];
   if (!updated) return null;
   const parsed = Date.parse(updated);
   return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
@@ -689,8 +690,9 @@ var ARCHIVE_DIVIDER = "## Archive";
 var ARCHIVE_DIR = "archive";
 var STALE_SCORE_MULTIPLIER = 0.7;
 function isStalePage(contents, now, staleAfterDays) {
-  if ((readFrontmatter(contents)["decay"] ?? "default") !== "default") return false;
-  const age = pageAgeDays(contents, now);
+  const fields = typeof contents === "string" ? readFrontmatter(contents) : contents;
+  if ((fields["decay"] ?? "default") !== "default") return false;
+  const age = pageAgeDays(fields, now);
   return age !== null && age > staleAfterDays;
 }
 var INDEX_LINE_PATTERN = /^\s*-\s+\[\[([^\]]+)\]\](?:\s+—\s*(.*))?$/;
@@ -841,7 +843,6 @@ function clearInboxEntries(inboxFile, key, ids) {
 }
 
 // src/core/match.ts
-import { resolve as resolve2 } from "path";
 var MIN_TOKEN_LENGTH = 3;
 var STOPWORDS = /* @__PURE__ */ new Set([
   "the",
@@ -932,43 +933,218 @@ function scoreDoc(tokens, lowerBody, lowerTitle) {
   }
   return score;
 }
-function matchPages(prompt, pagesDir, max = 3, options = {}) {
+function matchPages(prompt, pages, max = 3) {
   const tokens = tokenize(prompt);
-  if (tokens.size === 0 || !pathExists(pagesDir)) return [];
-  const now = options.now ?? Date.now();
+  if (tokens.size === 0) return [];
   const scored = [];
-  let names;
-  try {
-    if (lstat(pagesDir)?.isSymbolicLink()) return [];
-    names = listDir(pagesDir);
-  } catch {
-    return [];
-  }
-  for (const name of names) {
-    if (!name.endsWith(".md")) continue;
-    const filePath = resolve2(pagesDir, name);
-    let contents;
-    try {
-      if (lstat(filePath)?.isSymbolicLink() || !stat(filePath)?.isFile()) continue;
-      contents = readFile(filePath);
-    } catch {
-      continue;
-    }
-    const stale = options.staleAfterDays !== void 0 && isStalePage(contents, now, options.staleAfterDays);
-    const body = contents.toLowerCase();
-    const titleLine = /^#\s+(.*)$/m.exec(body);
-    const title = `${name.toLowerCase()} ${titleLine?.[1] ?? ""}`;
-    const score = scoreDoc(tokens, body, title);
+  for (const page of pages) {
+    const score = scoreDoc(tokens, page.body.toLowerCase(), page.title);
     if (score > 0) {
       scored.push({
-        path: filePath,
-        score: stale ? score * STALE_SCORE_MULTIPLIER : score,
-        stale
+        path: page.path,
+        score: page.stale ? score * STALE_SCORE_MULTIPLIER : score,
+        stale: page.stale
       });
     }
   }
   scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return scored.slice(0, max).map((s) => ({ path: s.path, stale: s.stale }));
+}
+
+// src/core/wiki.ts
+import { dirname as dirname2, isAbsolute, join as join5, relative as relative2, resolve as resolve2, sep as sep3 } from "path";
+
+// src/core/scopes.ts
+import { join as join4, sep as sep2 } from "path";
+
+// src/core/wiki.ts
+function wikiScope(dir) {
+  return {
+    dir,
+    pagesDir: join5(dir, "pages"),
+    archiveDir: join5(dir, ARCHIVE_DIR),
+    indexFile: join5(dir, "index.md"),
+    identityFile: join5(dir, "identity.md"),
+    projectFile: join5(dir, "project.md"),
+    inboxFile: join5(dir, "inbox.md"),
+    logFile: join5(dir, "log.md")
+  };
+}
+function scopePaths(key) {
+  const home = mehmoryHome();
+  const projectDir = join5(home, "projects", key);
+  return { ...wikiScope(projectDir), projectDir, globalDir: join5(home, "global") };
+}
+function agentScopePaths(name) {
+  if (!isSafeAgentName(name)) {
+    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
+  }
+  const agentDir = join5(mehmoryHome(), "agents", name);
+  const scope = wikiScope(agentDir);
+  return {
+    agentDir,
+    identityFile: scope.identityFile,
+    indexFile: scope.indexFile,
+    pagesDir: scope.pagesDir,
+    logFile: scope.logFile
+  };
+}
+function contained(root, candidate) {
+  const suffix = relative2(realpath(resolve2(root)), realpath(resolve2(candidate)));
+  return suffix !== ".." && !suffix.startsWith(`..${sep3}`) && !isAbsolute(suffix);
+}
+function readIfPresent(path) {
+  return failOpen(
+    () => {
+      const candidate = resolve2(path);
+      if (!contained(mehmoryHome(), dirname2(candidate)) || !pathExists(candidate)) return void 0;
+      const info = lstat(candidate);
+      return !info?.isSymbolicLink() && info?.isFile() === true ? readFile(candidate) : void 0;
+    },
+    void 0,
+    "E_STORE_READ"
+  );
+}
+function readPages(dir, options, archived) {
+  return failOpen(
+    () => {
+      if (!pathExists(dir) || lstat(dir)?.isSymbolicLink()) return { pages: [], readable: false };
+      const pages = [];
+      const now = options.now ?? Date.now();
+      for (const name of listDir(dir)) {
+        if (!name.endsWith(".md")) continue;
+        const page = failOpen(
+          () => {
+            const path = resolve2(dir, name);
+            const info = lstat(path);
+            if (info?.isSymbolicLink() || info?.isFile() !== true) return void 0;
+            const body = readFile(path);
+            const frontmatter = readFrontmatter(body);
+            const updated = Date.parse(frontmatter["updated"] ?? "");
+            const updatedAt = Number.isNaN(updated) ? null : updated;
+            return {
+              path,
+              slug: name.slice(0, -3),
+              body,
+              title: `${name} ${/^#\s+(.*)$/m.exec(body)?.[1] ?? ""}`.toLowerCase(),
+              frontmatter,
+              decayClass: frontmatter["decay"] ?? "default",
+              updatedAt,
+              ageDays: updatedAt === null ? null : (now - updatedAt) / MS_PER_DAY,
+              mtimeMs: Number(info.mtimeMs),
+              stale: archived || options.staleAfterDays !== void 0 && isStalePage(frontmatter, now, options.staleAfterDays)
+            };
+          },
+          void 0,
+          "E_STORE_READ"
+        );
+        if (page !== void 0) pages.push(page);
+      }
+      return { pages, readable: true };
+    },
+    { pages: [], readable: false },
+    "E_STORE_READ"
+  );
+}
+function readIndex(path) {
+  const contents = readIfPresent(path);
+  const body = contents ?? "";
+  const lines = [];
+  let demoted = false;
+  for (const [offset, line] of body.split("\n").entries()) {
+    if (line.trim() === ARCHIVE_DIVIDER) demoted = true;
+    const parsed = parseIndexLine(line);
+    if (parsed !== void 0) lines.push({ ...parsed, demoted, line: offset });
+  }
+  return { readable: contents !== void 0, body, lines };
+}
+function openScope(dir, options = {}) {
+  const scope = wikiScope(dir);
+  let pages;
+  let archive;
+  let index;
+  let identity;
+  let project;
+  let log;
+  return {
+    scope,
+    get pages() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).pages;
+    },
+    get pagesReadable() {
+      return (pages ??= readPages(scope.pagesDir, options, false)).readable;
+    },
+    get archive() {
+      return (archive ??= readPages(scope.archiveDir, options, true)).pages;
+    },
+    get index() {
+      return index ??= readIndex(scope.indexFile);
+    },
+    get identity() {
+      return identity ??= (readIfPresent(scope.identityFile) ?? "").trim();
+    },
+    get project() {
+      return project ??= (readIfPresent(scope.projectFile) ?? "").trim();
+    },
+    get log() {
+      return log ??= readIfPresent(scope.logFile) ?? "";
+    }
+  };
+}
+function openProjectWiki(key, options = {}) {
+  const paths = scopePaths(key);
+  const project = openScope(paths.dir, options);
+  const global = openScope(paths.globalDir, options);
+  const sourceFor = (path) => pathExists(path) ? project : global;
+  return {
+    scope: project.scope,
+    get archive() {
+      return project.archive;
+    },
+    get project() {
+      return project.project;
+    },
+    get log() {
+      return project.log;
+    },
+    get pages() {
+      return sourceFor(paths.pagesDir).pages;
+    },
+    get pagesReadable() {
+      return sourceFor(paths.pagesDir).pagesReadable;
+    },
+    get index() {
+      return sourceFor(paths.indexFile).index;
+    },
+    get identity() {
+      return global.identity;
+    }
+  };
+}
+function storeExists() {
+  return pathExists(wikiScope(join5(mehmoryHome(), "global")).identityFile);
+}
+function storeIsUnpopulated(key) {
+  const paths = scopePaths(key);
+  const project = openScope(paths.dir);
+  return project.project === "" && project.pages.length === 0 && openScope(paths.globalDir).pages.length === 0;
+}
+function archivePage(scope, page) {
+  return failOpen(
+    () => {
+      if (pathExists(scope.archiveDir) && lstat(scope.archiveDir)?.isSymbolicLink()) {
+        throw new Error("archive directory must not be a symlink");
+      }
+      mkdir(scope.archiveDir);
+      if (!contained(scope.dir, scope.archiveDir)) {
+        throw new Error("archive directory must remain inside the scope");
+      }
+      rename(page.path, join5(scope.archiveDir, `${page.slug}.md`));
+      return true;
+    },
+    false,
+    "E_ATOMIC_WRITE"
+  );
 }
 
 // src/core/tokens.ts
@@ -989,7 +1165,7 @@ function estimateTokens(text) {
 }
 
 // src/core/redact.ts
-import { join as join4 } from "path";
+import { join as join6 } from "path";
 var REDACTION_PLACEHOLDER = "[REDACTED]";
 var MAX_INPUT_BYTES = 256 * 1024;
 var SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|(?!sharedaccesskey\b)[a-z0-9]*(?:token|password|passwd|secret|(?:api|secret|private|access|signing|ssh)key)|[a-z][a-z0-9_]*_(?:key|token|password|passwd|secret))`;
@@ -1068,7 +1244,7 @@ function compileUserPatterns(patterns) {
         kind: "actionable",
         what: `secrets.patterns entry ${String(patterns.indexOf(raw))} is not a usable regex (${err instanceof Error ? err.message : String(err)})`,
         consequence: "That pattern is skipped; the built-in secret patterns still apply",
-        fix: `$EDITOR ${join4(mehmoryHome(), "config.json")}`
+        fix: `$EDITOR ${join6(mehmoryHome(), "config.json")}`
       });
     }
   }
@@ -1266,11 +1442,11 @@ function truncateToTokens(text, targetTokens) {
 
 // src/core/capture.ts
 import { homedir } from "os";
-import { dirname as dirname2, join as join7, relative as relative3, resolve as resolve3, sep as sep2 } from "path";
+import { join as join9, relative as relative4, resolve as resolve3, sep as sep4 } from "path";
 
 // src/core/session-lifecycle.ts
 import { createHash as createHash4 } from "crypto";
-import { join as join6, relative as relative2 } from "path";
+import { join as join8, relative as relative3 } from "path";
 
 // src/core/cursor.ts
 function freshCursor() {
@@ -1342,15 +1518,15 @@ function freshSessionState(sessionId) {
 
 // src/core/queue.ts
 import { randomBytes as randomBytes2 } from "crypto";
-import { join as join5 } from "path";
+import { join as join7 } from "path";
 function claimAge(claim, claimPath) {
   const timestamp = /^\w+\.\d+\.[0-9a-f]{32}\.(\d+)\.json$/.exec(claim)?.[1];
   return Date.now() - (timestamp === void 0 ? Number(stat(claimPath)?.mtimeMs ?? Date.now()) : Number(timestamp));
 }
 function enqueueJob(jobData, jobType) {
   const jobId = randomBytes2(8).toString("hex");
-  const queueDir = join5(statePath("queue"));
-  const jobPath = join5(queueDir, `${jobId}.json`);
+  const queueDir = join7(statePath("queue"));
+  const jobPath = join7(queueDir, `${jobId}.json`);
   mkdir(queueDir);
   const payload = { ...jobData };
   if (jobType !== void 0) {
@@ -1371,21 +1547,21 @@ function enqueueJob(jobData, jobType) {
   }
 }
 function claimJob(jobType) {
-  const queueDir = join5(statePath("queue"));
-  const claimedDir = join5(queueDir, "claimed");
-  const failedDir = join5(queueDir, "failed");
+  const queueDir = join7(statePath("queue"));
+  const claimedDir = join7(queueDir, "claimed");
+  const failedDir = join7(queueDir, "failed");
   if (!pathExists(queueDir)) {
     return null;
   }
   if (pathExists(claimedDir)) {
     for (const claim of listDir(claimedDir)) {
       if (!claim.endsWith(".json")) continue;
-      const claimPath = join5(claimedDir, claim);
+      const claimPath = join7(claimedDir, claim);
       try {
         const age = claimAge(claim, claimPath);
         if (age <= QUEUE_STALE_MS) continue;
         const jobId = claim.slice(0, claim.indexOf("."));
-        const pendingPath = join5(queueDir, `${jobId}.json`);
+        const pendingPath = join7(queueDir, `${jobId}.json`);
         if (pathExists(pendingPath)) {
           remove(claimPath);
         } else {
@@ -1411,7 +1587,7 @@ function claimJob(jobType) {
   if (jobs.length === 0) return null;
   const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
   for (const jobFile of jobs) {
-    const jobPath = join5(queueDir, jobFile);
+    const jobPath = join7(queueDir, jobFile);
     const jobId = jobFile.replace(".json", "");
     let jobData;
     try {
@@ -1429,7 +1605,7 @@ function claimJob(jobType) {
     }
     const jobClaims = claimedFiles.filter((f) => f.startsWith(jobId + "."));
     jobClaims.forEach((claim) => {
-      const claimPath = join5(claimedDir, claim);
+      const claimPath = join7(claimedDir, claim);
       try {
         const age = claimAge(claim, claimPath);
         if (age > QUEUE_STALE_MS) {
@@ -1442,7 +1618,7 @@ function claimJob(jobType) {
     if (attempts >= QUEUE_CLAIM_ATTEMPTS) {
       mkdir(failedDir);
       try {
-        rename(jobPath, join5(failedDir, jobId + ".json"));
+        rename(jobPath, join7(failedDir, jobId + ".json"));
       } catch {
       }
       continue;
@@ -1450,7 +1626,7 @@ function claimJob(jobType) {
     mkdir(claimedDir);
     const claimToken = randomBytes2(16).toString("hex");
     const claimFile = `${jobId}.${String(process.pid)}.${claimToken}.${String(Date.now())}.json`;
-    const claimedPath = join5(claimedDir, claimFile);
+    const claimedPath = join7(claimedDir, claimFile);
     try {
       rename(jobPath, claimedPath);
       return { id: jobId, data: jobData, claimFile };
@@ -1461,14 +1637,14 @@ function claimJob(jobType) {
   return null;
 }
 function completeJob(jobId, claimFile) {
-  const claimedDir = join5(statePath("queue"), "claimed");
+  const claimedDir = join7(statePath("queue"), "claimed");
   if (!pathExists(claimedDir)) return;
   const files = claimFile === void 0 ? [] : [claimFile];
   for (const file of files) {
     if (!file.startsWith(jobId + ".") || !/^\d+\.[0-9a-f]{32}(?:\.\d+)?\.json$/.test(file.slice(jobId.length + 1)))
       continue;
     try {
-      remove(join5(claimedDir, file));
+      remove(join7(claimedDir, file));
     } catch {
     }
   }
@@ -1754,8 +1930,8 @@ function finalize(position, transcriptPath, project, host, config, options) {
       `${String(entries.length)} entries queued for integration ${sessionEndLogTag(sessionId, generation)}`
     );
     const home = mehmoryHome();
-    const touched = [paths.logFile, paths.inboxFile].filter(pathExists).map((path) => relative2(home, path));
-    if (touched.length > 0 && pathExists(join6(home, ".git")))
+    const touched = [paths.logFile, paths.inboxFile].filter(pathExists).map((path) => relative3(home, path));
+    if (touched.length > 0 && pathExists(join8(home, ".git")))
       commitPaths(touched, `mehmory: session ${sessionId} ended`, home);
     capturedEntries = entries.length;
   }
@@ -1778,7 +1954,7 @@ function sessionFiles() {
   const files = [];
   for (const name of listDir(statePath())) {
     if (!name.endsWith(".json")) continue;
-    const path = join6(statePath(), name);
+    const path = join8(statePath(), name);
     try {
       const raw = JSON.parse(readFile(path));
       if (typeof raw !== "object" || raw === null) continue;
@@ -2182,66 +2358,12 @@ function distill(records, fallbackSessionId = "", secrets) {
 }
 
 // src/core/capture.ts
-function scopePaths(key) {
-  const home = mehmoryHome();
-  const projectDir = join7(home, "projects", key);
-  const globalDir = join7(home, "global");
-  return {
-    projectDir,
-    globalDir,
-    inboxFile: join7(projectDir, "inbox.md"),
-    logFile: join7(projectDir, "log.md"),
-    pagesDir: join7(projectDir, "pages")
-  };
-}
-function agentScopePaths(name) {
-  if (!isSafeAgentName(name)) {
-    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
-  }
-  const agentDir = join7(mehmoryHome(), "agents", name);
-  return {
-    agentDir,
-    identityFile: join7(agentDir, "identity.md"),
-    indexFile: join7(agentDir, "index.md"),
-    pagesDir: join7(agentDir, "pages"),
-    logFile: join7(agentDir, "log.md")
-  };
-}
-function storeExists() {
-  return pathExists(join7(mehmoryHome(), "global", "identity.md"));
-}
-function storeIsUnpopulated(key) {
-  const paths = scopePaths(key);
-  if (readIfPresent(join7(paths.projectDir, "project.md")) !== "") return false;
-  for (const dir of [paths.pagesDir, join7(paths.globalDir, "pages")]) {
-    const hasPages = failOpen(
-      () => pathExists(dir) && listDir(dir).some((f) => f.endsWith(".md")),
-      false,
-      "E_STORE_READ"
-    );
-    if (hasPages) return false;
-  }
-  return true;
-}
 function inboxBytes(inboxFile) {
   return failOpen(
     () => pathExists(inboxFile) ? Number(stat(inboxFile)?.size ?? 0) : 0,
     0,
     "E_STORE_READ"
   );
-}
-function readIfPresent(path) {
-  try {
-    const candidate = resolve3(path);
-    const parent = realpath(dirname2(candidate));
-    const home = realpath(resolve3(mehmoryHome()));
-    const suffix = relative3(home, parent);
-    if (suffix !== "" && (suffix === ".." || suffix.startsWith(`..${sep2}`))) return "";
-    if (lstat(candidate)?.isSymbolicLink()) return "";
-    return pathExists(candidate) ? readFile(candidate).trim() : "";
-  } catch {
-    return "";
-  }
 }
 var ROUTING_BLOCK = [
   "<mehmory-routing>",
@@ -2263,23 +2385,17 @@ function skillRef(host, skill) {
 function buildScopeInjection(key, config = loadConfig(), sessionId) {
   return failOpen(
     () => {
-      const paths = scopePaths(key);
-      const projectIndex = join7(paths.projectDir, "index.md");
+      const wiki = openProjectWiki(key);
       const agent = currentAgentName(config);
       const parts = [
-        { label: "identity", content: readIfPresent(join7(paths.globalDir, "identity.md")) },
-        { label: "project", content: readIfPresent(join7(paths.projectDir, "project.md")) },
-        {
-          label: "index",
-          content: readIfPresent(
-            pathExists(projectIndex) ? projectIndex : join7(paths.globalDir, "index.md")
-          )
-        }
+        { label: "identity", content: wiki.identity },
+        { label: "project", content: wiki.project },
+        { label: "index", content: wiki.index.body.trim() }
       ];
       if (agent !== void 0) {
         parts.push({
           label: "agent",
-          content: readIfPresent(agentScopePaths(agent).identityFile)
+          content: openScope(agentScopePaths(agent).agentDir).identity
         });
       }
       const sessionLine = sessionId === void 0 ? "" : `session: ${/^[a-zA-Z0-9_-]+$/.test(sessionId) ? sessionId : JSON.stringify(sessionId).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e")}
@@ -2331,18 +2447,18 @@ ${frame[part.label] ?? ""}`);
   );
 }
 var TRANSCRIPT_ROOTS = {
-  "claude-code": () => join7(homedir(), ".claude", "projects"),
-  codex: () => join7(codexHome(), "sessions"),
+  "claude-code": () => join9(homedir(), ".claude", "projects"),
+  codex: () => join9(codexHome(), "sessions"),
   pi: piSessionsDir
 };
 function isApprovedTranscript(path, host) {
   const candidate = resolve3(path);
-  const roots = [TRANSCRIPT_ROOTS[host](), join7(mehmoryHome(), ".state", "transcripts")];
+  const roots = [TRANSCRIPT_ROOTS[host](), join9(mehmoryHome(), ".state", "transcripts")];
   try {
     if (lstat(candidate)?.isSymbolicLink() || stat(candidate)?.isFile() !== true) return false;
     return roots.some((root) => {
-      const suffix = relative3(realpath(root), realpath(candidate));
-      return suffix !== ".." && !suffix.startsWith(`..${sep2}`);
+      const suffix = relative4(realpath(root), realpath(candidate));
+      return suffix !== ".." && !suffix.startsWith(`..${sep4}`);
     });
   } catch {
     return false;
@@ -2527,11 +2643,8 @@ export {
   isContainedProjectKey,
   resolveProjectKey,
   tryProjectLock,
-  readFrontmatter,
   ARCHIVE_DIVIDER,
-  ARCHIVE_DIR,
   isStalePage,
-  parseIndexLine,
   INBOX_HOSTS,
   inboxEntryId,
   readInboxEntries,
@@ -2540,13 +2653,16 @@ export {
   redact,
   tokenize,
   matchPages,
+  scopePaths,
+  openScope,
+  openProjectWiki,
+  storeExists,
+  storeIsUnpopulated,
+  archivePage,
   recordStat,
   MAINTENANCE_ALLOWANCE_TOKENS,
   estimateTokens,
   truncateToTokens,
-  scopePaths,
-  storeExists,
-  storeIsUnpopulated,
   inboxBytes,
   skillRef,
   buildScopeInjection,

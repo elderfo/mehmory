@@ -7,14 +7,13 @@
  * topic cache when the prompt has not really changed topic. No match, no output.
  */
 
-import { join } from 'node:path';
-import { pathExists } from '../core/fs.js';
+import { openProjectWiki, scopePaths } from '../core/wiki.js';
 import { runHook } from '../core/hook.js';
 import { appendInboxEntries } from '../core/inbox.js';
 import { matchPages, tokenize } from '../core/match.js';
 import { isPaused, rememberTopic, topicCacheHit } from '../core/session.js';
 import { inspectSession } from '../core/session-lifecycle.js';
-import { rememberEntry, scopePaths, staleSessionStartWarning } from '../core/capture.js';
+import { rememberEntry, staleSessionStartWarning } from '../core/capture.js';
 
 /** Prefix that turns a prompt into an explicit inbox capture (gate item T2). */
 const REMEMBER_PREFIX = /^remember:\s*/i;
@@ -45,13 +44,8 @@ runHook('UserPromptSubmit', (input, project, host, config) => {
     return { stats: { pointers_offered: 0, topic_cache_hit: true } };
   }
 
-  // ponytail: project pages, falling back to global when the project has none. Ceiling
-  // is a prompt whose answer lives in global while the project scope is populated;
-  // upgrade path is run 3's FTS index, which can rank both scopes in one query.
-  const pagesDir = pathExists(paths.pagesDir) ? paths.pagesDir : join(paths.globalDir, 'pages');
-  const pages = matchPages(prompt, pagesDir, MAX_POINTERS, {
-    staleAfterDays: config.decay.archive_days,
-  });
+  const wiki = openProjectWiki(project, { staleAfterDays: config.decay.archive_days });
+  const pages = tokens.size === 0 ? [] : matchPages(prompt, wiki.pages, MAX_POINTERS);
   rememberTopic(input.session_id, tokens);
 
   // A stale pointer is still offered — demoted in ranking, and labeled so the model

@@ -27,7 +27,7 @@ export const FRONTMATTER_KEYS = {
   type: 'type',
   refs: 'refs',
   decay: 'decay',
-  schema_version: 'schema_version'
+  schema_version: 'schema_version',
 } as const;
 
 /** Divider text used to separate frontmatter from content. */
@@ -52,8 +52,12 @@ export function readFrontmatter(contents: string): Record<string, string> {
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** Age of a page in days from its `updated` frontmatter; null when absent/unparseable. */
-export function pageAgeDays(contents: string, now: number): number | null {
-  const updated = readFrontmatter(contents)['updated'];
+export function pageAgeDays(
+  contents: string | Readonly<Record<string, string>>,
+  now: number
+): number | null {
+  const fields = typeof contents === 'string' ? readFrontmatter(contents) : contents;
+  const updated = fields['updated'];
   if (!updated) return null;
   const parsed = Date.parse(updated);
   return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
@@ -95,9 +99,14 @@ export const ARCHIVED_SCORE_MULTIPLIER = 0.5;
  * A page with no parseable `updated` is NOT stale: unknown age is not evidence of age,
  * and treating it as stale would demote every hand-written page that skipped frontmatter.
  */
-export function isStalePage(contents: string, now: number, staleAfterDays: number): boolean {
-  if ((readFrontmatter(contents)['decay'] ?? 'default') !== 'default') return false;
-  const age = pageAgeDays(contents, now);
+export function isStalePage(
+  contents: string | Readonly<Record<string, string>>,
+  now: number,
+  staleAfterDays: number
+): boolean {
+  const fields = typeof contents === 'string' ? readFrontmatter(contents) : contents;
+  if ((fields['decay'] ?? 'default') !== 'default') return false;
+  const age = pageAgeDays(fields, now);
   return age !== null && age > staleAfterDays;
 }
 

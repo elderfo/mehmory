@@ -5,11 +5,11 @@ import {
   openSession,
   recordStat,
   resolveProjectKey
-} from "./chunk-QGTGVXJ6.mjs";
+} from "./chunk-2OY3T25E.mjs";
 import {
   logError,
   readStdin
-} from "./chunk-PWN6QP6F.mjs";
+} from "./chunk-ZQKNVQBL.mjs";
 
 // src/core/host.ts
 var DEFAULT_HOST = "claude-code";

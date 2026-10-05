@@ -28,10 +28,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Pause gates remain lock-free under contention.** A busy session cannot capture a paused
-  `remember:` prompt or hide its topic cache behind fresh defaults.
-- **Capture failures keep their operation error codes.** Append and retirement marker errors
-  report `E_APPEND_FAILED`, not corrupt session state.
+- **Status counts only pages retrieval can read.** Symlinked pages, symlinked page directories,
+  unreadable files and non-file `.md` entries no longer inflate live or archived page counts.
+- **Decay keeps archives inside their scope.** A destination resolving to exactly the scope's
+  parent is refused by the same canonical containment rule used for wiki reads.
+- **Decay no longer follows symlinked index or pages paths.** A symlinked `index.md` or `pages/`
+  is left untouched instead of rewriting or archiving files outside the store.
+- **Unreadable wiki directories are logged.** Prompt matching, search and SessionStart now record
+  informational `E_STORE_READ` instead of failing silently.
 - **Failed retirement markers do not claim pending work.** SessionEnd keeps the completed capture
   count and reports `marker_failed`, not `deferred`, after final-delta handling has landed.
 - **Evergreen and ephemeral pages are not flagged stale.** Retrieval and decay share one

@@ -2,15 +2,16 @@
  * Capture and injection helpers shared by the five hook entrypoints (A12).
  *
  * The hooks are adapters: they parse stdin, call one or two functions from here, and
- * serialize stdout. Everything those calls *do* — resolving a scope to file paths,
- * turning a transcript delta into inbox entries, composing the injected frame — lives
+ * serialize stdout. Everything those calls *do* — turning a transcript delta into
+ * inbox entries, composing the injected frame — lives
  * in this module so it is testable in-process and reusable by run 3's CLI.
  */
 
 import { homedir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { codexHome, mehmoryHome, piSessionsDir } from './home.js';
-import { appendRecord, listDir, lstat, mkdir, pathExists, readFile, realpath, stat } from './fs.js';
+import { appendRecord, lstat, mkdir, pathExists, realpath, stat } from './fs.js';
+import { agentScopePaths, openProjectWiki, openScope, scopePaths } from './wiki.js';
 import { withProjectLock } from './lock.js';
 import { failOpen, logError, pendingWarnings } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
@@ -28,102 +29,6 @@ import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../s
 import { readSession } from '../transcript/host.js';
 import { distill } from '../distill/distill.js';
 
-/** Absolute paths of the files a hook reads or writes for one project scope. */
-export interface ScopePaths {
-  /** `<home>/projects/<key>` — where this project's memory lives. */
-  readonly projectDir: string;
-  /** `<home>/global` — user-level memory, shared by every project. */
-  readonly globalDir: string;
-  /** Inbox this scope's captures append to. */
-  readonly inboxFile: string;
-  /** Append-only operations log for this scope. */
-  readonly logFile: string;
-  /** Directory the prompt matcher scans for pointers. */
-  readonly pagesDir: string;
-}
-
-/** Resolve the file paths a project key maps to. Creates nothing. */
-export function scopePaths(key: string): ScopePaths {
-  const home = mehmoryHome();
-  const projectDir = join(home, 'projects', key);
-  const globalDir = join(home, 'global');
-  return {
-    projectDir,
-    globalDir,
-    inboxFile: join(projectDir, 'inbox.md'),
-    logFile: join(projectDir, 'log.md'),
-    pagesDir: join(projectDir, 'pages'),
-  };
-}
-
-/**
- * Absolute paths of the files one agent scope is made of (R2).
- *
- * Deliberately not `ScopePaths`: there is no `inboxFile`, because capture always
- * appends to the *project* inbox (R6) and the agent name rides on the entry (KD3).
- * A separate type is what makes an agent inbox unrepresentable rather than merely
- * discouraged — the same reason `listAgentScopes` keys on `identity.md`.
- */
-export interface AgentScopePaths {
-  /** `<home>/agents/<name>` — where this agent's own memory lives. */
-  readonly agentDir: string;
-  /** What this agent is; the page its sessions inject as their self. */
-  readonly identityFile: string;
-  readonly indexFile: string;
-  readonly pagesDir: string;
-  readonly logFile: string;
-}
-
-/**
- * Resolve the file paths an agent name maps to. Creates nothing — the `agents/`
- * root appears on the first write into it, never at `initStore`, so a store where
- * no agent is ever named has the layout it had before agent scopes existed (R11).
- *
- * Throws on a name `isSafeAgentName` rejects rather than returning a path or
- * `undefined`. Every caller reaches here through `resolveAgentName` or
- * `parseInboxEntries`, both of which already validate, so an unsafe name arriving
- * here is a broken invariant and not a case to branch on; an `undefined` return
- * would instead invite `paths?.pagesDir` chains that silently skip the write. Core
- * callers run inside `failOpen`, which turns the throw into a logged degradation
- * (A2) — the same posture `inbox-tx.ts` takes for a value that failed validation.
- */
-export function agentScopePaths(name: string): AgentScopePaths {
-  if (!isSafeAgentName(name)) {
-    throw new Error(`unsafe agent name "${name}" cannot address an agent scope`);
-  }
-  const agentDir = join(mehmoryHome(), 'agents', name);
-  return {
-    agentDir,
-    identityFile: join(agentDir, 'identity.md'),
-    indexFile: join(agentDir, 'index.md'),
-    pagesDir: join(agentDir, 'pages'),
-    logFile: join(agentDir, 'log.md'),
-  };
-}
-
-/** True when the store layout exists (SessionStart uses this to decide on auto-init). */
-export function storeExists(): boolean {
-  return pathExists(join(mehmoryHome(), 'global', 'identity.md'));
-}
-
-/**
- * True when the store is initialized but holds nothing worth injecting — no project
- * page, no pages in either scope. Drives the onboarding pointer (criterion 7).
- */
-export function storeIsUnpopulated(key: string): boolean {
-  const paths = scopePaths(key);
-  if (readIfPresent(join(paths.projectDir, 'project.md')) !== '') return false;
-  for (const dir of [paths.pagesDir, join(paths.globalDir, 'pages')]) {
-    const hasPages = failOpen(
-      () => pathExists(dir) && listDir(dir).some((f) => f.endsWith('.md')),
-      false,
-      'E_STORE_READ'
-    );
-    if (hasPages) return false;
-  }
-  return true;
-}
-
 /** Size of a scope's inbox in bytes (0 when absent) — the nudge's byte threshold. */
 export function inboxBytes(inboxFile: string): number {
   return failOpen(
@@ -139,20 +44,6 @@ export function inboxBytes(inboxFile: string): number {
 export interface ScopeInjection {
   readonly text: string;
   readonly tokens: number;
-}
-
-function readIfPresent(path: string): string {
-  try {
-    const candidate = resolve(path);
-    const parent = realpath(dirname(candidate));
-    const home = realpath(resolve(mehmoryHome()));
-    const suffix = relative(home, parent);
-    if (suffix !== '' && (suffix === '..' || suffix.startsWith(`..${sep}`))) return '';
-    if (lstat(candidate)?.isSymbolicLink()) return '';
-    return pathExists(candidate) ? readFile(candidate).trim() : '';
-  } catch {
-    return '';
-  }
 }
 
 /**
@@ -231,25 +122,19 @@ export function buildScopeInjection(
 ): ScopeInjection {
   return failOpen(
     () => {
-      const paths = scopePaths(key);
-      const projectIndex = join(paths.projectDir, 'index.md');
+      const wiki = openProjectWiki(key);
       const agent = currentAgentName(config);
       const parts: InjectionPart[] = [
-        { label: 'identity', content: readIfPresent(join(paths.globalDir, 'identity.md')) },
-        { label: 'project', content: readIfPresent(join(paths.projectDir, 'project.md')) },
-        {
-          label: 'index',
-          content: readIfPresent(
-            pathExists(projectIndex) ? projectIndex : join(paths.globalDir, 'index.md')
-          ),
-        },
+        { label: 'identity', content: wiki.identity },
+        { label: 'project', content: wiki.project },
+        { label: 'index', content: wiki.index.body.trim() },
       ];
       // The part is passed even when the agent's identity.md is absent, so a named
       // agent's allocation does not depend on whether it has written a self yet.
       if (agent !== undefined) {
         parts.push({
           label: 'agent',
-          content: readIfPresent(agentScopePaths(agent).identityFile),
+          content: openScope(agentScopePaths(agent).agentDir).identity,
         });
       }
       const sessionLine =

@@ -2,7 +2,7 @@
   "version": 1,
   "description": "Golden retrieval set for mehmory. A fixed miniature wiki plus the queries a user would actually type at it, each naming the page that should come back. Recall@K over this set is how a retrieval change is judged: run it before and after, and the numbers say whether the change helped. Queries marked \"paraphrase\": true use none of the target page's vocabulary — grep structurally cannot answer them, and they are here to measure exactly how much of the set keyword matching leaves on the table.",
   "measurement": {
-    "change": "Isolate the evergreen custody fixture from unrelated query substrings",
+    "change": "Read scopes through wiki.ts; preserve both scorers and golden-set recall",
     "before": {
       "keywordRecallAt1": "13/13 = 1.00",
       "keywordRecallAt3": "13/13 = 1.00",

@@ -305,6 +305,9 @@ function pendingWarnings(limit = Infinity) {
   return warningLines(readWarnings(true, limit));
 }
 
+// src/transcript/pi.ts
+import { createHash } from "crypto";
+
 // src/core/fs.ts
 import {
   writeFileSync as writeFileSync2,
@@ -507,9 +510,6 @@ function appendRecord(path, record, key, lockPath) {
     }
   }
 }
-
-// src/transcript/pi.ts
-import { createHash } from "crypto";
 
 // src/transcript/reader.ts
 function readTranscript(path, startOffset = 0) {

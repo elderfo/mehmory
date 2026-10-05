@@ -1,24 +1,22 @@
 import {
   runHook
-} from "./chunk-REP3EMJU.mjs";
+} from "./chunk-SQTSFCAP.mjs";
 import {
   appendInboxEntries,
   inspectSession,
   isPaused,
   matchPages,
+  openProjectWiki,
   rememberEntry,
   rememberTopic,
   scopePaths,
   staleSessionStartWarning,
   tokenize,
   topicCacheHit
-} from "./chunk-QGTGVXJ6.mjs";
-import {
-  pathExists
-} from "./chunk-PWN6QP6F.mjs";
+} from "./chunk-2OY3T25E.mjs";
+import "./chunk-ZQKNVQBL.mjs";
 
 // src/hooks/user-prompt-submit.ts
-import { join } from "path";
 var REMEMBER_PREFIX = /^remember:\s*/i;
 var MAX_POINTERS = 3;
 runHook("UserPromptSubmit", (input, project, host, config) => {
@@ -38,10 +36,8 @@ runHook("UserPromptSubmit", (input, project, host, config) => {
   if (topicCacheHit(inspectSession(input.session_id).state, tokens, Date.now(), thresholds)) {
     return { stats: { pointers_offered: 0, topic_cache_hit: true } };
   }
-  const pagesDir = pathExists(paths.pagesDir) ? paths.pagesDir : join(paths.globalDir, "pages");
-  const pages = matchPages(prompt, pagesDir, MAX_POINTERS, {
-    staleAfterDays: config.decay.archive_days
-  });
+  const wiki = openProjectWiki(project, { staleAfterDays: config.decay.archive_days });
+  const pages = tokens.size === 0 ? [] : matchPages(prompt, wiki.pages, MAX_POINTERS);
   rememberTopic(input.session_id, tokens);
   const lines = pages.map((page) => `relevant: ${page.path}${page.stale ? " (stale)" : ""}`);
   const warning = staleSessionStartWarning(project);

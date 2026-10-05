@@ -14,7 +14,8 @@ import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
 import { isSafeAgentName } from './agent.js';
 import type { MehmoryConfig } from './config.js';
 import { freshSessionState, type SessionState, type TopicCache } from './session-state.js';
-import { appendLogEntry, distillJobPayload, distillSessionDelta, scopePaths } from './capture.js';
+import { appendLogEntry, distillJobPayload, distillSessionDelta } from './capture.js';
+import { scopePaths } from './wiki.js';
 import { commitPaths } from './git.js';
 import { enqueueJob } from './queue.js';
 

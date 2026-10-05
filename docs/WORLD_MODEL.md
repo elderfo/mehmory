@@ -346,9 +346,10 @@ beside `inbox-tx.ts` (that file is a skill helper, not a user-facing binary).
 
 ### A18. Search is one scan over pages + archive + log; there is no index
 
-`src/core/search.ts` extends the landed matcher (`match.ts`) rather than adding a second
-retrieval path. `matchPages()` keeps its existing signature and scope for the
-`UserPromptSubmit` hook.
+`src/core/wiki.ts` owns scope layout, lazy page/index reads and the project/global
+fallback rule. `matchPages()` ranks its live pages for `UserPromptSubmit`;
+`src/core/search.ts` extends the same scoring (`match.ts`) to archive pages and the log.
+The former disk-reading matcher signature is replaced by in-memory wiki pages.
 
 **Rejected:** FTS5 with a SQLite index (the spec's own original choice, declined at the
 gate) — the degraded grep fallback would have had to exist regardless and `matchPages`
@@ -420,8 +421,8 @@ existing `fs.ts` surface); A18 upholds A2/A3/A9/A16 — with FTS dropped there i
 outside `fs.ts` and no sync/async question; A19 upholds A2; A20 is a **named, narrow
 exception** to A4, recorded as such; A21 upholds A2 and A9; A22 upholds A4 (the
 multipliers and the staleness predicate live in `schema/format.ts`, the format authority)
-and A21 (`archive_days` is threaded in from the caller's config, never read inside
-`match.ts` or `search.ts`). A11 is unthreatened: scoped to core by its own text.
+and A21 (`archive_days` is threaded into `wiki.ts` from the caller's config, never
+loaded inside the reader or the scorers). A11 is unthreatened: scoped to core by its own text.
 
 **Amendment to A6.** `initStore()`'s owned layout grows: it now also creates, when
 absent, `~/.mehmory/.gitignore` (containing `.state/`) and an **empty** `{}`

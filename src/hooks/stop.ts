@@ -10,7 +10,8 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHook, type HookResult } from '../core/hook.js';
-import { captureAtStop, scopePaths, skillRef } from '../core/capture.js';
+import { captureAtStop, skillRef } from '../core/capture.js';
+import { scopePaths } from '../core/wiki.js';
 import type { InboxHost } from '../schema/format.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
