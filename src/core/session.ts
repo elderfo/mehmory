@@ -1,5 +1,5 @@
 /**
- * Session-scoped capture state (A13): one `.state/<session-id>.json` per session.
+ * Session-scoped capture state (A13): one `.state/<sha256(session-id)>.json` per session.
  *
  * Holds everything a hook needs to know about *this* session and nothing about any
  * other: the transcript cursor, the Stop counter, the topic cache, the resolved
@@ -16,7 +16,13 @@ import { join } from 'node:path';
 import { statePath } from './home.js';
 import { atomicWrite, listDir, pathExists, readFile, remove, stat } from './fs.js';
 import { logError } from './errors.js';
-import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
+import {
+  advanceCursor,
+  freshCursor,
+  isCursorState,
+  resetCursor,
+  type CursorState,
+} from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
 import { withSessionLock } from './lock.js';
@@ -97,7 +103,7 @@ function parseSessionState(raw: string, sessionId: string): SessionState | null 
   if (typeof topic === 'object' && topic !== null) {
     const t = topic as Record<string, unknown>;
     if (Array.isArray(t['tokens']) && typeof t['ts'] === 'number') {
-      topicCache = { tokens: t['tokens'].filter(x => typeof x === 'string'), ts: t['ts'] };
+      topicCache = { tokens: t['tokens'].filter((x) => typeof x === 'string'), ts: t['ts'] };
     }
   }
 
@@ -174,8 +180,7 @@ function updateSessionStateUnlocked(
   sessionId: string,
   mutate: (_state: SessionState) => SessionState
 ): SessionState | undefined {
-  // A trailing hook is not a resume. Only SessionStart may restore the marker cursor.
-  if (isSessionFinalized(sessionId)) return undefined;
+  if (!ensureSessionActiveUnlocked(sessionId)) return undefined;
   const next = mutate(readSessionState(sessionId));
   writeSessionState(next);
   return next;
@@ -230,11 +235,21 @@ export function isSessionFinalized(sessionId: string): boolean {
 export function markSessionFinalized(
   sessionId: string,
   cursor?: CursorState,
-  generation = 0
+  generation = 0,
+  origin?: SessionState
 ): void {
   atomicWrite(
     finalizedMarkerPath(sessionId),
-    JSON.stringify({ session_id: sessionId, generation, ...(cursor ? { cursor } : {}) })
+    JSON.stringify({
+      session_id: sessionId,
+      generation,
+      ...(cursor ? { cursor } : {}),
+      transcript_path: origin?.transcript_path,
+      host: origin?.host,
+      project_key: origin?.project_key,
+      agent: origin?.agent,
+      paused: origin?.paused,
+    })
   );
 }
 
@@ -251,7 +266,7 @@ export function sessionGeneration(sessionId: string): number {
  * id, every later SessionEnd for it is a no-op and everything after the resume is lost.
  * Observed in the wild: a marker dated five days before the same session's live state.
  *
- * Clearing it at SessionStart is what makes the marker mean the narrower thing. Seeding
+ * SessionStart clears it explicitly; ordinary hooks do so only after transcript activity. Seeding
  * state with the marker's cursor keeps the resumed run from re-reading the whole
  * transcript; without it the cursor would restart at 0. That is not a correctness
  * problem — entry ids are content-stable, so the inbox dedups and `alreadyLogged` guards
@@ -263,12 +278,25 @@ export function resumeFinalizedSession(sessionId: string): boolean {
   return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
 }
 
-function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
+/** While holding the session lock, resume only if the transcript proves later activity. */
+export function ensureSessionActiveUnlocked(sessionId: string, transcriptPath?: string): boolean {
+  return (
+    !isSessionFinalized(sessionId) ||
+    resumeFinalizedSessionUnlocked(sessionId, true, transcriptPath)
+  );
+}
+
+function resumeFinalizedSessionUnlocked(
+  sessionId: string,
+  requireActivity = false,
+  transcriptPath?: string
+): boolean {
   const marker = finalizedMarkerPath(sessionId);
   if (!pathExists(marker)) return false;
 
   let cursor: CursorState | undefined;
   let generation = 0;
+  let savedState = freshSessionState(sessionId);
   try {
     const parsed: unknown = JSON.parse(readFile(marker));
     if (typeof parsed === 'object' && parsed !== null) {
@@ -276,9 +304,35 @@ function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
       if (isCursorState(raw)) cursor = raw;
       const gen = (parsed as Record<string, unknown>)['generation'];
       if (typeof gen === 'number' && Number.isInteger(gen)) generation = gen;
+      savedState =
+        parseSessionState(
+          JSON.stringify({
+            ...parsed,
+            session_id: sessionId,
+            cursor: cursor ?? freshCursor(),
+            stop_count: 0,
+            paused: requireActivity && (parsed as Record<string, unknown>)['paused'] === true,
+          }),
+          sessionId
+        ) ?? savedState;
     }
   } catch {
     // An unreadable marker still has to be cleared, or the session stays unfinalizable.
+  }
+
+  if (requireActivity) {
+    const transcript = transcriptPath ?? savedState.transcript_path;
+    try {
+      if (!transcript || !pathExists(transcript)) return false;
+      const info = stat(transcript);
+      if (info?.isFile() !== true) return false;
+      // The saved size may include an incomplete tail beyond the consumed offset.
+      // Those pre-existing bytes are not evidence that this session is still alive.
+      const grew = cursor !== undefined && info.size > Math.max(cursor.offset, cursor.size);
+      if (!grew && info.mtimeMs <= (stat(marker)?.mtimeMs ?? Infinity)) return false;
+    } catch {
+      return false;
+    }
   }
 
   // The generation must advance in *both* shapes, because the `log.md` idempotency tag is
@@ -293,7 +347,7 @@ function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
   const next = Math.max(generation, current.generation ?? 0) + 1;
   const nextState = pathExists(sessionStatePath(sessionId))
     ? { ...current, generation: next }
-    : { ...freshSessionState(sessionId), ...(cursor ? { cursor } : {}), generation: next };
+    : { ...savedState, generation: next };
 
   let markerRemoved = false;
   try {
@@ -303,7 +357,7 @@ function resumeFinalizedSessionUnlocked(sessionId: string): boolean {
   } catch {
     if (markerRemoved) {
       try {
-        markSessionFinalized(sessionId, cursor, generation);
+        markSessionFinalized(sessionId, cursor, generation, savedState);
       } catch {
         // The next session start can recover if both writes fail transiently.
       }
@@ -334,14 +388,8 @@ export function rememberSessionOrigin(
   agent?: string
 ): void {
   if (transcriptPath === undefined || transcriptPath === '') return;
-  // A hook that fires after the session was finalized (a trailing Stop, a retry, a sweep
-  // that retired a session still running elsewhere) would otherwise recreate `<id>.json`
-  // from `freshSessionState` -- cursor back at 0. `finalizeSession` short-circuits on the
-  // marker before it ever deletes state again, so that file would sit there until
-  // `sweepSessionState` removed it, and its cursor would re-distill the whole transcript
-  // if the marker aged out first.
   withSessionLock(sessionId, () => {
-    if (isSessionFinalized(sessionId)) return;
+    if (!ensureSessionActiveUnlocked(sessionId, transcriptPath)) return;
     const state = readSessionState(sessionId);
     if (
       state.transcript_path === transcriptPath &&
@@ -366,9 +414,9 @@ export function rememberSessionOrigin(
  * as abandoned and finalizes it (issue #24).
  *
  * A live session touches its state on every prompt and every Stop, so the window only has
- * to outlast a quiet stretch. A session retired while merely idle stays finalized until
- * SessionStart explicitly resumes it from the saved cursor; trailing hooks cannot recreate
- * fresh state. This can retire a quiet live session early, so the window is not tighter.
+ * to outlast a quiet stretch. A session retired while merely idle resumes from the saved
+ * cursor when its transcript shows later activity; unchanged trailing hooks cannot recreate
+ * state. This can retire a quiet live session early, so the window is not tighter.
  *
  * ponytail: fixed constant, not a config knob. Promote it to `session_state` if a real
  * session is ever observed idling past it.
@@ -513,7 +561,7 @@ export function advanceSessionCursor(
   recordHash: string,
   newOffset: number
 ): CursorState | undefined {
-  return tryUpdateSessionState(sessionId, s => ({
+  return tryUpdateSessionState(sessionId, (s) => ({
     ...s,
     cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset),
   }))?.cursor;
@@ -534,19 +582,19 @@ export function advanceSessionCursorUnlocked(
 
 /** Reset this session's read position to the start of the transcript. */
 export function resetSessionCursor(sessionId: string): CursorState {
-  return updateSessionState(sessionId, s => ({ ...s, cursor: resetCursor(s.cursor) })).cursor;
+  return updateSessionState(sessionId, (s) => ({ ...s, cursor: resetCursor(s.cursor) })).cursor;
 }
 
 // ─── Stop counter ───
 
 /** Increment and return the Stop counter for this session. */
 export function incrementStopCount(sessionId: string): number {
-  return updateSessionState(sessionId, s => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
+  return updateSessionState(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
 }
 
 /** Reset the Stop counter — called on every capture (Stop-threshold or PreCompact). */
 export function resetStopCount(sessionId: string): void {
-  updateSessionState(sessionId, s => ({ ...s, stop_count: 0 }));
+  updateSessionState(sessionId, (s) => ({ ...s, stop_count: 0 }));
 }
 
 // ─── Topic cache ───
@@ -578,7 +626,7 @@ export function rememberTopic(
   tokens: ReadonlySet<string>,
   now: number = Date.now()
 ): void {
-  updateSessionState(sessionId, s => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
+  updateSessionState(sessionId, (s) => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
 }
 
 // ─── Pause ───

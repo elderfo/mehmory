@@ -28,7 +28,7 @@ import { mehmoryHome, statePath } from './home.js';
 import { atomicWrite, lstat, pathExists, readFile, realpath, remove } from './fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from './inbox.js';
 import { redact } from './redact.js';
-import { readSessionState, sessionStatePath, setPaused } from './session.js';
+import { isSessionFinalized, readSessionState, sessionStatePath, setPaused } from './session.js';
 import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 
@@ -91,10 +91,18 @@ function validateInbox(input: Record<string, unknown>): { inbox: string; key: st
   const homeReal = realpath(home);
   const targetReal = realpath(candidate);
   const parentReal = realpath(dirname(candidate));
-  if (!within(homeReal, targetReal) || !within(homeReal, parentReal) || (pathExists(candidate) && targetReal !== candidate)) {
+  if (
+    !within(homeReal, targetReal) ||
+    !within(homeReal, parentReal) ||
+    (pathExists(candidate) && targetReal !== candidate)
+  ) {
     throw new TxError('"inbox" must not resolve outside MEHMORY_HOME');
   }
-  if (key === 'global' && candidate !== resolve(home, 'global', 'inbox.md') && candidate !== resolve(home, 'inbox.md')) {
+  if (
+    key === 'global' &&
+    candidate !== resolve(home, 'global', 'inbox.md') &&
+    candidate !== resolve(home, 'inbox.md')
+  ) {
     throw new TxError('"key" does not match "inbox"');
   }
   if (key !== 'global') {
@@ -161,10 +169,7 @@ function rejectDeclaredAgent(input: Record<string, unknown>, where: string): voi
   }
 }
 
-function doAppend(
-  input: Record<string, unknown>,
-  config: MehmoryConfig
-): Record<string, unknown> {
+function doAppend(input: Record<string, unknown>, config: MehmoryConfig): Record<string, unknown> {
   const { inbox, key } = validateInbox(input);
   const raw = input['entries'];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
@@ -210,7 +215,7 @@ function doSnapshot(input: Record<string, unknown>): Record<string, unknown> {
   const snapshotId = randomBytes(8).toString('hex');
   atomicWrite(
     snapshotFile(snapshotId),
-    JSON.stringify({ inbox, key, ids: entries.map(e => e.id) })
+    JSON.stringify({ inbox, key, ids: entries.map((e) => e.id) })
   );
   return { snapshotId, entries };
 }
@@ -228,7 +233,7 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
     stored['inbox'] !== inbox ||
     stored['key'] !== key ||
     !Array.isArray(ids) ||
-    ids.some(id => typeof id !== 'string')
+    ids.some((id) => typeof id !== 'string')
   ) {
     throw new TxError('snapshot does not match the requested inbox');
   }
@@ -241,7 +246,10 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
 
 function doPause(input: Record<string, unknown>, paused: boolean): Record<string, unknown> {
   const sessionId = requireString(input, 'session_id');
-  if (sessionId.trim() === '' || !pathExists(sessionStatePath(sessionId))) {
+  if (
+    sessionId.trim() === '' ||
+    (!isSessionFinalized(sessionId) && !pathExists(sessionStatePath(sessionId)))
+  ) {
     throw new TxError('unknown session_id; use the current live session id');
   }
   if (!setPaused(sessionId, paused)) {

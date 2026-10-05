@@ -8,13 +8,13 @@ it only reads and writes the store at `~/.mehmory` (or `$MEHMORY_HOME`, see `doc
 
 - **Exit codes**, consistent across every command:
 
-  | Code | Meaning |
-  |---|---|
-  | 0 | Success |
-  | 1 | Usage error — unknown command/flag, wrong arity, ambiguous scope selector |
-  | 2 | Store missing where the command requires one |
-  | 3 | Operation failed — a write or git failure |
-  | 4 | Aborted by the user — wrong purge confirmation token |
+  | Code | Meaning                                                                   |
+  | ---- | ------------------------------------------------------------------------- |
+  | 0    | Success                                                                   |
+  | 1    | Usage error — unknown command/flag, wrong arity, ambiguous scope selector |
+  | 2    | Store missing where the command requires one                              |
+  | 3    | Operation failed — a write or git failure                                 |
+  | 4    | Aborted by the user — wrong purge confirmation token                      |
 
   `doctor` is the one exception: it additionally exits **5** (warnings only, no errors) and
   **6** (at least one error-level finding), and **never exits 2** — a missing store is itself
@@ -220,12 +220,12 @@ Runs a fixed list of checks, each rated `ok | warn | error`:
 - The Codex surface, four checks, each carrying a real error code documented in
   `docs/TROUBLESHOOTING.md` rather than the generated `E_DOCTOR_<CHECK>` shape:
 
-  | Check | Code | What it means |
-  |---|---|---|
-  | `codex.harness` | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing |
-  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED` | Codex's `[features] hooks` is off or unset, so no hook fires at all |
-  | `codex.hooks` | `E_CODEX_HOOKS_UNWIRED` | one or more Codex events carry no mehmory entry, so those events capture nothing |
-  | `codex.skills` | `E_CODEX_SKILLS_MISSING` | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
+  | Check              | Code                      | What it means                                                                                                           |
+  | ------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+  | `codex.harness`    | `E_CODEX_HARNESS_MISSING` | mehmory's entries are in `$CODEX_HOME/hooks.json` but Codex has no configuration there, so they run nothing             |
+  | `codex.hooks_flag` | `E_CODEX_HOOKS_DISABLED`  | Codex's `[features] hooks` is off or unset, so no hook fires at all                                                     |
+  | `codex.hooks`      | `E_CODEX_HOOKS_UNWIRED`   | one or more Codex events carry no mehmory entry, so those events capture nothing                                        |
+  | `codex.skills`     | `E_CODEX_SKILLS_MISSING`  | the mehmory skills are not installed for Codex, so nothing integrates what it captures (a warning — capture still runs) |
 
   All four are **silent** when neither Codex nor a mehmory Codex install is on the machine:
   a Claude-Code-only user gets no findings about a harness they don't run. They appear as
@@ -271,13 +271,13 @@ plain `mehmory stats` in that project counts it. The text line appends `N suppre
 
 Deletes. Preview-first, then a typed confirmation token **scaled to the blast radius**:
 
-| Form | Token you must type |
-|---|---|
-| `--all` | the literal `DELETE ALL` |
-| `--project [<key>]` | the **resolved** project key (never the substring you typed) |
-| `--session <id>` | the last 8 characters of the session id, as shown in the preview |
-| `--global` | `global` |
-| a page slug | the page's slug |
+| Form                | Token you must type                                              |
+| ------------------- | ---------------------------------------------------------------- |
+| `--all`             | the literal `DELETE ALL`                                         |
+| `--project [<key>]` | the **resolved** project key (never the substring you typed)     |
+| `--session <id>`    | the last 8 characters of the session id, as shown in the preview |
+| `--global`          | `global`                                                         |
+| a page slug         | the page's slug                                                  |
 
 **Confirmation is two invocations, not an interactive prompt.** The first run prints the
 preview and the required token and exits **4**, having touched nothing. You then re-run the
@@ -346,10 +346,12 @@ echo '{"session_id":"<current harness session id>"}' \
 `pause` and `resume` require an explicit, existing live `session_id`, not an inbox path
 or project key. They change only the pause flag under the session lock and preserve the
 cursor, Stop counter, topic cache, and origin. Use a reliably identified harness session
-id; selecting the newest state file is unsafe with concurrent sessions. State filenames
-are SHA-256 hashes of ids, not the ids themselves. These operations never edit config or
-re-enable hooks disabled there. Busy or finalized sessions fail without changing state;
-only a harness SessionStart resumes a finalized session from its saved cursor.
+id from the `session: <id>` line inside the injected `<mehmory-memory>` frame; selecting
+the newest state file is unsafe with concurrent sessions. State filenames are SHA-256 hashes
+of ids, not the ids themselves. These operations never edit config or re-enable hooks disabled
+there. Busy sessions fail without changing state. A finalized session resumes from its saved
+cursor only after SessionStart or evidence of later transcript activity; otherwise it reports
+`session is busy or finalized; retry after SessionStart resumes it`, not an unknown id.
 
 Without `--json`, stdout is exactly the result object above on one line — identical to
 `hooks/inbox-tx.mjs`'s own stdout, so either entry point is a drop-in replacement for the

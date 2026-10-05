@@ -153,12 +153,20 @@ The cursor advances only after every append succeeds (dedup skips count as succe
 final-delta job is enqueued; failure leaves the delta and Stop counter available for retry.
 `distillDelta` is a preview and does not advance the cursor by itself.
 
-Finalized markers block all ordinary state mutations and capture, including trailing hooks
-from a live session retired by the idle sweep. Only SessionStart explicitly resumes the id,
-restoring the marker cursor and incrementing the generation; a returning session without
-SessionStart remains finalized rather than recreating state at offset zero. Deferred tails
-use the recorded origin agent, never the sweeping process's name. An unnamed origin is
-recorded as null; legacy or invalid names remain unattributed instead of being guessed.
+Finalized markers block unchanged trailing hooks, not a session's later work. SessionStart
+explicitly resumes the id; ordinary capture and mutations also resume it under the session
+lock when its transcript exists and has grown beyond the saved cursor offset and file size,
+or was modified after the marker. An already-present incomplete tail is not new activity.
+Both paths restore the marker cursor and increment the generation rather than recreating
+state at offset zero. Markers retain the transcript path and origin so even
+mutations without a hook payload can detect later activity. Activity-detected resumes also
+preserve a session pause. No later bytes or modification means no resurrection. Deferred tails use the recorded origin agent, never the sweeping
+process's name. An unnamed origin is recorded as null; legacy or invalid names remain
+unattributed instead of being guessed.
+
+Stop nudges only at the first threshold crossing. A failed append leaves the cursor and
+counter intact, gets one immediate silent retry, then at most one silent retry per threshold
+window; persistent failure is reported once after that immediate retry.
 
 **Rejected:** Global cursor (spec blocker: interleaved sessions reset each other into a
 full re-distill); separate files per concern (`cursor.<id>`, `topics.<id>`, … — N files
@@ -178,8 +186,11 @@ human-readable-markdown premise, which is the product).
 ### A15. Transactional mutations from skills go through a bundled helper, never raw model edits
 
 `hooks/inbox-tx.mjs` wraps the inbox primitives; `integrate` and `remember` invoke it via
-Bash. `pause` and `resume` also use the helper with an explicitly identified session id;
-the helper changes the flag under the session lock, not through raw state edits. The CLI
+Bash. `pause` and `resume` also use the helper with the session id from the `session: <id>`
+line inside SessionStart's `<mehmory-memory>` frame; the line takes a share of the memory
+budget. All six skills use that id to read `.state/<sha256(session-id)>.json`; recency is
+only a legacy project hint requiring user confirmation, never proof of session identity.
+The helper changes the flag under the session lock, not through raw state edits. The CLI
 `mehmory inbox-tx` shares these operations. A failed append is an error, including partial
 failure: retrying the same entries dedups those already written.
 

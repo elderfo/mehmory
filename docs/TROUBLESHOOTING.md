@@ -106,10 +106,10 @@ A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fi
 
 ## E_SESSION_STATE (informational)
 
-Either a session's state file (`.state/<session-id>.json`) was corrupt or unreadable and got
-reset, or a hook ran with no `session_id` at all. Consequence is one of: *Capture state reset
-to fresh; the transcript may be re-distilled once*, or *The invocation was skipped; no session
-state was read or written.* No `Fix:` — both are self-healing.
+Either a session's state file (`.state/<sha256(session-id)>.json`) was corrupt or unreadable and got
+reset, or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
+to fresh; the transcript may be re-distilled once_, or _The invocation was skipped; no session
+state was read or written._ No `Fix:` — both are self-healing.
 
 ## E_CURSOR_RESET (informational)
 
@@ -336,8 +336,11 @@ still on disk, has no finalization marker, and has sat untouched for 30 minutes 
 abandoned, and the next `SessionStart` in any project distills its remaining delta, files it,
 logs one `session-end` line, commits, and marks it finalized. The marker is what makes this safe
 to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
-is skipped, so nothing is written or committed twice. The 30-minute idle window is what keeps a
-second terminal from retiring a session that is merely quiet.
+is skipped while its transcript is unchanged, so nothing is written or committed twice.
+Both state and transcript must be idle for 30 minutes. A live session can still outwait
+that window; later transcript bytes beyond the saved cursor, or a modification after the
+marker, let its next ordinary hook or mutation resume from that cursor with a new generation.
+No SessionStart is required, and old entries are not replayed.
 
 **Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
 the inbox when the next session starts, not when the session ended. If that session was the last

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { runHook, type HookResult } from '../core/hook.js';
 import { incrementStopCount, isPaused, resetStopCount } from '../core/session.js';
 import { captureDelta, scopePaths, skillRef } from '../core/capture.js';
+import { logError } from '../core/errors.js';
 import type { InboxHost } from '../schema/format.js';
 
 /** Directory this bundle runs from; `inbox-tx.mjs` is its sibling (A15). */
@@ -66,9 +67,9 @@ interface StopNudge {
  * mehmory extension, which turns `additionalContext` into a custom message (A29).
  */
 const STOP_NUDGES = {
-  'claude-code': { carriesCommand: false, output: reason => ({ context: reason }) },
-  codex: { carriesCommand: true, output: reason => ({ json: { decision: 'block', reason } }) },
-  pi: { carriesCommand: true, output: reason => ({ context: reason }) },
+  'claude-code': { carriesCommand: false, output: (reason) => ({ context: reason }) },
+  codex: { carriesCommand: true, output: (reason) => ({ json: { decision: 'block', reason } }) },
+  pi: { carriesCommand: true, output: (reason) => ({ context: reason }) },
 } satisfies Record<InboxHost, StopNudge>;
 
 /**
@@ -96,13 +97,28 @@ runHook('Stop', (input, project, host, config) => {
   if (!config.hooks.stop.enabled || isPaused(input.session_id)) return {};
 
   const count = incrementStopCount(input.session_id);
-  if (count < config.stop.capture_threshold) return { stats: { stop_count: count } };
+  const threshold = Math.max(1, Math.ceil(config.stop.capture_threshold));
+  const firstCrossing = count === threshold;
+  // One immediate silent retry, then one per threshold window. Keep the durable cursor
+  // and counter on failure without putting a store-lock wait on every later turn.
+  const retry = count > threshold && (count - threshold - 1) % threshold === 0;
+  if (!firstCrossing && !retry) return { stats: { stop_count: count } };
 
   const captured = captureDelta(input.session_id, input.transcript_path, project, host, config);
   if ((captured.failed ?? 0) === 0) resetStopCount(input.session_id);
+  else if (count === threshold + 1) {
+    logError({
+      code: 'E_APPEND_FAILED',
+      kind: 'informational',
+      what: `Stop capture still failing for session ${input.session_id}`,
+      consequence: 'The delta is retained; silent retries now wait one threshold window',
+    });
+  }
 
   return {
-    ...STOP_NUDGES[host].output(blockReason(project, input.session_id, host)),
+    ...(firstCrossing
+      ? STOP_NUDGES[host].output(blockReason(project, input.session_id, host))
+      : {}),
     stats: { stop_count: count, captured_entries: captured.appended },
   };
 });

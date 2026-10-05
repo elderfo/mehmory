@@ -1,6 +1,6 @@
 ---
 name: remember
-description: "Save a fact, decision, correction or gotcha to the mehmory inbox right now, so the next integrate files it into the wiki. Use when the user says remember this, save this, note that, or do not forget. For a one-liner there is a faster path with no skill load at all — start a prompt with the `remember:` prefix (for example `remember: staging deploys need the VPN`) and the UserPromptSubmit hook captures it inline. Writes to ~/.mehmory (outside the project), so Claude Code may prompt for permission."
+description: 'Save a fact, decision, correction or gotcha to the mehmory inbox right now, so the next integrate files it into the wiki. Use when the user says remember this, save this, note that, or do not forget. For a one-liner there is a faster path with no skill load at all — start a prompt with the `remember:` prefix (for example `remember: staging deploys need the VPN`) and the UserPromptSubmit hook captures it inline. Writes to ~/.mehmory (outside the project), so Claude Code may prompt for permission.'
 allowed-tools: Bash
 ---
 
@@ -19,17 +19,31 @@ load. This skill exists for multi-fact saves and for when the user asks in prose
 HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
 ```
 
-If `mehmory` is not on PATH, stop and ask the user to install it explicitly. Do not install
-packages from this skill.
+Use the `session: <id>` line inside the injected `<mehmory-memory>` frame to identify
+this session; decode the id if JSON-quoted. Read
+`$HOME_DIR/.state/<sha256(session-id)>.json`, hashing the exact UTF-8 id with Node's
+`crypto.createHash('sha256')`. Use that file's `project_key` for `key`, its `session_id`
+for `src`, and its `host` for `host`.
 
-Read the project key and the current session id from the newest session-state file:
+Legacy fallback only when the frame has no session line: the newest state file is a
+hint, not proof of identity. Confirm its session and project with the user before using it:
 
 ```bash
 grep -l '"session_id"' "$HOME_DIR"/.state/*.json 2>/dev/null \
+  | grep -v '\.finalized\.json$' \
   | xargs -r ls -t 2>/dev/null | head -1 | xargs -r cat
 ```
 
-Use its `project_key` for `key`, its `session_id` for `src`, and its `host` for `host`.
+Prefer `mehmory inbox-tx`. If the CLI is unavailable, replace it with the installed
+bundle command below, using the same subcommand and stdin JSON. Do not install packages.
+
+- Claude Code: `node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs"`.
+- Codex: read `${CODEX_HOME:-$HOME/.codex}/hooks.json`; the registered mehmory
+  `SessionStart` command gives the absolute `hooks/session-start.mjs` path. Run Node on
+  its sibling `hooks/inbox-tx.mjs` — this is the installed package, not a path to search for.
+- Pi git install: `node "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs"`.
+  For a project-local Pi install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
+
 Then append:
 
 ```bash

@@ -8,8 +8,10 @@ allowed-tools: Read Bash
 
 Clear only the pause flag for the explicitly identified current session.
 
-1. Obtain the current harness session id from reliable session context or ask the user
-   for it. If unavailable, stop and ask; concurrent sessions make recency unsafe.
+1. Read the `session: <id>` line inside the injected `<mehmory-memory>` frame; decode
+   the id if JSON-quoted. It identifies `$HOME_DIR/.state/<sha256(session-id)>.json`
+   (`HOME_DIR` is `${MEHMORY_HOME:-$HOME/.mehmory}`). If unavailable, ask the user for
+   the id; concurrent sessions make recency unsafe.
 2. Pass that exact id as `session_id` in JSON on stdin:
 
    ```bash
@@ -18,8 +20,12 @@ Clear only the pause flag for the explicitly identified current session.
    JSON
    ```
 
-   If the CLI is unavailable, use the installed bundle with the same payload:
-   `node <installed-mehmory>/hooks/inbox-tx.mjs resume`.
+   If the CLI is unavailable, use the installed bundle with the same payload and `resume`:
+   - Claude Code: `node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs" resume`.
+   - Codex: read `${CODEX_HOME:-$HOME/.codex}/hooks.json`; use the `inbox-tx.mjs`
+     sibling of the absolute `session-start.mjs` path in mehmory's `SessionStart` command.
+   - Pi git install: `node "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs" resume`.
+     For a project-local install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
 
 3. Confirm the returned `session_id` and `paused: false` only after exit 0. Report any
    failure instead of promising capture is enabled. Busy sessions can be retried;

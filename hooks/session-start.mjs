@@ -11,7 +11,7 @@ import {
   skillRef,
   storeExists,
   storeIsUnpopulated
-} from "./chunk-I27XOHQZ.mjs";
+} from "./chunk-74YCRQC4.mjs";
 import {
   ARCHIVE_DIR,
   ARCHIVE_DIVIDER,
@@ -26,7 +26,7 @@ import {
   resumeFinalizedSession,
   sweepSessionState,
   tryProjectLock
-} from "./chunk-ZL7TGK6G.mjs";
+} from "./chunk-YSHKMS6Y.mjs";
 import "./chunk-YZTNJJDP.mjs";
 import {
   atomicWrite,
@@ -423,7 +423,7 @@ runHook("SessionStart", (input, project, host, config) => {
   }
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];

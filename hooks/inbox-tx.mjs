@@ -5,13 +5,14 @@ import {
   currentAgentName,
   inboxEntryId,
   isContainedProjectKey,
+  isSessionFinalized,
   loadConfig,
   readInboxEntries,
   readSessionState,
   redact,
   sessionStatePath,
   setPaused
-} from "./chunk-ZL7TGK6G.mjs";
+} from "./chunk-YSHKMS6Y.mjs";
 import {
   atomicWrite,
   lstat,
@@ -167,7 +168,7 @@ function doClear(input) {
 }
 function doPause(input, paused) {
   const sessionId = requireString(input, "session_id");
-  if (sessionId.trim() === "" || !pathExists(sessionStatePath(sessionId))) {
+  if (sessionId.trim() === "" || !isSessionFinalized(sessionId) && !pathExists(sessionStatePath(sessionId))) {
     throw new TxError("unknown session_id; use the current live session id");
   }
   if (!setPaused(sessionId, paused)) {

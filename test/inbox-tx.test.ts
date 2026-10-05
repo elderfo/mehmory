@@ -28,11 +28,7 @@ interface TxResult {
   stderr: string;
 }
 
-function tx(
-  subcommand: string,
-  input: unknown,
-  extraEnv: Record<string, string> = {}
-): TxResult {
+function tx(subcommand: string, input: unknown, extraEnv: Record<string, string> = {}): TxResult {
   if (!existsSync(HELPER)) {
     throw new Error(`${HELPER} is missing — run \`pnpm build\` before \`pnpm test\`.`);
   }
@@ -144,15 +140,17 @@ describe('inbox-tx snapshot/clear', () => {
       snapshotId: string;
       entries: { text: string }[];
     };
-    expect(snap.entries.map(e => e.text)).toEqual(['entry one', 'entry two']);
-    expect(existsSync(join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`))).toBe(true);
+    expect(snap.entries.map((e) => e.text)).toEqual(['entry one', 'entry two']);
+    expect(
+      existsSync(
+        join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`)
+      )
+    ).toBe(true);
 
     // Racing capture between snapshot and clear — the whole reason this is not a raw Edit.
     tx('append', { inbox, key, entries: [{ text: 'entry three', src: 'sess-b' }] });
 
-    const cleared = json(
-      tx('clear', { inbox, key, snapshotId: snap.snapshotId })
-    );
+    const cleared = json(tx('clear', { inbox, key, snapshotId: snap.snapshotId }));
     expect(cleared).toEqual({ removed: 2 });
 
     const body = readFileSync(inbox, 'utf-8');
@@ -192,7 +190,10 @@ describe('inbox-tx pause/resume', () => {
     expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
     expect(existsSync(sessionStatePath('missing'))).toBe(false);
     writeFileSync(finalizedMarkerPath('done'), '{}');
-    expect(tx('resume', { session_id: 'done' }).status).toBe(1);
+    const finalized = tx('resume', { session_id: 'done' });
+    expect(finalized.status).toBe(1);
+    expect(finalized.stderr).toContain('finalized; retry after SessionStart');
+    expect(finalized.stderr).not.toContain('unknown session_id');
     expect(existsSync(sessionStatePath('done'))).toBe(false);
   });
 });

@@ -17,9 +17,15 @@ ls "$HOME_DIR" && cat "$HOME_DIR/SCHEMA.md"
 ```
 
 The store is created automatically by the SessionStart hook, so it should already be
-there. Get the project key from the newest session-state file
-(`grep -l '"session_id"' "$HOME_DIR"/.state/*.json | xargs -r ls -t | head -1`); the
-scope root is `$HOME_DIR/projects/<key>/`. If that directory has a non-trivial
+there. Use the `session: <id>` line inside the injected `<mehmory-memory>` frame;
+decode the id if JSON-quoted. Read `project_key` from
+`$HOME_DIR/.state/<sha256(session-id)>.json`, hashing the exact UTF-8 id with Node's
+`crypto.createHash('sha256')`.
+
+Legacy fallback only when the frame has no session line: the newest session-state file
+(`grep -l '"session_id"' "$HOME_DIR"/.state/*.json | grep -v '\.finalized\.json$' | xargs -r ls -t | head -1`)
+is a project hint to confirm with the user, not proof of identity. Ask the user if no key
+is available. The scope root is `$HOME_DIR/projects/<key>/`. If that directory has a non-trivial
 `index.md` already, stop and tell the user — run `/mehmory:integrate` or
 `/mehmory:lint` instead of re-seeding over existing memory.
 
@@ -68,7 +74,7 @@ key entities (services, databases, external APIs). One page per topic under
 `pages/<slug>.md`, each with frontmatter (`updated`, `type`, optional `refs` naming the
 file you learned it from, e.g. `refs: README.md`).
 
-Facts about the *user* rather than the project — editor, tooling, style preferences —
+Facts about the _user_ rather than the project — editor, tooling, style preferences —
 go in `$HOME_DIR/global/identity.md`, not here.
 
 ## 5. Write the index

@@ -24,15 +24,15 @@ down and the wiki you have a year from now is a different wiki; the effect is in
 the day you change it and unrecoverable afterwards, because the material was never captured.
 Change these deliberately, and prefer to note *why* somewhere your future self will find:
 
-| Key | What a change actually does |
-|---|---|
-| `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never *destroys* material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how any session whose end-hook never ran — killed, or skipped by Codex for want of a trust decision — captures its tail. |
-| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` (or `hosts.pi.enabled`) mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
-| `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
-| `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
-| `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
-| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move. |
-| `injection.budget_tokens` | The always-on context cap. Lowering it truncates what every session starts with. |
+| Key                                       | What a change actually does                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks.*.enabled`                         | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never _destroys_ material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how any session whose end-hook never ran — killed, or skipped by Codex for want of a trust decision — captures its tail. |
+| `hosts.*.enabled`                         | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` (or `hosts.pi.enabled`) mid-adoption is a silent gap in the record for every Codex session until it is turned back on.                                                                                                                                                                                           |
+| `stop.capture_threshold`                  | How often mid-session capture fires. Raise it and short sessions stop producing entries at all.                                                                                                                                                                                                                                                                                                                                          |
+| `distill.max_loss_percent`                | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss.                                                                                                                                                                                                                                                                                                   |
+| `secrets.patterns` / `secrets.whitelist`  | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently.                                                                                                                                                                                                                                                                                                                    |
+| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move.                                                                                                                                                                                                                                                                                  |
+| `injection.budget_tokens`                 | The always-on context cap. Lowering it truncates what every session starts with.                                                                                                                                                                                                                                                                                                                                                         |
 
 **Preference — safe to tune to taste, reversible, affects only this machine's ergonomics.**
 Get one wrong and you notice immediately, and setting it back undoes the damage:
@@ -49,7 +49,9 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 { "injection": { "budget_tokens": 800 } }
 ```
 
-This budget governs **stored memory only**. `SessionStart` also emits a fixed
+This budget governs **stored memory plus session metadata**: SessionStart's
+`session: <id>` line inside `<mehmory-memory>` takes a share, so skills can identify
+this session without guessing from state-file recency. `SessionStart` also emits a fixed
 `<mehmory-routing>` block of about 80 tokens telling the model how to use that memory
 (follow pointers before grepping, what `(stale)` means, how to capture). It sits outside
 `budget_tokens` on purpose — a large wiki must not crowd out the lines explaining what to
@@ -124,8 +126,11 @@ Identity is never emptied, only shortened.
 { "stop": { "capture_threshold": 15 } }
 ```
 
-- `capture_threshold` — Stop-hook invocations since the last capture before the next capture
-  + block fires. **Honored** (`src/hooks/stop.ts`, `src/core/capture.ts`).
+- `capture_threshold` — Stop-hook invocations since the last successful capture before the
+  next capture + nudge fires. After an append failure, the delta and counter are retained:
+  one immediate silent retry, then at most one silent retry per threshold window. The nudge
+  fires only on the first crossing; persistent failure is logged once after the immediate
+  retry. **Honored** (`src/hooks/stop.ts`, `src/core/capture.ts`).
 
 ## `hooks`
 
@@ -187,7 +192,7 @@ through.
 { "session_state": { "max_age_days": 14 } }
 ```
 
-- `max_age_days` — age at which `.state/<session-id>.json` files are swept during
+- `max_age_days` — age at which `.state/<sha256(session-id)>.json` files are swept during
   `SessionStart` maintenance. **Honored** (`src/core/session.ts`).
 
 ## `match`
@@ -347,9 +352,9 @@ Codex checks. Unset, both read `~/.codex`.
 
 Two files there are mehmory's business, and **neither belongs to mehmory**:
 
-| File | What mehmory does to it |
-|---|---|
-| `$CODEX_HOME/hooks.json` | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched. |
+| File                      | What mehmory does to it                                                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$CODEX_HOME/hooks.json`  | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched.               |
 | `$CODEX_HOME/config.toml` | Sets `[features] hooks = true`, which Codex requires before any hook runs. Nothing else in the file is read or rewritten, and uninstall never turns it back off. |
 
 Before either file is modified it is copied to `<file>.mehmory.bak`. A run that changes

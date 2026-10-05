@@ -862,7 +862,7 @@ function tryUpdateSessionState(sessionId, mutate) {
   return withSessionLock(sessionId, () => updateSessionStateUnlocked(sessionId, mutate));
 }
 function updateSessionStateUnlocked(sessionId, mutate) {
-  if (isSessionFinalized(sessionId)) return void 0;
+  if (!ensureSessionActiveUnlocked(sessionId)) return void 0;
   const next = mutate(readSessionState(sessionId));
   writeSessionState(next);
   return next;
@@ -884,10 +884,19 @@ function finalizedMarkerPath(sessionId) {
 function isSessionFinalized(sessionId) {
   return pathExists(finalizedMarkerPath(sessionId));
 }
-function markSessionFinalized(sessionId, cursor, generation = 0) {
+function markSessionFinalized(sessionId, cursor, generation = 0, origin) {
   atomicWrite(
     finalizedMarkerPath(sessionId),
-    JSON.stringify({ session_id: sessionId, generation, ...cursor ? { cursor } : {} })
+    JSON.stringify({
+      session_id: sessionId,
+      generation,
+      ...cursor ? { cursor } : {},
+      transcript_path: origin?.transcript_path,
+      host: origin?.host,
+      project_key: origin?.project_key,
+      agent: origin?.agent,
+      paused: origin?.paused
+    })
   );
 }
 function sessionGeneration(sessionId) {
@@ -896,11 +905,15 @@ function sessionGeneration(sessionId) {
 function resumeFinalizedSession(sessionId) {
   return withSessionLock(sessionId, () => resumeFinalizedSessionUnlocked(sessionId)) ?? false;
 }
-function resumeFinalizedSessionUnlocked(sessionId) {
+function ensureSessionActiveUnlocked(sessionId, transcriptPath) {
+  return !isSessionFinalized(sessionId) || resumeFinalizedSessionUnlocked(sessionId, true, transcriptPath);
+}
+function resumeFinalizedSessionUnlocked(sessionId, requireActivity = false, transcriptPath) {
   const marker = finalizedMarkerPath(sessionId);
   if (!pathExists(marker)) return false;
   let cursor;
   let generation = 0;
+  let savedState = freshSessionState(sessionId);
   try {
     const parsed = JSON.parse(readFile(marker));
     if (typeof parsed === "object" && parsed !== null) {
@@ -908,12 +921,34 @@ function resumeFinalizedSessionUnlocked(sessionId) {
       if (isCursorState(raw)) cursor = raw;
       const gen = parsed["generation"];
       if (typeof gen === "number" && Number.isInteger(gen)) generation = gen;
+      savedState = parseSessionState(
+        JSON.stringify({
+          ...parsed,
+          session_id: sessionId,
+          cursor: cursor ?? freshCursor(),
+          stop_count: 0,
+          paused: requireActivity && parsed["paused"] === true
+        }),
+        sessionId
+      ) ?? savedState;
     }
   } catch {
   }
+  if (requireActivity) {
+    const transcript = transcriptPath ?? savedState.transcript_path;
+    try {
+      if (!transcript || !pathExists(transcript)) return false;
+      const info = stat(transcript);
+      if (info?.isFile() !== true) return false;
+      const grew = cursor !== void 0 && info.size > Math.max(cursor.offset, cursor.size);
+      if (!grew && info.mtimeMs <= (stat(marker)?.mtimeMs ?? Infinity)) return false;
+    } catch {
+      return false;
+    }
+  }
   const current = readSessionState(sessionId);
   const next = Math.max(generation, current.generation ?? 0) + 1;
-  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...freshSessionState(sessionId), ...cursor ? { cursor } : {}, generation: next };
+  const nextState = pathExists(sessionStatePath(sessionId)) ? { ...current, generation: next } : { ...savedState, generation: next };
   let markerRemoved = false;
   try {
     remove(marker);
@@ -922,7 +957,7 @@ function resumeFinalizedSessionUnlocked(sessionId) {
   } catch {
     if (markerRemoved) {
       try {
-        markSessionFinalized(sessionId, cursor, generation);
+        markSessionFinalized(sessionId, cursor, generation, savedState);
       } catch {
       }
     }
@@ -933,7 +968,7 @@ function resumeFinalizedSessionUnlocked(sessionId) {
 function rememberSessionOrigin(sessionId, transcriptPath, host, projectKey, agent) {
   if (transcriptPath === void 0 || transcriptPath === "") return;
   withSessionLock(sessionId, () => {
-    if (isSessionFinalized(sessionId)) return;
+    if (!ensureSessionActiveUnlocked(sessionId, transcriptPath)) return;
     const state = readSessionState(sessionId);
     if (state.transcript_path === transcriptPath && state.host === host && state.project_key === projectKey && state.agent === (agent ?? null)) {
       return;
@@ -1176,6 +1211,7 @@ export {
   markSessionFinalized,
   sessionGeneration,
   resumeFinalizedSession,
+  ensureSessionActiveUnlocked,
   rememberSessionOrigin,
   listPendingSessions,
   sweepSessionState,

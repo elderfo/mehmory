@@ -28,12 +28,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Capture retries keep their delta.** Cursors advance only after a successful inbox append or durable enqueue, and failed captures retain the Stop counter.
-- **Trailing hooks cannot recreate finalized sessions.** Ordinary mutators honor the marker; SessionStart alone resumes from the saved cursor.
-- **Deferred tails retain their origin agent.** Session state records the agent so another process's sweep cannot misattribute its entries.
-- **Failed inbox appends report failure.** Both transactional entry points return stderr and a non-zero exit, including partial failures that can be safely retried.
-- **Pause and resume use locked transactions.** Skills pass an explicit session id to new inbox-tx operations instead of guessing a state filename and hand-editing it.
-
+- **Capture retries keep their delta.** Cursors advance only after a successful inbox append
+  or durable enqueue, and failed captures retain the Stop counter.
+- **Swept live sessions resume without SessionStart.** Later transcript activity restores the
+  saved cursor and advances the generation without clearing a session pause; unchanged
+  trailing hooks still cannot recreate state or replay old entries.
+- **Failed Stop captures back off.** The nudge fires only on the first crossing, followed by
+  one immediate silent retry and at most one retry per threshold window. Persistent failure
+  is logged once after the immediate retry.
+- **Deferred tails retain their origin agent.** Session state records the agent so another
+  process's sweep cannot misattribute its entries.
+- **Failed inbox appends report failure.** Both transactional entry points return stderr and
+  a non-zero exit, including partial failures that can be safely retried.
+- **Pause and resume use locked transactions.** Skills pass an explicit session id to new
+  inbox-tx operations instead of guessing a state filename and hand-editing it.
+- **Skills know their current session.** SessionStart injects the id inside the memory frame;
+  all six skills use its hashed state filename, leaving recency only as a legacy project hint.
+- **Skill helper fallbacks name the installed bundle.** Claude Code uses its plugin root,
+  Codex uses the path registered in hooks.json, and Pi names its git package directory.
+- **Finalized session errors explain recovery.** Pause/resume report the marker before a
+  missing state file, so an unchanged finalized session is not mistaken for an unknown id.
+- **State-file documentation matches disk.** Config, troubleshooting, and the session module
+  describe SHA-256 filenames rather than raw session ids.
 - **Suppressed hook calls record their real project.** A hook skipped by
   `hosts.<host>.enabled` or `MEHMORY_ACTIVE_HOST` wrote its stats line under `unknown`, so
   plain `mehmory stats` in a project never showed it. It now reads stdin to resolve the

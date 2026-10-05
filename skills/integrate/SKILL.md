@@ -17,18 +17,32 @@ HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
 ls "$HOME_DIR"
 ```
 
-If `mehmory` is not on PATH, stop and ask the user to install it explicitly before doing
-anything else. **Do not install packages from this skill** — clearing the inbox by hand
-loses entries captured mid-integrate.
+Prefer `mehmory inbox-tx`. If the CLI is unavailable, replace it with the installed
+bundle command below, using the same subcommand and stdin JSON. **Do not install packages
+or clear the inbox by hand** — the helper preserves entries captured mid-integrate.
 
-The project key is cached by the hooks in the newest session-state file:
+- Claude Code: `node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs"`.
+- Codex: read `${CODEX_HOME:-$HOME/.codex}/hooks.json`; the registered mehmory
+  `SessionStart` command gives the absolute `hooks/session-start.mjs` path. Run Node on
+  its sibling `hooks/inbox-tx.mjs` — this is the installed package, not a path to search for.
+- Pi git install: `node "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs"`.
+  For a project-local Pi install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
+
+Use the `session: <id>` line inside the injected `<mehmory-memory>` frame to identify
+this session; decode the id if JSON-quoted. Read
+`$HOME_DIR/.state/<sha256(session-id)>.json`, hashing the exact UTF-8 id with Node's
+`crypto.createHash('sha256')`, and take its `project_key`.
+
+Legacy fallback only when the frame has no session line: the newest state file is a
+hint, not proof of identity. Confirm its project with the user before using it:
 
 ```bash
 grep -l '"session_id"' "$HOME_DIR"/.state/*.json 2>/dev/null \
+  | grep -v '\.finalized\.json$' \
   | xargs -r ls -t 2>/dev/null | head -1 | xargs -r cat
 ```
 
-Read `project_key` from it. If it is absent, `ls "$HOME_DIR/projects"` and ask the user
+If `project_key` is absent, `ls "$HOME_DIR/projects"` and ask the user
 which project this session belongs to. The scope root is then
 `$HOME_DIR/projects/<key>/`; user-level facts (preferences, tooling, style) belong in
 `$HOME_DIR/global/` instead — use that scope's `inbox.md`, `index.md` and `pages/`.
@@ -64,14 +78,14 @@ stderr line to the user and change nothing.
 
 For every snapshot entry:
 
-- **Scope — decide by subject first, then read the stamp.** Ask what the entry is *about*:
+- **Scope — decide by subject first, then read the stamp.** Ask what the entry is _about_:
   repo facts (build steps, layout, this codebase's conventions) go to the project scope;
   facts about the human (preferences, tooling, style) go to `global/`; an agent's own
   self-facts (how it works, what it prefers, what it has learned about itself) go to
   `agents/<name>/`.
 
   Only when the subject is a self-fact does the stamp matter, and then it answers exactly
-  one question: *whose* scope. The `agent=` value is set on **every** entry captured while
+  one question: _whose_ scope. The `agent=` value is set on **every** entry captured while
   that agent was running — the snapshot carries it as the entry's `agent` field, mirroring
   the entry line's `- <text> <!--mehmory id=... src=... host=...[ agent=<name>] ts=...-->`
   — so it means "scout was running", never "this is about scout". A repo fact stamped
@@ -79,12 +93,13 @@ For every snapshot entry:
   one would. Treating the stamp as the filing rule would move the shared project knowledge
   into one agent's private scope, which is the opposite of what these scopes are for.
 
-  Two rules bound it. File a *self-fact* stamped `agent=scout` into `agents/scout/`
+  Two rules bound it. File a _self-fact_ stamped `agent=scout` into `agents/scout/`
   whatever your own name is — attribution is the entry's, not yours. And never route an
   entry with **no** stamp into any agent scope; with no name it cannot be anyone's self, so
   it is a project or `global/` fact. A stamped name that fails validation is dropped when
   the entry is parsed, so it reaches you unattributed; treat it as unstamped rather than
   guessing at the name.
+
 - **Existing topic** — open the page and edit it. Supersession is editing: when a new
   fact contradicts a line, **rewrite that line**, do not append a second contradicting
   bullet and do not annotate the old one as outdated. Git history is the audit trail.

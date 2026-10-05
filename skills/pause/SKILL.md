@@ -8,9 +8,10 @@ allowed-tools: Read Bash
 
 Pause the explicitly identified current session through the transactional helper.
 
-1. Obtain the current harness session id from reliable session context or ask the user
-   for it. A recent state file is not proof of identity when sessions run concurrently.
-   If the id is unavailable, stop and ask; do not select a state file by recency.
+1. Read the `session: <id>` line inside the injected `<mehmory-memory>` frame; decode
+   the id if JSON-quoted. It identifies `$HOME_DIR/.state/<sha256(session-id)>.json`
+   (`HOME_DIR` is `${MEHMORY_HOME:-$HOME/.mehmory}`). If the line is unavailable, ask the
+   user for the id. A recent state file is not proof of identity when sessions run concurrently.
 2. Pass that exact id as `session_id` in JSON on stdin:
 
    ```bash
@@ -19,8 +20,12 @@ Pause the explicitly identified current session through the transactional helper
    JSON
    ```
 
-   If the CLI is unavailable, use the installed bundle with the same payload:
-   `node <installed-mehmory>/hooks/inbox-tx.mjs pause`.
+   If the CLI is unavailable, use the installed bundle with the same payload and `pause`:
+   - Claude Code: `node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs" pause`.
+   - Codex: read `${CODEX_HOME:-$HOME/.codex}/hooks.json`; use the `inbox-tx.mjs`
+     sibling of the absolute `session-start.mjs` path in mehmory's `SessionStart` command.
+   - Pi git install: `node "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs" pause`.
+     For a project-local install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
 
 3. Confirm the returned `session_id` and `paused: true` only after exit 0. On failure,
    report the error; a busy session can be retried, and a finalized session needs its

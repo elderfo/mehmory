@@ -1,14 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  buildInjection,
-  type InjectionPart,
-} from '../src/core/injection.js';
-import {
-  estimateTokens,
-  INJECTION_BUDGET_TOKENS,
-} from '../src/core/tokens.js';
+import { buildInjection, type InjectionPart } from '../src/core/injection.js';
+import { estimateTokens, INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { ROUTING_BLOCK, buildScopeInjection } from '../src/core/capture.js';
 import { mehmoryHome } from '../src/core/home.js';
 
@@ -297,9 +291,7 @@ describe('sub-budget allocation (KTD6)', () => {
         { label: 'index', content: sized('c', 50) },
       ];
 
-      expect(buildInjection(parts, { budgetTokens }).totalTokens).toBeLessThanOrEqual(
-        budgetTokens
-      );
+      expect(buildInjection(parts, { budgetTokens }).totalTokens).toBeLessThanOrEqual(budgetTokens);
       expect(
         buildInjection([...parts, { label: 'agent', content: sized('g', 50) }], { budgetTokens })
           .totalTokens
@@ -318,8 +310,10 @@ describe('sub-budget allocation (KTD6)', () => {
         { label: 'index', content: sized('c', 50) },
       ];
 
-      expect(buildInjection(parts, { budgetTokens }).identity, `unnamed @ ${String(budgetTokens)}`)
-        .not.toBe('');
+      expect(
+        buildInjection(parts, { budgetTokens }).identity,
+        `unnamed @ ${String(budgetTokens)}`
+      ).not.toBe('');
       expect(
         buildInjection([...parts, { label: 'agent', content: sized('g', 50) }], { budgetTokens })
           .identity,
@@ -537,9 +531,7 @@ describe('truncation order with an agent slot', () => {
     expect(frame.identity.length).toBeGreaterThan(0);
     expect((frame.agent ?? '').length).toBeGreaterThan(0);
     // Neither outranks the other once both are trimmed to their equal shares.
-    expect(estimateTokens(frame.agent ?? '')).toBeLessThanOrEqual(
-      estimateTokens(frame.identity)
-    );
+    expect(estimateTokens(frame.agent ?? '')).toBeLessThanOrEqual(estimateTokens(frame.identity));
   });
 });
 
@@ -608,6 +600,20 @@ describe('buildScopeInjection: the agent scope', () => {
     expect(text).toContain('TypeScript monorepo');
     expect(text).toContain('deploy runbook');
     expect(text).not.toContain('# agent');
+  });
+
+  it('makes room for the session id inside the existing memory budget', () => {
+    write('global/identity.md', 'a'.repeat(4000));
+    write(`projects/${KEY}/project.md`, 'b'.repeat(4000));
+    write(`projects/${KEY}/index.md`, 'c'.repeat(4000));
+    write('agents/alpha/identity.md', 'g'.repeat(4000));
+    for (const agent of ['', 'alpha']) {
+      process.env['MEHMORY_AGENT'] = agent;
+      const withoutSession = buildScopeInjection(KEY);
+      const withSession = buildScopeInjection(KEY, undefined, 'live-session');
+      expect(withSession.text).toContain('\nsession: live-session\n');
+      expect(withSession.tokens).toBeLessThanOrEqual(withoutSession.tokens + 1);
+    }
   });
 
   it('does not grow the budget when named', () => {
