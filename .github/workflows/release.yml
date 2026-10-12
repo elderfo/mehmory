@@ -142,10 +142,11 @@ jobs:
         with:
           version: 9
 
+      # No `cache: pnpm`. When the version is already on npm the install is skipped, the
+      # pnpm store never exists, and setup-node's post step fails the job trying to save it.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
       - name: Check whether this version is already on npm
