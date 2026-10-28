@@ -270,7 +270,8 @@ This repo is set up for agent-assisted development by a solo maintainer.
   be resolved. No approval is required. Copilot reviews each PR once when it opens; new pushes
   are not re-reviewed, so request a fresh review after a substantive change.
 
-Do not use the admin bypass unless the user says to for that change.
+Do not use the admin bypass unless the user says to for that change. The release PR is the
+one standing exception (see Releases).
 
 ### Releases
 
@@ -287,9 +288,11 @@ and nobody pushes tags.
   release (`bump-minor-pre-major`).
 - Squash merge uses the PR title as the commit subject and the PR body as its message, so PR
   titles must be Conventional Commits; `pr-title.yml` checks them.
-- The release PR is opened with a GitHub App token (`RELEASE_APP_CLIENT_ID` variable,
-  `RELEASE_APP_PRIVATE_KEY` secret), not `GITHUB_TOKEN`: `main` requires `build-test`, and
-  PRs opened by `GITHUB_TOKEN` trigger no CI, so they could never merge.
+- The release PR is opened with the default `GITHUB_TOKEN`, which needs the repository setting
+  "Allow GitHub Actions to create and approve pull requests". PRs it opens trigger no CI, so
+  `build-test` never reports on the release PR: the maintainer merges it with the admin
+  bypass. That is the standing exception to the bypass rule above, and it covers only the
+  release PR, whose diff is generated version fields and `CHANGELOG.md`.
 
 ## Conventions
 

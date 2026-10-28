@@ -6,9 +6,8 @@
  * Release ownership. The only trigger is `push` to `main`; no `push: tags` trigger
  * remains, so a hand-pushed tag must not publish on its own. The write permissions exist
  * on the `release-please` job alone, with nothing granted at the top level. The release
- * PR is opened with a GitHub App token, because `main` requires `build-test` and PRs
- * opened with the default GITHUB_TOKEN trigger no CI. Tags are never moved, so no force
- * flag appears anywhere.
+ * PR is opened with the default GITHUB_TOKEN, so no App key or stored token reaches the
+ * workflow. Tags are never moved, so no force flag appears anywhere.
  *
  * The npm publish. Three things have to agree, and nothing in the workflow fails loudly
  * if they drift apart — the publish just lands in the wrong registry or 401s:
@@ -112,11 +111,11 @@ describe('release workflow — publish-npm targets npmjs', () => {
     expect(jobBlock(source, 'publish-npm')).not.toMatch(/contents:\s*write/);
   });
 
-  it('opens the release PR with a GitHub App token so required CI runs on it', () => {
+  it('opens the release PR with the default GITHUB_TOKEN, never a stored token', () => {
     const release = jobBlock(source, 'release-please');
-    expect(release).toMatch(/uses: actions\/create-github-app-token@[0-9a-f]{40}/);
     expect(release).toMatch(/uses: googleapis\/release-please-action@[0-9a-f]{40}/);
-    expect(release).toMatch(/token:\s*\$\{\{\s*steps\.app-token\.outputs\.token\s*\}\}/);
+    expect(release).not.toMatch(/^\s*token:/m);
+    expect(release).not.toContain('create-github-app-token');
   });
 
   it('publish-npm runs only for a created release, and its if: never references secrets', () => {

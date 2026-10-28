@@ -7,10 +7,12 @@ name: Release
 # `publish-npm` then publishes that tag to npm. Nobody pushes tags by hand, and a
 # hand-pushed tag publishes nothing: this workflow has no tag trigger.
 #
-# Why a GitHub App token: `main` requires `build-test` to pass, and pull requests opened
-# with the default GITHUB_TOKEN trigger no other workflows, so CI would never report on the
-# release PR and it could never merge. The App's PRs run CI like anyone else's. The App
-# needs Contents, Issues and Pull requests read/write on this repository.
+# Why the default GITHUB_TOKEN: it needs no App or stored secret, the same as the owner's
+# other release-please repositories. It needs the repository setting "Allow GitHub Actions
+# to create and approve pull requests". Pull requests it opens trigger no other workflows,
+# so `build-test` never reports on the release PR and `main`'s ruleset blocks it: the
+# owner merges release PRs with the admin bypass. The release PR changes only version
+# fields and CHANGELOG.md, all generated from commits that already passed CI on `main`.
 #
 # Why the write permissions live on one job: opening the release PR, labelling it and
 # creating the tag and Release need them, and nothing else here does. The top level grants
@@ -40,16 +42,9 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        id: app-token
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
