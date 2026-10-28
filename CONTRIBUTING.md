@@ -38,7 +38,9 @@ source changes (ADR A25).
 ## Conventions
 
 - **Commits** — conventional commits, `<type>(<scope>): <subject>`. Types: `feat`, `fix`,
-  `docs`, `chore`, `refactor`, `test`, `ci`.
+  `docs`, `chore`, `refactor`, `test`, `ci`. Pull requests are squash-merged, so the PR
+  title must be a Conventional Commit too: release-please builds the changelog and the
+  version bump from it. Don't edit `CHANGELOG.md` or version fields by hand.
 - **Branches** — branch off `main`, one logical unit of work per pull request. Never commit
   directly to `main`.
 - **TypeScript** — strict mode, no `any` in `src/` (enforced by a local ESLint rule).

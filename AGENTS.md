@@ -91,7 +91,8 @@ mehmory/
 │   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
 │   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR,
 │                               # plus a hooks/ bundle-drift gate — A25);
-│                               # release.yml (green CI on main → tag + GitHub Release → npm publish) (X);
+│                               # release.yml (release-please PR → tag + GitHub Release → npm publish);
+│                               # pr-title.yml (PR title must be a Conventional Commit);
 │                               # pages.yml (site/** on main → vitepress build → Pages deploy)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
@@ -255,8 +256,8 @@ This repo is set up for agent-assisted development by a solo maintainer.
   repeated by tests. CI's `build-test` job runs all four plus
   actionlint and a `hooks/` drift check.
 - **Docs move with the code.** A change to behavior, commands, config keys or error codes
-  updates the matching `docs/*.md` and adds a `CHANGELOG.md` line under `## [Unreleased]` in
-  the same PR.
+  updates the matching `docs/*.md` in the same PR. The PR title is the changelog line: write
+  it as the Conventional Commit a reader of the release notes should see.
 
 ### Branch protection
 
@@ -269,20 +270,31 @@ This repo is set up for agent-assisted development by a solo maintainer.
   be resolved. No approval is required. Copilot reviews each PR once when it opens; new pushes
   are not re-reviewed, so request a fresh review after a substantive change.
 
-Do not use the admin bypass unless the user says to for that change.
+Do not use the admin bypass unless the user says to for that change. The release PR is the
+one standing exception (see Releases).
 
 ### Releases
 
-`VERSION` is the canonical version. GitHub Actions owns the tag, the GitHub Release and the npm
-publish; nobody pushes tags by hand.
+release-please owns releases (`release-please-config.json`, `.release-please-manifest.json`,
+`.github/workflows/release.yml`). It owns `CHANGELOG.md`, `VERSION`, and the `version` fields
+in `package.json`, `plugin.json` and `.claude-plugin/plugin.json`; nobody edits them by hand,
+and nobody pushes tags.
 
-1. In a PR, bump `VERSION` and mirror it in `package.json`, `plugin.json` and
-   `.claude-plugin/plugin.json` (tests enforce the match).
-2. In the same PR, move `## [Unreleased]` entries under `## [X.Y.Z] - YYYY-MM-DD` and update
-   the compare links at the bottom of `CHANGELOG.md`.
-3. Merge. When CI passes on `main`, `.github/workflows/release.yml` creates tag `vX.Y.Z`, a
-   GitHub Release from that CHANGELOG section, and publishes `mehmory` to npm. Each step skips
-   when its result already exists, and an existing tag is never moved.
+- Each push to `main` with releasable commits opens or updates one standing release PR. To
+  release, merge that PR: release-please creates tag `vX.Y.Z` and the GitHub Release, and the
+  `publish-npm` job publishes `mehmory` to npm from the released commit. Merge it only after
+  the latest `Release` run on `main` has finished, so the PR counts every commit; the bypass
+  skips the up-to-date check that would otherwise catch a stale one.
+- Bump rules: `feat` gives a minor release, `fix` a patch; `chore`, `ci`, `docs`, `refactor`
+  and `test` give none. Below 1.0.0 a breaking change (`!` or `BREAKING CHANGE:`) gives a minor
+  release (`bump-minor-pre-major`).
+- Squash merge uses the PR title as the commit subject and the PR body as its message, so PR
+  titles must be Conventional Commits; `pr-title.yml` checks them.
+- The release PR is opened with the default `GITHUB_TOKEN`, which needs the repository setting
+  "Allow GitHub Actions to create and approve pull requests". PRs it opens trigger no CI, so
+  `build-test` never reports on the release PR: the maintainer merges it with the admin
+  bypass. That is the standing exception to the bypass rule above, and it covers only the
+  release PR, whose diff is generated version fields and `CHANGELOG.md`.
 
 ## Conventions
 
