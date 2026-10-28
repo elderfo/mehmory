@@ -127,7 +127,7 @@ describe('release workflow — publish-npm targets npmjs', () => {
     // The one line the previous regression got wrong: `secrets` is not in the
     // context list GitHub allows inside jobs.<job_id>.if.
     expect(jobIfLine).not.toMatch(/secrets\./);
-    expect(block).toMatch(/ref:\s*\$\{\{\s*needs\.release-please\.outputs\.tag_name\s*\}\}/);
+    expect(block).toMatch(/ref:\s*\$\{\{\s*needs\.release-please\.outputs\.sha\s*\}\}/);
   });
 
   it('never moves a tag: no force flag anywhere', () => {
@@ -176,5 +176,38 @@ describe('release workflow — publish-npm targets npmjs', () => {
     // reappearance of it puts a token back between a reader and `npm install`.
     expect(source).not.toContain(LEGACY_REGISTRY);
     expect(source).not.toContain(LEGACY_SCOPE);
+  });
+});
+
+describe('release-please configuration', () => {
+  const config = JSON.parse(readFileSync('release-please-config.json', 'utf-8')) as {
+    'release-type': string;
+    'include-v-in-tag': boolean;
+    packages: Record<
+      string,
+      { 'version-file'?: string; 'extra-files'?: { path: string; jsonpath: string }[] }
+    >;
+  };
+  const manifest = JSON.parse(readFileSync('.release-please-manifest.json', 'utf-8')) as Record<
+    string,
+    string
+  >;
+
+  it('seeds the manifest with the released VERSION', () => {
+    expect(manifest['.']).toBe(readFileSync('VERSION', 'utf-8').trim());
+  });
+
+  it('bumps VERSION and every manifest that tests require to match it', () => {
+    // A dropped entry would only surface in publish-npm, after the tag and Release exist.
+    const root = config.packages['.'];
+    expect(config['release-type']).toBe('simple');
+    expect(config['include-v-in-tag']).toBe(true);
+    expect(root?.['version-file']).toBe('VERSION');
+    const bumped = (root?.['extra-files'] ?? []).map((file) => `${file.path} ${file.jsonpath}`);
+    expect(bumped.sort()).toEqual([
+      '.claude-plugin/plugin.json $.version',
+      'package.json $.version',
+      'plugin.json $.version',
+    ]);
   });
 });

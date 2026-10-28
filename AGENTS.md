@@ -282,7 +282,9 @@ and nobody pushes tags.
 
 - Each push to `main` with releasable commits opens or updates one standing release PR. To
   release, merge that PR: release-please creates tag `vX.Y.Z` and the GitHub Release, and the
-  `publish-npm` job publishes `mehmory` to npm from that tag.
+  `publish-npm` job publishes `mehmory` to npm from the released commit. Merge it only after
+  the latest `Release` run on `main` has finished, so the PR counts every commit; the bypass
+  skips the up-to-date check that would otherwise catch a stale one.
 - Bump rules: `feat` gives a minor release, `fix` a patch; `chore`, `ci`, `docs`, `refactor`
   and `test` give none. Below 1.0.0 a breaking change (`!` or `BREAKING CHANGE:`) gives a minor
   release (`bump-minor-pre-major`).

@@ -37,7 +37,7 @@ export function isHermeticHome(dir: string | undefined, realDirName = '.mehmory'
  */
 export function restoreEnv(saved: NodeJS.ProcessEnv): void {
   for (const key of Object.keys(process.env)) {
-    if (!(key in saved)) Reflect.deleteProperty(process.env, key);
+    if (!Object.hasOwn(saved, key)) Reflect.deleteProperty(process.env, key);
   }
   Object.assign(process.env, saved);
 }

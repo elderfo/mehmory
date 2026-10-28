@@ -39,6 +39,7 @@ jobs:
       pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
+      sha: ${{ steps.release.outputs.sha }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -61,8 +62,8 @@ jobs:
   # release-please's outputs (`secrets` is not an allowed context there), so a missing
   # token fails the publish step loudly rather than skipping the job silently.
   #
-  # Idempotency: a version already on npm is not republished, so re-running a failed run
-  # picks up where the last one stopped.
+  # Idempotency: a version already on npm is not republished. Recover a failed publish with
+  # "Re-run failed jobs": a fresh run of the whole workflow sees no new release and skips it.
   publish-npm:
     runs-on: ubuntu-latest
     needs: release-please
@@ -70,9 +71,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The released commit, not the tag name: no ruleset protects tags, so a tag moved
+      # after the release would otherwise choose what gets published.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.sha }}
 
       - name: Check manifests match the released version
         env:
