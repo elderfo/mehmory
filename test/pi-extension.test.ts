@@ -349,8 +349,9 @@ describe('Pi package manifest', () => {
     }
     for (const dir of manifest.pi.skills) {
       const root = dir.replace(/^\.\//, '');
-      for (const skill of readdirSync(root)) {
-        expect(files, skill).toContain(`${root}/${skill}/SKILL.md`);
+      for (const skill of readdirSync(root, { withFileTypes: true })) {
+        if (!skill.isDirectory()) continue;
+        expect(files, skill.name).toContain(`${root}/${skill.name}/SKILL.md`);
       }
     }
     // Pi supplies its own packages to extensions; a bundled copy breaks module mapping.

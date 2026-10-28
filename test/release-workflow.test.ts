@@ -1,7 +1,7 @@
 /**
  * release-please owns releases: pushes to `main` update a standing release PR, and
  * merging it makes release-please create the tag and the GitHub Release. `publish-npm`
- * then publishes the tagged tree to **npmjs.org**. Two contracts are pinned here.
+ * then publishes the released commit to **npmjs.org**. Two contracts are pinned here.
  *
  * Release ownership. The only trigger is `push` to `main`; no `push: tags` trigger
  * remains, so a hand-pushed tag must not publish on its own. The write permissions exist

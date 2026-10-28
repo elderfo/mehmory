@@ -4,7 +4,7 @@ name: Release
 # (`feat`, `fix`, or a breaking change) opens or updates one standing release PR that bumps
 # `VERSION`, `package.json`, `plugin.json`, `.claude-plugin/plugin.json` and `CHANGELOG.md`.
 # Merging that PR makes release-please create the `vX.Y.Z` tag and the GitHub Release, and
-# `publish-npm` then publishes that tag to npm. Nobody pushes tags by hand, and a
+# `publish-npm` then publishes the released commit to npm. Nobody pushes tags by hand, and a
 # hand-pushed tag publishes nothing: this workflow has no tag trigger.
 #
 # Why the default GITHUB_TOKEN: it needs no App or stored secret, the same as the owner's
@@ -16,7 +16,7 @@ name: Release
 #
 # Why the write permissions live on one job: opening the release PR, labelling it and
 # creating the tag and Release need them, and nothing else here does. The top level grants
-# nothing, and `publish-npm` reads the tagged tree only.
+# nothing, and `publish-npm` reads the released commit only.
 on:
   push:
     branches: [main]
@@ -76,6 +76,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.sha }}
+          persist-credentials: false
 
       - name: Check manifests match the released version
         env:
