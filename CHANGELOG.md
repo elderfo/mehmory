@@ -7,6 +7,30 @@ merges; do not edit it by hand. Sections up to 0.4.0 were written by hand in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/elderfo/mehmory/compare/v0.4.0...v0.5.0) (2026-10-28)
+
+
+### Features
+
+* **pi:** add Pi as a third host ([#56](https://github.com/elderfo/mehmory/issues/56)) ([77781af](https://github.com/elderfo/mehmory/commit/77781af64287bf0cf4d9bab43dbc49b238790abd))
+
+
+### Bug Fixes
+
+* **capture:** finalize abandoned sessions under their own project ([8c6631e](https://github.com/elderfo/mehmory/commit/8c6631e98d125acef08b484dd15fabd287e0851c))
+* **capture:** keep captured deltas durable and resume swept sessions ([#66](https://github.com/elderfo/mehmory/issues/66)) ([db0c3c1](https://github.com/elderfo/mehmory/commit/db0c3c1a2ebe00e41e7f36fa781829d3a740866c))
+* **cli:** purge every copy of the target and keep onboard progress ([#65](https://github.com/elderfo/mehmory/issues/65)) ([26e935c](https://github.com/elderfo/mehmory/commit/26e935ced81aec094c2f71662cf789bb613904a9))
+* **codex:** diagnose the hook-trust gate and wire SessionEnd ([#53](https://github.com/elderfo/mehmory/issues/53)) ([51fbd3d](https://github.com/elderfo/mehmory/commit/51fbd3da32a07a906fd0282f936da50ee5b07311))
+* **codex:** never corrupt Codex config on install or uninstall ([#68](https://github.com/elderfo/mehmory/issues/68)) ([bcfeb9a](https://github.com/elderfo/mehmory/commit/bcfeb9ab78521357db037358a827408fbbe91d75))
+* **lint:** close architecture rule gaps that let violations pass ([#63](https://github.com/elderfo/mehmory/issues/63)) ([712b745](https://github.com/elderfo/mehmory/commit/712b745c399dac3ee25c558c4b0c094983700419))
+* **lock,queue:** stop double claims and lost mutual exclusion ([#64](https://github.com/elderfo/mehmory/issues/64)) ([b52079d](https://github.com/elderfo/mehmory/commit/b52079d0955937569705af791842d35872689eb7))
+* **memory:** respect decay classes and the injection budget contract ([#70](https://github.com/elderfo/mehmory/issues/70)) ([9641bdd](https://github.com/elderfo/mehmory/commit/9641bdd56650ed5debdd82de2c2f5d71f014dee3))
+* **secrets:** close credential leaks and bound redaction time ([#69](https://github.com/elderfo/mehmory/issues/69)) ([e5f50c9](https://github.com/elderfo/mehmory/commit/e5f50c9e1fffc38bbcb3d9957b85d6535f1aa861))
+* **security:** harden storage and integration boundaries ([ec68eab](https://github.com/elderfo/mehmory/commit/ec68eab552ea94ecf9b89092c033389d41de7364))
+* **session:** harden session lifecycle finalization ([bc22d50](https://github.com/elderfo/mehmory/commit/bc22d50090c9c9b6abec12be3c762bc0ce34208a))
+* **stats:** record the real project for suppressed hook calls ([#59](https://github.com/elderfo/mehmory/issues/59)) ([65bcdf8](https://github.com/elderfo/mehmory/commit/65bcdf894bffa44f4eed55689e250101a69aeec8))
+* **storage:** durable atomic writes, isolated git, lossless inbox encoding ([#67](https://github.com/elderfo/mehmory/issues/67)) ([976d218](https://github.com/elderfo/mehmory/commit/976d218ff8c7152af23e5dad3aee7d80a1527fcd))
+
 ## [0.4.0] - 2026-08-25
 
 ### Added
