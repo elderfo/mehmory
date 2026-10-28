@@ -238,9 +238,6 @@ describe('Codex install safety', () => {
     expect(readFileSync('README.md', 'utf-8')).toContain(
       'syntax or missing hook bundles are refused'
     );
-    expect(readFileSync('CHANGELOG.md', 'utf-8')).toContain(
-      'deliberately replacing the pristine pre-mehmory backup'
-    );
   });
 
   it('uninstall write failures describe removal rather than installation', () => {

@@ -1,12 +1,14 @@
 /**
- * Releases are cut by merging a VERSION bump to `main`. The workflow runs after a green
- * `CI` run of a push to `main`: `tag-release` creates the tag and the GitHub Release, and
- * `publish-npm` publishes the tagged tree to **npmjs.org**. Two contracts are pinned here.
+ * release-please owns releases: pushes to `main` update a standing release PR, and
+ * merging it makes release-please create the tag and the GitHub Release. `publish-npm`
+ * then publishes the tagged tree to **npmjs.org**. Two contracts are pinned here.
  *
- * Release ownership. Only a green CI run can release, so the trigger is `workflow_run` on
- * `CI` for `main` and no `push: tags` trigger remains: a hand-pushed tag must not publish
- * on its own. `contents: write` exists on `tag-release` alone, with nothing granted at the
- * top level. Tags are never moved, so no force flag appears anywhere.
+ * Release ownership. The only trigger is `push` to `main`; no `push: tags` trigger
+ * remains, so a hand-pushed tag must not publish on its own. The write permissions exist
+ * on the `release-please` job alone, with nothing granted at the top level. The release
+ * PR is opened with a GitHub App token, because `main` requires `build-test` and PRs
+ * opened with the default GITHUB_TOKEN trigger no CI. Tags are never moved, so no force
+ * flag appears anywhere.
  *
  * The npm publish. Three things have to agree, and nothing in the workflow fails loudly
  * if they drift apart — the publish just lands in the wrong registry or 401s:
@@ -92,35 +94,41 @@ describe('release workflow — publish-npm targets npmjs', () => {
     expect(source).not.toContain('build-tag');
   });
 
-  it('releases only after CI on main, never from a hand-pushed tag', () => {
+  it('runs on pushes to main only, never from a hand-pushed tag', () => {
     // jobBlock isolates any key's block by indentation, top-level `on:` included.
     const on = jobBlock(source, 'on');
-    expect(on).toMatch(/workflow_run:\s*\n\s*workflows:\s*\[CI\]/);
-    expect(on).toMatch(/types:\s*\[completed\]/);
-    expect(on).toMatch(/branches:\s*\[main\]/);
-    expect(source).not.toMatch(/^\s*push:/m);
+    expect(on).toMatch(/push:\s*\n\s*branches:\s*\[main\]/);
+    expect(on).not.toMatch(/workflow_run:/);
     expect(source).not.toMatch(/^\s*tags:/m);
   });
 
-  it('grants nothing at the top level and contents: write to tag-release alone', () => {
+  it('grants nothing at the top level and write access to release-please alone', () => {
     expect(source).toMatch(/^permissions: \{\}$/m);
     expect(source.match(/contents:\s*write/g)).toHaveLength(1);
-    expect(jobBlock(source, 'tag-release')).toMatch(/permissions:\s*\n\s*contents:\s*write/);
+    const release = jobBlock(source, 'release-please');
+    expect(release).toMatch(/contents:\s*write/);
+    expect(release).toMatch(/pull-requests:\s*write/);
+    expect(release).toMatch(/issues:\s*write/);
     expect(jobBlock(source, 'publish-npm')).not.toMatch(/contents:\s*write/);
   });
 
-  it("tag-release's job-level if: requires a successful CI run", () => {
-    const jobIfLine = jobIf(jobBlock(source, 'tag-release'));
-    expect(jobIfLine, 'tag-release must declare a job-level if:').toBeDefined();
-    expect(jobIfLine).toMatch(/github\.event\.workflow_run\.conclusion == 'success'/);
+  it('opens the release PR with a GitHub App token so required CI runs on it', () => {
+    const release = jobBlock(source, 'release-please');
+    expect(release).toMatch(/uses: actions\/create-github-app-token@[0-9a-f]{40}/);
+    expect(release).toMatch(/uses: googleapis\/release-please-action@[0-9a-f]{40}/);
+    expect(release).toMatch(/token:\s*\$\{\{\s*steps\.app-token\.outputs\.token\s*\}\}/);
   });
 
-  it('publish-npm needs tag-release, and its if: (if any) never references secrets', () => {
+  it('publish-npm runs only for a created release, and its if: never references secrets', () => {
     const block = jobBlock(source, 'publish-npm');
-    expect(block).toMatch(/^\s{4}needs:\s*tag-release\s*$/m);
+    expect(block).toMatch(/^\s{4}needs:\s*release-please\s*$/m);
+    const jobIfLine = jobIf(block);
+    expect(jobIfLine, 'publish-npm must declare a job-level if:').toBeDefined();
+    expect(jobIfLine).toMatch(/needs\.release-please\.outputs\.release_created == 'true'/);
     // The one line the previous regression got wrong: `secrets` is not in the
     // context list GitHub allows inside jobs.<job_id>.if.
-    expect(jobIf(block) ?? '').not.toMatch(/secrets\./);
+    expect(jobIfLine).not.toMatch(/secrets\./);
+    expect(block).toMatch(/ref:\s*\$\{\{\s*needs\.release-please\.outputs\.tag_name\s*\}\}/);
   });
 
   it('never moves a tag: no force flag anywhere', () => {

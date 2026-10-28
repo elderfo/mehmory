@@ -13,7 +13,6 @@ it('documents inbox escapes in both shipped schema copies and the one-way legacy
   const upgrade = readFileSync('docs/UPGRADE.md', 'utf8');
   expect(upgrade).toContain('one-way');
   expect(upgrade).toContain('C:\\Users\\name\\repo');
-  expect(readFileSync('CHANGELOG.md', 'utf8')).toContain('Legacy inbox');
 });
 
 it('records git bounds, timeout lock recovery, and fsync cost', () => {
