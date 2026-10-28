@@ -6,11 +6,12 @@ import { changeSession } from './session-fixture.js';
  * The handlers spawn the real hook bundles, so every assertion is end to end.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTempDir, PI_SESSION_ENV } from './helpers.js';
+import { createTempDir, hermeticEnv, PI_SESSION_ENV } from './helpers.js';
 import {
   HOOKS_DIR,
   keyFor,
@@ -321,6 +322,40 @@ describe('Pi package manifest', () => {
     expect(typeof extension.default).toBe('function');
     for (const dir of manifest.pi.skills) {
       expect(existsSync(join(dir, 'remember', 'SKILL.md')), dir).toBe(true);
+    }
+  });
+
+  it('ships the extension, its bundles and every skill in the npm tarball', () => {
+    // `pi install npm:mehmory` installs the published tarball, not the repository, so a
+    // manifest path missing from `files` would install a package with nothing to load.
+    const manifest = JSON.parse(readFileSync('package.json', 'utf-8')) as {
+      pi: { extensions: string[]; skills: string[] };
+      dependencies?: Record<string, string>;
+    };
+    const packed = JSON.parse(
+      execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
+        encoding: 'utf-8',
+        env: hermeticEnv(),
+      })
+    ) as { files: { path: string }[] }[];
+    const files = new Set((packed[0]?.files ?? []).map((file) => file.path));
+
+    for (const extension of manifest.pi.extensions) {
+      expect(files, extension).toContain(extension.replace(/^\.\//, ''));
+    }
+    // The extension spawns the other bundles and imports shared chunks beside it.
+    for (const bundle of readdirSync('hooks').filter((name) => name.endsWith('.mjs'))) {
+      expect(files, bundle).toContain(`hooks/${bundle}`);
+    }
+    for (const dir of manifest.pi.skills) {
+      const root = dir.replace(/^\.\//, '');
+      for (const skill of readdirSync(root)) {
+        expect(files, skill).toContain(`${root}/${skill}/SKILL.md`);
+      }
+    }
+    // Pi supplies its own packages to extensions; a bundled copy breaks module mapping.
+    for (const name of Object.keys(manifest.dependencies ?? {})) {
+      expect(name.startsWith('@earendil-works/'), name).toBe(false);
     }
   });
 });
