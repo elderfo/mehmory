@@ -194,7 +194,11 @@ describe('final secret-filter review regressions', () => {
     expect(Buffer.byteLength(text, 'utf8')).toBe(size);
     const start = performance.now();
     const result = redact(text);
-    expect(performance.now() - start).toBeLessThan(200);
+    // 200 ms is the budget; shared CI runners measure this whole-input call at roughly three
+    // times a workstation's time, so CI gets twice the budget. A backtracking regression
+    // on 250 KiB still costs seconds and fails either way.
+    const budget = process.env['CI'] ? 400 : 200;
+    expect(performance.now() - start).toBeLessThan(budget);
     expect(result).toBe(text);
   });
 
