@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { statePath } from '../src/core/home.js';
 import { commitPaths, ensureGitBaseline } from '../src/core/git.js';
 import { peekWarnings, pendingWarnings, shellQuote } from '../src/core/errors.js';
+import { restoreEnv } from './helpers.js';
 
 // Setup a temporary git repo for testing
 function setupTestRepo(): { readonly dir: string; readonly cleanup: () => void } {
@@ -263,7 +264,7 @@ describe('git child isolation', () => {
       writeFileSync(join(store.dir, 'note.md'), 'new memory');
       expect(commitPaths(['note.md'], 'memory update', store.dir)).toEqual({ ok: true });
       expect(process.env['GIT_DIR']).toBe(join(user.dir, '.git'));
-      process.env = saved;
+      restoreEnv(saved);
       expect(
         execFileSync('git', ['show', 'HEAD:note.md'], { cwd: store.dir, encoding: 'utf8' })
       ).toBe('new memory');
@@ -271,7 +272,7 @@ describe('git child isolation', () => {
         userHead
       );
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
       store.cleanup();
       user.cleanup();
     }
@@ -296,7 +297,7 @@ describe('git child isolation', () => {
       expect(commitPaths(['note.md'], 'without hooks', dir)).toEqual({ ok: true });
       expect(existsSync(marker)).toBe(false);
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
       cleanup();
     }
   });
@@ -334,7 +335,7 @@ describe('commitPaths signing (done-when 8 / A2)', () => {
       });
       expect(log).toContain('signed-config commit');
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
       rmSync(dir, { recursive: true, force: true });
     }
   });

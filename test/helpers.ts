@@ -28,6 +28,20 @@ export function isHermeticHome(dir: string | undefined, realDirName = '.mehmory'
   return resolved.startsWith(resolve(tmpdir()));
 }
 
+/**
+ * Put `process.env` back to a snapshot taken with `{ ...process.env }`, in place.
+ *
+ * Never restore with `process.env = saved`: from Node 26 a child spawned without an
+ * explicit `env` inherits the real process environment, not the replaced object, so a
+ * variable set before the reassignment (such as `GIT_DIR`) leaks into every later child.
+ */
+export function restoreEnv(saved: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in saved)) Reflect.deleteProperty(process.env, key);
+  }
+  Object.assign(process.env, saved);
+}
+
 /** Variables Pi exports to its child processes, stripped from every spawned test child. */
 export const PI_SESSION_ENV = [
   'PI_CODING_AGENT_DIR',

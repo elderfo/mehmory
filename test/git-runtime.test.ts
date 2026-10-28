@@ -8,6 +8,7 @@ import { initStore } from '../src/core/store.js';
 import { lastCommit, dirtyPaths } from '../src/core/status.js';
 import { resolveProjectKey, clearProjectKeyCache } from '../src/core/identity.js';
 import { mehmoryHome, statePath } from '../src/core/home.js';
+import { restoreEnv } from './helpers.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -225,7 +226,7 @@ describe('all store git calls are isolated', () => {
       expect(existsSync(join(mehmoryHome(), '.git/config'))).toBe(true);
       expect(readFileSync(join(user, '.git/config'), 'utf8')).toBe(config);
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
     }
   });
 
@@ -252,7 +253,7 @@ describe('all store git calls are isolated', () => {
         .trim();
       expect(lastCommit()?.split(' ')[0]).toBe(storeHead);
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
     }
   });
 
@@ -309,7 +310,7 @@ describe('all store git calls are isolated', () => {
         expect(options?.env?.['LC_ALL']).toBe('C');
       }
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
     }
   });
 
@@ -326,7 +327,7 @@ describe('all store git calls are isolated', () => {
       clearProjectKeyCache();
       expect(resolveProjectKey(mehmoryHome())).toBe('github.com/owner/intended');
     } finally {
-      process.env = saved;
+      restoreEnv(saved);
       clearProjectKeyCache();
     }
   });
