@@ -416,7 +416,7 @@ value yourself, the extension keeps it. See `MEHMORY_ACTIVE_HOST` in `docs/CONFI
 
 ## Not an error: a session is finalized by the *next* session when its end hook never runs
 
-This is the fallback for any session whose `SessionEnd` mehmory never sees, on either
+This is the fallback for any session whose `SessionEnd` mehmory never sees, on any
 harness: a terminal closed, a process killed, or a Codex hook skipped for want of a trust
 decision. It was Codex's only route into the inbox until mehmory started wiring
 `SessionEnd` there, which Codex 0.153.4 fires.

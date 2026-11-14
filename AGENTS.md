@@ -301,9 +301,9 @@ release-please owns releases (`release-please-config.json`, `.release-please-man
 in `package.json`, `plugin.json` and `.claude-plugin/plugin.json`; nobody edits them by hand,
 and nobody pushes tags.
 
-- Each push to `main` with releasable commits opens or updates one standing release PR.
-  Merging that PR is the only manual step; the release itself is automatic. The merge push
-  re-runs `Release`, release-please creates tag `vX.Y.Z` and the GitHub Release, and the
+- Each push to `main` with releasable commits opens or updates one standing release PR. The
+  maintainer merging that PR is the only manual step; the release itself is automatic. The
+  merge push re-runs `Release`, release-please creates tag `vX.Y.Z` and the GitHub Release, and the
   `publish-npm` job publishes `mehmory` to npm from the released commit. Merge it only after
   the latest `Release` run on `main` has finished, so the PR counts every commit; the bypass
   skips the up-to-date check that would otherwise catch a stale one. If `publish-npm` fails,

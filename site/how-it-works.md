@@ -46,7 +46,8 @@ the *next* session's start instead. The deterministic capture is not late by mor
 session, but `mehmory status` won't show that last stretch until then. A per-harness
 `hosts.<host>.enabled` config toggle lets you turn any harness off independently. When Pi
 runs another harness underneath it, it claims mehmory for its whole process tree
-(`MEHMORY_ACTIVE_HOST=pi`), so one conversation is never captured twice.
+(`MEHMORY_ACTIVE_HOST=pi`), so a harness nested under Pi does not capture the same
+conversation again — see [`MEHMORY_ACTIVE_HOST`](https://github.com/elderfo/mehmory/blob/main/docs/CONFIG.md#mehmory_active_host).
 
 Three properties matter more than what they do:
 

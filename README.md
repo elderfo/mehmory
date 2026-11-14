@@ -123,8 +123,8 @@ That's not a failure (exit 0) — it just means there's nothing to mine yet, and
 `onboard-session` skill is the right tool for a genuinely new project. Want to see what would
 be captured before writing anything: `mehmory onboard --dry-run`.
 
-`onboard` reads only `~/.claude/projects/*/`, so it backfills from Claude Code history. There
-is no Codex or Pi transcript equivalent to mine — a Codex or Pi project starts from the
+`onboard` reads only `~/.claude/projects/*/`, so it backfills from Claude Code history. It
+doesn't read Codex or Pi session history, so a Codex or Pi project starts from the
 deterministic hooks capturing forward, same as `onboard-session` does for a Claude Code project
 with no transcript history yet.
 
