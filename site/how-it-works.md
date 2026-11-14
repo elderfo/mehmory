@@ -17,28 +17,36 @@ mehmory is three planes. Every design argument in the project is about keeping t
 Projects are keyed by a normalized git-remote slug, so the same checkout on two machines is
 the same project and two clones of different repos never collide.
 
+Memory lives in three kinds of scope: `global/` for facts about you, `projects/<key>/` for
+facts about a repo, and `agents/<name>/` for what a named agent has learned about itself. An
+agent opts into its own scope by setting `MEHMORY_AGENT` (or `identity.agent` in config); one
+that sets no name never gets one.
+
 Every mutation is an atomic write plus a git commit, taken under a project-level lock — a
 lock that itself fails open, proceeding with a warning rather than blocking your session if
 it can't be acquired. A crash mid-write leaves the previous state, not a half file.
 
 ## 2. Hooks — deterministic capture
 
-Five hooks, bundled to plain `.mjs` and wired into both Claude Code and Codex CLI (Codex has
-no `SessionEnd` event, so that one runs on Claude Code only — see below):
+Five hooks, bundled to plain `.mjs` and run by all three harnesses. Claude Code and Codex CLI
+call them from their hook registries; Pi's extension spawns the same bundles from Pi's
+lifecycle events:
 
-| Hook | Job | Claude Code | Codex CLI |
-| --- | --- | --- | --- |
-| `SessionStart` | Compose the injection frame — identity + project + index, inside the token budget | ✓ | ✓ |
-| `UserPromptSubmit` | Point at pages relevant to what you just typed | ✓ | ✓ |
-| `Stop` | Distill the turn into inbox entries once the capture threshold is crossed | ✓ | ✓ |
-| `PreCompact` | Capture before the context window collapses | ✓ | ✓ (payload unverified) |
-| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up | ✓ | ✓ |
+| Hook | Job | Claude Code | Codex CLI | Pi |
+| --- | --- | --- | --- | --- |
+| `SessionStart` | Compose the injection frame — identity + project + index, inside the token budget | ✓ | ✓ | ✓ |
+| `UserPromptSubmit` | Point at pages relevant to what you just typed | ✓ | ✓ | ✓ |
+| `Stop` | Distill the turn into inbox entries once the capture threshold is crossed | ✓ | ✓ | ✓ |
+| `PreCompact` | Capture before the context window collapses | ✓ | ✓ (payload unverified) | ✓ |
+| `SessionEnd` | Distill the last delta, queue it durably for the next session, clean up | ✓ | ✓ | ✓ |
 
 When a session ends without its `SessionEnd` hook running — the process was killed, or
 Codex skipped the hook because you have not approved it yet — that session is finalized at
 the *next* session's start instead. The deterministic capture is not late by more than one
 session, but `mehmory status` won't show that last stretch until then. A per-harness
-`hosts.<host>.enabled` config toggle lets you turn either side off independently.
+`hosts.<host>.enabled` config toggle lets you turn any harness off independently. When Pi
+runs another harness underneath it, it claims mehmory for its whole process tree
+(`MEHMORY_ACTIVE_HOST=pi`), so one conversation is never captured twice.
 
 Three properties matter more than what they do:
 
@@ -57,7 +65,8 @@ core, not a second implementation of it.
 ## 3. Skills — where judgment lives
 
 Deciding whether "we moved to Postgres" belongs on the architecture page or the deploy page
-is reading comprehension, not string matching. So the model does it, through plugin skills:
+is reading comprehension, not string matching. So the model does it, through plugin skills
+(shown in Claude Code's form; Codex names them `mehmory-<name>`, Pi `/skill:<name>`):
 
 - **`/mehmory:integrate`** — fold the inbox into the wiki and commit
 - **`/mehmory:remember`** — file one fact right now
@@ -107,7 +116,7 @@ telling them plainly that the old commit still has it.
 
 ## Read further
 
-- [Architectural decisions (A1–A22)](https://github.com/elderfo/mehmory/blob/main/docs/WORLD_MODEL.md) — the reasoning, with the trade-offs stated
+- [Architectural decisions (A1–A30)](https://github.com/elderfo/mehmory/blob/main/docs/WORLD_MODEL.md) — the reasoning, with the trade-offs stated
 - [CLI reference](https://github.com/elderfo/mehmory/blob/main/docs/CLI.md)
 - [Config](https://github.com/elderfo/mehmory/blob/main/docs/CONFIG.md) — every key, its real default, and which ones are wired up versus inert
 - [Upgrading](https://github.com/elderfo/mehmory/blob/main/docs/UPGRADE.md) — what a `schema_version` drift warning means

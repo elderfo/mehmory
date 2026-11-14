@@ -29,19 +29,30 @@ install command if it doesn't find the plugin already installed):
 **Codex CLI** — no marketplace step; `mehmory init --host codex` (next step) writes the
 wiring directly.
 
+**Pi** — install the repository as a Pi package, which brings the extension that runs the hooks
+and the six skills (as `/skill:remember`, `/skill:integrate`, and so on):
+
+```bash
+pi install git:github.com/elderfo/mehmory
+```
+
+The hooks run with `node` from your `PATH`, so Node 22+ has to be on it.
+
 ## 2. Initialize the store
 
 ```bash
 mehmory init                    # Claude Code
 mehmory init --host codex       # Codex CLI
+mehmory init --host pi          # Pi
 ```
 
 Creates `~/.mehmory` (or `$MEHMORY_HOME`), a `.gitignore`, an empty `config.json`, and a git
 repo. On Claude Code, checks your Node version and whether the plugin is installed. On Codex,
-also writes the four hook entries into `$CODEX_HOME/hooks.json`, turns on Codex's
+also writes the five hook entries into `$CODEX_HOME/hooks.json`, turns on Codex's
 `[features] hooks` if it's off, and installs the six skills. `mehmory init --host codex
---uninstall` reverses the Codex wiring; the store itself is untouched either way. Running
-either twice is a no-op.
+--uninstall` reverses the Codex wiring; the store itself is untouched either way. On Pi, it
+writes nothing into Pi's configuration — `pi install` owns that. Running any of them twice is
+a no-op.
 
 ## 3. Onboard from the sessions you already have
 
@@ -62,13 +73,15 @@ no transcripts found — run /mehmory:onboard-session inside a Claude Code sessi
 
 ## 4. First session — integrate
 
-Start `claude` (or `codex`) as usual. `SessionStart` injects `identity.md`, `project.md` and
-`index.md` inside an 800-token budget on either harness, and nudges you once the inbox has
-enough in it to be worth integrating.
+Start `claude` (or `codex`, or `pi`) as usual. `SessionStart` injects `identity.md`,
+`project.md` and `index.md` inside an 800-token budget on every harness, and nudges you once
+the inbox has enough in it to be worth integrating.
 
 ```
 /mehmory:integrate
 ```
+
+That's the Claude Code form. In Codex it's the `mehmory-integrate` skill; in Pi, `/skill:integrate`.
 
 This is model-driven, in-session work: it reads the inbox and `SCHEMA.md`, decides where each
 fact belongs, writes pages, updates the index, and commits.
@@ -82,7 +95,7 @@ invocation prompts for trust the same way is unverified — see the troubleshoot
 
 ## 5. Second session — this is the one
 
-Start a new `claude` (or `codex`) session. **Now** `project.md` carries what integrate
+Start a new `claude` (or `codex`, or `pi`) session. **Now** `project.md` carries what integrate
 actually wrote, not the onboarding stub. This is the session where "it already knows my
 project" becomes true — not the first one.
 

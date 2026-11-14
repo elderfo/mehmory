@@ -56,6 +56,16 @@ testing strategy. Read it before a non-trivial change.
 
 Describe what changed and why. CI must be green, and review comments resolved, before merge.
 
+## Releases
+
+You don't need to do anything to get a change released. Releases run on
+[release-please](https://github.com/googleapis/release-please). After your PR merges, a `feat`
+or `fix` title (or a breaking change) adds it to a standing release PR. When the maintainer
+merges that release PR, the `vX.Y.Z` tag, the GitHub Release and the npm publish all happen
+automatically. `chore`, `ci`, `docs`, `refactor` and `test` titles don't trigger a release.
+The Claude Code plugin and the Pi package install from `main`, so they get a change as soon as
+it merges.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the MIT License that

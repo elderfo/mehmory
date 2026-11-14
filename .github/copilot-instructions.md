@@ -26,8 +26,10 @@ tsup for bundling, vitest for tests, ESLint flat config with custom rules in `es
 
 - **Host branching lives in one place.** `src/transcript/host.ts`
   (`readSession(path, host)`) and `src/core/host.ts` are the only places that branch on which
-  harness (Claude Code vs Codex CLI) invoked a hook. New harness-specific logic goes through
-  that seam — don't add ad hoc `if (host === 'codex')` checks elsewhere.
+  harness (Claude Code, Codex CLI or Pi) invoked a hook. New harness-specific logic goes
+  through that seam — don't add ad hoc `if (host === 'codex')` checks elsewhere. Pi's
+  extension (`src/hooks/pi-extension.ts`) is a runner that spawns the same five bundles with
+  host `pi`, not a second implementation of them (ADR A29).
 - **Hook bundles are committed, not gitignored.** `src/hooks/*.ts` compiles to `hooks/*.mjs` via
   tsup; the Claude Code plugin marketplace installs from this repo's default branch, so the
   built bundle has to be present and current in git (ADR A25). CI's
@@ -94,18 +96,20 @@ touching session lifecycle or capture code:
 
 What else needs to change when you touch these files:
 
-| You changed                                                                                            | Also update                                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/hooks/*.ts`                                                                                       | Run `pnpm build` and commit the resulting `hooks/*.mjs` (and any new/removed `hooks/chunk-*.mjs`) — CI's bundle-drift check fails otherwise.                            |
-| New `E_<CODE>` in `src/core/errors.ts` `ERROR_KINDS`                                                   | `docs/TROUBLESHOOTING.md` (indexed by error code + the stable part of the message).                                                                                     |
-| New/changed config key in `src/core/config.ts`                                                         | `docs/CONFIG.md` (every group, real default, and whether it's wired up or currently inert).                                                                             |
-| New/changed CLI command in `src/cli/commands/*.ts` or `src/cli/index.ts` registry                      | `docs/CLI.md`; `test/docs-consistency.test.ts` checks both directions.                                                                                                  |
-| Codex- or Claude-Code-only behavior in `src/core/host.ts`, `src/transcript/host.ts`, or a hook adapter | `test/hooks-host.test.ts` and/or `test/hooks-codex.test.ts`.                                                                                                            |
-| New skill under `skills/`                                                                              | `plugin.json` and `.claude-plugin/plugin.json` manifest entries; keep the `description` field within the shared 800-token budget (`test/plugin-skills-layout.test.ts`). |
-| Version bump                                                                                           | Never by hand: release-please bumps `VERSION`, the three manifests and `CHANGELOG.md` in its release PR (see `AGENTS.md` § Releases).                                   |
-| Scoring/weighting/tokenizing in `src/core/search.ts` or `src/distill/patterns.ts`                      | `test/fixtures/golden-queries.json` measurement block (new Recall@1/Recall@3 numbers) via `test/retrieval-golden.test.ts`.                                              |
-| `injection.budget_tokens` or skill descriptions                                                        | `test/injection.test.ts` / `test/plugin-skills-layout.test.ts`.                                                                                                         |
-| Any behavior, command, config key, or error code                                                       | The affected file under `docs/` in the same commit — see `CONTRIBUTING.md`.                                                                                             |
+| You changed                                                                               | Also update                                                                                                                                                             |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/hooks/*.ts`                                                                          | Run `pnpm build` and commit the resulting `hooks/*.mjs` (and any new/removed `hooks/chunk-*.mjs`) — CI's bundle-drift check fails otherwise.                            |
+| New `E_<CODE>` in `src/core/errors.ts` `ERROR_KINDS`                                      | `docs/TROUBLESHOOTING.md` (indexed by error code + the stable part of the message).                                                                                     |
+| New/changed config key in `src/core/config.ts`                                            | `docs/CONFIG.md` (every group, real default, and whether it's wired up or currently inert).                                                                             |
+| New/changed CLI command in `src/cli/commands/*.ts` or `src/cli/index.ts` registry         | `docs/CLI.md`; `test/docs-consistency.test.ts` checks both directions.                                                                                                  |
+| Host-specific behavior in `src/core/host.ts`, `src/transcript/host.ts`, or a hook adapter | `test/hooks-host.test.ts`, `test/hooks-codex.test.ts` and/or `test/hooks-pi.test.ts`.                                                                                   |
+| `src/hooks/pi-extension.ts`                                                               | `test/pi-extension.test.ts`, which drives the built extension through a fake Pi API.                                                                                    |
+| New skill under `skills/`                                                                 | `plugin.json` and `.claude-plugin/plugin.json` manifest entries; keep the `description` field within the shared 800-token budget (`test/plugin-skills-layout.test.ts`). |
+| Version bump                                                                              | Never by hand: release-please bumps `VERSION`, the three manifests and `CHANGELOG.md` in its release PR (see `AGENTS.md` § Releases).                                   |
+| `release.yml`, `release-please-config.json` or `.release-please-manifest.json`            | `test/release-workflow.test.ts`; the release section of `AGENTS.md`, and `CONTRIBUTING.md` § Releases.                                                                  |
+| Scoring/weighting/tokenizing in `src/core/search.ts` or `src/distill/patterns.ts`         | `test/fixtures/golden-queries.json` measurement block (new Recall@1/Recall@3 numbers) via `test/retrieval-golden.test.ts`.                                              |
+| `injection.budget_tokens` or skill descriptions                                           | `test/injection.test.ts` / `test/plugin-skills-layout.test.ts`.                                                                                                         |
+| Any behavior, command, config key, or error code                                          | The affected file under `docs/` in the same commit — see `CONTRIBUTING.md`.                                                                                             |
 
 ## Commits and PRs
 

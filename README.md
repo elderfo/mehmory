@@ -124,14 +124,14 @@ That's not a failure (exit 0) — it just means there's nothing to mine yet, and
 be captured before writing anything: `mehmory onboard --dry-run`.
 
 `onboard` reads only `~/.claude/projects/*/`, so it backfills from Claude Code history. There
-is no Codex-transcript equivalent to mine — a Codex project starts from the deterministic hooks
-capturing forward, same as `onboard-session` does for a Claude Code project with no transcript
-history yet.
+is no Codex or Pi transcript equivalent to mine — a Codex or Pi project starts from the
+deterministic hooks capturing forward, same as `onboard-session` does for a Claude Code project
+with no transcript history yet.
 
 ### 4. Your first session
 
 Start `claude` (or `codex`, or `pi`) in your project as usual. `SessionStart` injects `identity.md` +
-the stub `project.md` from onboarding + `index.md`, within an 800-token budget, on either
+the stub `project.md` from onboarding + `index.md`, within an 800-token budget, on every
 harness. Because onboarding just seeded a batch of inbox entries, you'll likely see a nudge
 toward integrating:
 
@@ -143,6 +143,9 @@ Run it:
 ```
 /mehmory:integrate
 ```
+
+(That's the Claude Code form. In Codex it's the `mehmory-integrate` skill; in Pi, skills are
+invoked as `/skill:<name>`, so it's `/skill:integrate`.)
 
 This is model-driven, in-session work: the model reads the inbox and `SCHEMA.md`, decides
 where each fact belongs, writes or edits pages, updates the index, and commits. **It writes to
@@ -176,22 +179,32 @@ mehmory doctor
 
 - `docs/CONFIG.md` — every config group, its real default, and which keys are actually wired
   up versus present but currently inert, including the per-harness `hosts.claude-code.enabled`
-  / `hosts.codex.enabled` toggle.
+  / `hosts.codex.enabled` / `hosts.pi.enabled` toggle, and `MEHMORY_AGENT` for per-agent memory
+  scopes.
 - `docs/TROUBLESHOOTING.md` — indexed by error code and the stable part of the message, with a
   Codex-specific section (`E_CODEX_INSTALL`, `E_CODEX_HARNESS_MISSING`,
-  `E_CODEX_HOOKS_DISABLED`, `E_CODEX_HOOKS_UNWIRED`, `E_CODEX_SKILLS_MISSING`) alongside the
-  Claude Code codes.
+  `E_CODEX_HOOKS_DISABLED`, `E_CODEX_HOOKS_UNWIRED`, `E_CODEX_HOOKS_UNTRUSTED`,
+  `E_CODEX_SKILLS_MISSING`) alongside the Claude Code codes, and a Pi section for when
+  mehmory does nothing there.
 - `docs/PRIVACY.md` — the secret filter's real limits, what `purge` reaches and doesn't
-  (redaction and purge reach both harnesses — there is one store, not one per harness), why
+  (redaction and purge reach every harness — there is one store, not one per harness), why
   mehmory never rewrites git history, and **uninstalling is not the same operation as deleting
-  your data** on either harness — see that document for the full distinction and the
+  your data** on any harness — see that document for the full distinction and the
   export/restore procedure.
 - `docs/UPGRADE.md` — what a `schema_version` drift warning from `doctor` means and what to do.
-- `docs/CLI.md` — every command, including `mehmory init --host codex [--uninstall]`.
+- `docs/CLI.md` — every command, including `mehmory init --host codex [--uninstall]` and
+  `mehmory init --host pi`.
+
+## Releases
+
+`mehmory` is published to npm by [release-please](https://github.com/googleapis/release-please):
+each release gets a `vX.Y.Z` tag, a GitHub Release, and an entry in `CHANGELOG.md`. Upgrade
+with `npm install -g mehmory@latest`. The Claude Code plugin and the Pi package install from
+the `main` branch, so they pick up changes as soon as those merge.
 
 ## Contributing
 
-See `CONTRIBUTING.md` for setup, local checks, and conventions.
+See `CONTRIBUTING.md` for setup, local checks, conventions, and how releases are cut.
 
 ## License
 
