@@ -288,8 +288,7 @@ This repo is set up for agent-assisted development by a solo maintainer.
   history.
 - **`main: pull requests`** (repo admins may bypass): changes land through a PR, squash merge
   only, `build-test` must pass on a branch up to date with `main`, and every review thread must
-  be resolved. No approval is required. Copilot reviews each PR once when it opens; new pushes
-  are not re-reviewed, so request a fresh review after a substantive change.
+  be resolved. No approval is required.
 
 Do not use the admin bypass unless the user says to for that change. The release PR is the
 one standing exception (see Releases).
@@ -335,7 +334,6 @@ and nobody pushes tags.
 - One logical unit of work per PR (per subtask boundary)
 - Branches off `main`, never committed to directly (the `feat/runtime` integration branch was
   a run-era staging branch and no longer exists)
-- Wait for Copilot review before merging
 - Resolve PR comments one at a time with commits
 - Never merge with failing CI or unresolved comments
 
