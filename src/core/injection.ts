@@ -2,11 +2,14 @@
  * Injection frame assembly: formatting and framing for SessionStart injection.
  *
  * Coordinates with tokens.ts for budget enforcement (identity 200 / project 200 / index 400 = 800).
- * Data-only framing is applied AFTER truncation, wrapping the content in an explicit
- * data-only wrapper so the model treats injected memory as facts, not instructions.
+ * A named agent adds a fourth share the same nominal size as identity, taken out of the
+ * same budget rather than added on top of it — `injection.budget_tokens` stays the cap.
+ * The caller reserves its framing cost before content allocation, then wraps the result
+ * as reference data rather than instructions.
  */
 
 import { redact, type RedactOptions } from './redact.js';
+import { MAX_INJECTION_BUDGET_TOKENS } from './config.js';
 import {
   estimateTokens,
   INJECTION_IDENTITY_TOKENS,
@@ -19,17 +22,19 @@ import {
  * Injection part: a labeled content block that will be concatenated and budget-constrained.
  */
 export interface InjectionPart {
-  label: 'identity' | 'project' | 'index';
+  label: 'identity' | 'project' | 'index' | 'agent';
   content: string;
 }
 
 /**
- * Injected frame: all three parts, truncated to budget, wrapped in data-only framing.
+ * Injected frame: every part, truncated to budget, wrapped in data-only framing.
  */
 export interface InjectionFrame {
   readonly identity: string;
   readonly project: string;
   readonly index: string;
+  /** The agent's own content. Absent — not empty — when the agent is unnamed. */
+  readonly agent?: string;
   readonly totalTokens: number;
 }
 
@@ -47,19 +52,28 @@ interface TruncationResult {
 export interface InjectionOptions {
   /** `config.injection.budget_tokens`. Defaults to `INJECTION_BUDGET_TOKENS` (800). */
   readonly budgetTokens?: number;
+  /** Tokens reserved for wrappers, section headers, routing and session metadata. */
+  readonly framingTokens?: number;
   /** `config.secrets`, forwarded to `redact()`. */
   readonly secrets?: RedactOptions;
 }
 
 /**
- * Build an injection frame from identity, project, and index parts.
+ * Build an injection frame from identity, project, index, and (optionally) agent parts.
  *
  * Contract:
  * - Allocates identity/project/index budget in the 200/200/400 ratio of Spec gap 1,
  *   scaled to `budgetTokens` (default 800, so the default split is exactly 200/200/400)
- * - Truncates in priority order: index detail first, then project, then identity last
- * - Identity is never dropped entirely (may be truncated, but always present)
- * - Data-only framing is applied AFTER truncation (framing never pushes over budget)
+ * - A named agent adds a fourth share nominally equal to identity's, and all four scale
+ *   to the same `budgetTokens`. The budget is a cap, not a floor: naming an agent buys
+ *   its self a place in the frame by making room, never by raising the total
+ * - Passing no agent part leaves the split byte-identical to before agent scopes existed
+ * - Truncates in priority order: index detail first, then project, then agent, then
+ *   identity last
+ * - Identity is never dropped entirely (may be truncated, but always present) — its
+ *   sub-budget is floored at one token so even a budget below the four the nominal split
+ *   needs spends what it has on identity rather than emptying it
+ * - Reserves `framingTokens` before allocating shares; the caller assembles the wrapper
  * - Return frame always satisfies totalTokens ≤ budget_tokens
  *
  * @param parts — Array of InjectionPart with label, content
@@ -70,28 +84,57 @@ export function buildInjection(
   parts: InjectionPart[],
   options: InjectionOptions = {}
 ): InjectionFrame {
-  const budget =
-    options.budgetTokens !== undefined && options.budgetTokens > 0
+  // The agent's nominal share is identity's — an agent's self is worth what the user's
+  // self is worth — so a named frame's nominal total is 1000 rather than 800. Every share
+  // scales to `budget` against that total, which is what keeps `budget_tokens` a real cap
+  // and leaves the unnamed split (scale = budget/800) exactly as it was.
+  const isNamed = parts.some(part => part.label === 'agent');
+  const nominalTotal = INJECTION_BUDGET_TOKENS + (isNamed ? INJECTION_IDENTITY_TOKENS : 0);
+  const configuredBudget =
+    options.budgetTokens !== undefined &&
+    Number.isInteger(options.budgetTokens) &&
+    options.budgetTokens >= 1 &&
+    options.budgetTokens <= MAX_INJECTION_BUDGET_TOKENS
       ? options.budgetTokens
       : INJECTION_BUDGET_TOKENS;
-  // Sub-budgets keep the spec's 1:1:2 ratio at any total, so a lowered
-  // budget_tokens tightens each part instead of leaving three fixed caps that
-  // together exceed it and can only be met by the last-resort trim loop.
-  const scale = budget / INJECTION_BUDGET_TOKENS;
-  const identityBudget = Math.floor(INJECTION_IDENTITY_TOKENS * scale);
+  const budget = Math.max(0, configuredBudget - (options.framingTokens ?? 0));
+  const scale = budget / nominalTotal;
+  // Floored at one token, the smallest share that can still carry text. Below a budget of
+  // 4 (5 named) every scaled share rounds to zero, and truncating to a zero sub-budget
+  // empties the part outright — which for identity is the one thing the contract above
+  // says never happens. Identity is the only share with the floor because it is the only
+  // one promised to survive; the others are all allowed to reach empty.
+  const identityBudget =
+    budget === 0 ? 0 : Math.max(1, Math.floor(INJECTION_IDENTITY_TOKENS * scale));
+  const agentBudget = isNamed ? Math.floor(INJECTION_IDENTITY_TOKENS * scale) : 0;
   const projectBudget = Math.floor(INJECTION_PROJECT_TOKENS * scale);
-  // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the three
-  // sub-budgets always sum to exactly `budget` after flooring.
-  const indexBudget = budget - identityBudget - projectBudget;
+  // The remainder rather than a scaled INJECTION_INDEX_TOKENS, so the sub-budgets
+  // always sum to exactly `budget` after flooring.
+  const indexBudget = budget - identityBudget - agentBudget - projectBudget;
 
   // Start with defaults (empty but safe)
   let identityContent = '';
   let projectContent = '';
   let indexContent = '';
+  let agentContent = '';
 
-  // Extract parts by label
+  // Leave twice the largest frame's character budget for complete matches, while
+  // keeping even three-byte UTF-16 code units below redact's 256 KiB byte cap.
+  const maxFrameChars = MAX_INJECTION_BUDGET_TOKENS / TOKENS_PER_CHAR;
+  const maxRedactionChars = maxFrameChars * 2;
   for (const part of parts) {
-    const redacted = redact(part.content, options.secrets);
+    const bounded =
+      typeof part.content === 'string' ? part.content.slice(0, maxRedactionChars) : '';
+    let redacted = redact(bounded, options.secrets);
+    // Shortening the slice can bring any prefix of its unfinished trailing token
+    // into the frame, even if the redacted slice still exceeds the frame budget.
+    if (
+      typeof part.content === 'string' &&
+      part.content.length > maxRedactionChars &&
+      redacted.length < bounded.length
+    ) {
+      redacted = redacted.replace(/\S+$/, '[REDACTED]');
+    }
     switch (part.label) {
       case 'identity':
         identityContent = redacted;
@@ -102,24 +145,30 @@ export function buildInjection(
       case 'index':
         indexContent = redacted;
         break;
+      case 'agent':
+        agentContent = redacted;
+        break;
     }
   }
 
-  // Truncate in priority order: index → project → identity (identity never drops entirely)
+  // Truncate in priority order: index → project → agent → identity. The agent slot
+  // yields before identity, which never drops entirely.
   let identityTruncated = identityContent;
   let projectTruncated = projectContent;
   let indexTruncated = indexContent;
+  let agentTruncated = agentContent;
 
   let identityTokens = estimateTokens(identityTruncated);
   let projectTokens = estimateTokens(projectTruncated);
   let indexTokens = estimateTokens(indexTruncated);
+  let agentTokens = estimateTokens(agentTruncated);
 
   // Iteratively truncate in priority order until within budget
   const maxIterations = 100; // prevent infinite loops
   let iterations = 0;
 
   while (
-    identityTokens + projectTokens + indexTokens > budget &&
+    identityTokens + projectTokens + indexTokens + agentTokens > budget &&
     iterations < maxIterations
   ) {
     iterations++;
@@ -136,15 +185,25 @@ export function buildInjection(
       projectTruncated = result.text;
       projectTokens = result.tokens;
     }
-    // Priority 3: Truncate identity (but keep at least some content)
+    // Priority 3: Truncate the agent slot, which yields before identity does
+    else if (agentTokens > agentBudget) {
+      const result = truncateToTokens(agentTruncated, agentBudget);
+      agentTruncated = result.text;
+      agentTokens = result.tokens;
+    }
+    // Priority 4: Truncate identity (but keep at least some content)
     else if (identityTokens > identityBudget) {
       const result = truncateToTokens(identityTruncated, identityBudget);
       identityTruncated = result.text;
       identityTokens = result.tokens;
     } else {
       // All parts are within their budgets but combined is over
-      // Further truncate identity as a last resort (never drop entirely if original had content)
-      if (identityContent && identityTokens > 0) {
+      // Shave the agent slot before identity; identity never drops entirely if it had content
+      if (agentContent && agentTokens > 0) {
+        const result = truncateToTokens(agentTruncated, Math.max(1, agentTokens - 10));
+        agentTruncated = result.text;
+        agentTokens = result.tokens;
+      } else if (identityContent && identityTokens > 0) {
         const result = truncateToTokens(
           identityTruncated,
           Math.max(1, identityTokens - 10)
@@ -168,12 +227,15 @@ export function buildInjection(
     }
   }
 
-  const totalTokens = identityTokens + projectTokens + indexTokens;
+  const totalTokens = identityTokens + projectTokens + indexTokens + agentTokens;
 
   return {
     identity: identityTruncated,
     project: projectTruncated,
     index: indexTruncated,
+    // Omitted rather than empty when no agent part was passed, so `undefined` honestly
+    // means unnamed instead of being a sentinel the field never carries.
+    ...(isNamed ? { agent: agentTruncated } : {}),
     totalTokens,
   };
 }
@@ -187,7 +249,7 @@ export function buildInjection(
  * @param targetTokens — Target token count
  * @returns Object with truncated text and its token count
  */
-function truncateToTokens(text: string, targetTokens: number): TruncationResult {
+export function truncateToTokens(text: string, targetTokens: number): TruncationResult {
   if (!text) {
     return { text: '', tokens: 0 };
   }
@@ -197,7 +259,18 @@ function truncateToTokens(text: string, targetTokens: number): TruncationResult 
     return { text: '', tokens: 0 };
   }
 
-  const truncated = text.substring(0, Math.max(1, targetChars));
+  let end = Math.min(text.length, targetChars);
+  // UTF-16 offsets must not leave a high surrogate without its low surrogate.
+  if (
+    end > 0 &&
+    end < text.length &&
+    text.charCodeAt(end - 1) >= 0xd800 &&
+    text.charCodeAt(end - 1) <= 0xdbff &&
+    text.charCodeAt(end) >= 0xdc00 &&
+    text.charCodeAt(end) <= 0xdfff
+  )
+    end--;
+  const truncated = text.substring(0, end);
   const tokens = estimateTokens(truncated);
   return { text: truncated, tokens };
 }

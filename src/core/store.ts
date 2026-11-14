@@ -7,15 +7,13 @@
  */
 
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { runStoreGit } from './git.js';
 import { mehmoryHome } from './home.js';
-import { logError, type MehmoryError } from './errors.js';
+import { logError, shellQuote, type MehmoryError } from './errors.js';
 import { mkdir, pathExists, readFile, atomicWrite } from './fs.js';
 
 /** Result type for store initialization (A11: never throws across boundary). */
-export type InitStoreResult =
-  | { ok: true; home: string }
-  | { ok: false; error: MehmoryError };
+export type InitStoreResult = { ok: true; home: string } | { ok: false; error: MehmoryError };
 
 /**
  * Initialize the mehmory store (A6).
@@ -76,19 +74,13 @@ export function initStore(): InitStoreResult {
     const gitDir = join(home, '.git');
     if (!pathExists(gitDir)) {
       try {
-        execFileSync('git', ['init', home], {
-          stdio: 'pipe',
-          encoding: 'utf-8',
-        });
+        runStoreGit(['init', home], home);
         // Disable commit signing for the store itself, so it holds even for git
         // invocations that don't route through commitPaths (a user running
         // `git -C ~/.mehmory commit` by hand, or a future caller). Without this
         // the user's global commit.gpgsign makes every store commit block on the
         // signing agent. Set per-repo, so the user's own repos are untouched.
-        execFileSync('git', ['-C', home, 'config', 'commit.gpgsign', 'false'], {
-          stdio: 'pipe',
-          encoding: 'utf-8',
-        });
+        runStoreGit(['config', '--local', 'commit.gpgsign', 'false'], home);
       } catch (err) {
         const error: MehmoryError = {
           code: 'E_STORE_INIT',
@@ -97,7 +89,7 @@ export function initStore(): InitStoreResult {
           consequence: 'Store is initialized but git repository was not created',
           // The resolved home, not a literal `~/.mehmory`: the documented
           // MEHMORY_HOME override would otherwise make this command wrong.
-          fix: `git -C ${home} init`,
+          fix: `git -C ${shellQuote(home)} init`,
         };
         logError(error);
         return { ok: false, error };
@@ -215,7 +207,7 @@ Captured entries awaiting integration.
  * warning to it would fire on every code-only bump with nothing the user could do about
  * it. Interpolated into the template below so the two can never disagree.
  */
-export const TEMPLATE_SCHEMA_VERSION = '1';
+export const TEMPLATE_SCHEMA_VERSION = '2';
 
 /** Template for SCHEMA.md (embedded copy of assets/SCHEMA.md) */
 const SCHEMA_TEMPLATE = `---
@@ -279,7 +271,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. \`\\\\\`, \`\\n\`, \`\\r\`, and \`--\\>\` are escape sequences in entry text (backslash, newline, carriage return, and \`-->\` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.
@@ -302,7 +294,7 @@ Token estimation uses chars/4 with ±20% tolerance.
 - **Caveman-telegraphic bullets** — short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** — avoid elaborate sentences
 - **Wikilinks** — use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** — user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`
+- **Scope rule** — route by what a fact is *about*: user-level facts (preferences, tooling) → \`global/\`; codebase facts → \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) → \`agents/<name>/\`. The \`agent=\` stamp names *whose* scope a self-fact belongs to; it is set on every entry that agent captured, so it never decides *whether* a fact is a self-fact
 
 ## Secret Filter Limitation
 

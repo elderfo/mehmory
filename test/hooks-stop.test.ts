@@ -1,9 +1,11 @@
+import { sessionState, changeSession } from './session-fixture.js';
 /** Stop fixture tests (criteria 11, 14, 16, 19). */
 
-import { spawnSync } from 'node:child_process';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTempDir, hermeticEnv } from './helpers.js';
+import { createTempDir } from './helpers.js';
 import {
+  additionalContext,
+  errorsLog,
   keyFor,
   outputJson,
   paths,
@@ -13,8 +15,10 @@ import {
   statsLines,
   writeTranscript,
 } from './hook-fixture.js';
-import { readSessionState, updateSessionState } from '../src/core/session.js';
+
 import { loadConfig } from '../src/core/config.js';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { statePath } from '../src/core/home.js';
 
 /** The Stop capture threshold now comes from config (`stop.capture_threshold`).
  * Read inside the test, not at import time — MEHMORY_HOME is only hermetic once
@@ -31,7 +35,7 @@ const TRANSCRIPT = [
 
 /** Put the session one Stop away from the capture threshold. */
 function primeCounter(sessionId: string): void {
-  updateSessionState(sessionId, state => ({
+  changeSession(sessionId, (state) => ({
     ...state,
     stop_count: stopThreshold() - 1,
   }));
@@ -50,29 +54,59 @@ describe('Stop hook', () => {
   });
 
   it('stays silent below the threshold but counts the stop', () => {
-    const run = runHook(
-      'stop',
-      { session_id: 's1', transcript_path: transcript },
-      { cwd }
-    );
+    const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(run.status).toBe(0);
     // `{}`, not silence: Codex parses Stop output on every Stop, and the
     // below-threshold Stop is the most frequent one (D9).
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
+  });
+
+  it('keeps the threshold counter and cursor when the append fails', { timeout: 15_000 }, () => {
+    primeCounter('s1');
+    mkdirSync(statePath('locks'), { recursive: true });
+    const lock = statePath('locks', '__store__.lock');
+    writeFileSync(lock, String(process.pid));
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(sessionState('s1').stop_count).toBe(stopThreshold());
+    expect(sessionState('s1').cursor.offset).toBe(0);
+    rmSync(lock);
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(sessionState('s1').stop_count).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
+  });
+
+  it('nudges once and backs off silent retries after persistent append failure', () => {
+    writeFileSync(
+      statePath('..', 'config.json'),
+      JSON.stringify({ stop: { capture_threshold: 3 } })
+    );
+    mkdirSync(paths(key).inbox);
+    const runs = Array.from({ length: 9 }, () =>
+      runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd })
+    );
+    expect(runs.filter((run) => additionalContext(run) !== '')).toHaveLength(1);
+    expect(
+      statsLines()
+        .filter((line) => line['captured_entries'] !== undefined)
+        .map((line) => line['stop_count'])
+    ).toEqual([3, 4, 7]);
+    expect(errorsLog().match(/Stop capture still failing/g)).toHaveLength(1);
+    expect(sessionState('s1').cursor.offset).toBe(0);
+    rmSync(paths(key).inbox, { recursive: true });
+    runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
+    expect(sessionState('s1').stop_count).toBe(0);
+    expect(readIfPresent(paths(key).inbox)).toContain('fly.io');
   });
 
   it('captures and blocks once at the threshold', () => {
     primeCounter('s1');
 
     const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
-    const output = outputJson(run);
 
     expect(run.status).toBe(0);
-    expect(output['decision']).toBe('block');
-    const reason = String(output['reason']);
-    expect(reason).toContain('inbox-tx.mjs append');
+    const reason = additionalContext(run);
     expect(reason).toContain('/mehmory:remember');
     // The model must never be told to hand-write the entry serialization (A15, U6).
     expect(reason).not.toContain('<!--mehmory');
@@ -83,32 +117,43 @@ describe('Stop hook', () => {
     const inbox = readIfPresent(paths(key).inbox);
     expect(inbox).toContain('fly.io');
     expect(inbox).not.toContain('AKIAIOSFODNN7EXAMPLE');
-    expect(readSessionState('s1').stop_count).toBe(0);
+    expect(sessionState('s1').stop_count).toBe(0);
     expect(statsLines().at(-1)).toMatchObject({ hook: 'Stop' });
   });
 
-  it('embeds an inbox-tx invocation that actually runs', () => {
+  it('blocks Claude Code without claiming the hook errored', () => {
     primeCounter('s1');
-    const reason = String(
-      outputJson(runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd }))[
-        'reason'
-      ]
+
+    const run = runHook(
+      'stop',
+      { session_id: 's1', transcript_path: transcript },
+      { cwd, args: ['claude-code'] }
+    );
+    const output = outputJson(run);
+
+    // `additionalContext` blocks exactly as `decision: block` does — same
+    // `blockingErrors` array, same `stop_hook_active` on the next Stop — but renders as
+    // `Stop hook feedback:` instead of `Stop hook error:` and raises no error toast.
+    expect(output['decision']).toBeUndefined();
+    expect(output['hookSpecificOutput']).toMatchObject({ hookEventName: 'Stop' });
+    expect(additionalContext(run)).toContain('mehmory:');
+  });
+
+  it('keeps the reason short enough to read in the transcript', () => {
+    primeCounter('s1');
+    const reason = additionalContext(
+      runHook(
+        'stop',
+        { session_id: 's1', transcript_path: transcript },
+        { cwd, args: ['claude-code'] }
+      )
     );
 
-    // Pull the literal command out of the reason and run it, placeholder filled in.
-    // The learning carries an apostrophe: the embedded form must survive model prose
-    // that contains a single quote, which the old `echo '<json>' |` form did not.
-    const match = /node \S+inbox-tx\.mjs append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
-    expect(match).not.toBeNull();
-    const learning = "deploys need the VPN, don't repeat this";
-    const command = String(match?.[0]).replace('<the learning>', learning);
-
-    const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
-
-    expect(run.stderr).toBe('');
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
-    expect(readIfPresent(paths(key).inbox)).toContain(learning);
+    // Every host prints this verbatim into the session log. The executable `inbox-tx`
+    // fallback is Codex-only (the skill is not a slash command there); on Claude Code
+    // the skill ships with the hook, so the command is dead weight on screen.
+    expect(reason).not.toContain('inbox-tx.mjs append');
+    expect(reason.length).toBeLessThan(320);
   });
 
   it('does not re-block on the next stop after a capture', () => {
@@ -118,7 +163,7 @@ describe('Stop hook', () => {
     const next = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(next.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
   });
 
   it('is a no-op when stop_hook_active is set', () => {
@@ -132,7 +177,7 @@ describe('Stop hook', () => {
 
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(stopThreshold() - 1);
+    expect(sessionState('s1').stop_count).toBe(stopThreshold() - 1);
   });
 
   it('stays silent when PreCompact already reset the counter', () => {
@@ -142,6 +187,6 @@ describe('Stop hook', () => {
     const run = runHook('stop', { session_id: 's1', transcript_path: transcript }, { cwd });
 
     expect(run.stdout).toBe('{}');
-    expect(readSessionState('s1').stop_count).toBe(1);
+    expect(sessionState('s1').stop_count).toBe(1);
   });
 });

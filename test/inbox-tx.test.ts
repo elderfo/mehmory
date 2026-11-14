@@ -1,3 +1,4 @@
+import { sessionState, seedSession, stateFileFor, markerFileFor } from './session-fixture.js';
 /**
  * Direct tests for the bundled `hooks/inbox-tx.mjs` transactional helper (criterion 17).
  *
@@ -10,6 +11,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { statePath } from '../src/core/home.js';
+import { freshSessionState } from '../src/core/session-state.js';
 import { hermeticEnv } from './helpers.js';
 
 const HELPER = resolve('hooks/inbox-tx.mjs');
@@ -20,14 +23,14 @@ interface TxResult {
   stderr: string;
 }
 
-function tx(subcommand: string, input: unknown): TxResult {
+function tx(subcommand: string, input: unknown, extraEnv: Record<string, string> = {}): TxResult {
   if (!existsSync(HELPER)) {
     throw new Error(`${HELPER} is missing — run \`pnpm build\` before \`pnpm test\`.`);
   }
   const run = spawnSync(process.execPath, [HELPER, subcommand], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf-8',
-    env: hermeticEnv(),
+    env: hermeticEnv(extraEnv),
     // Outside the repo: a bundle that still needs node_modules fails here.
     cwd: process.env.MEHMORY_HOME,
   });
@@ -47,8 +50,9 @@ let key: string;
 beforeEach(() => {
   const home = process.env.MEHMORY_HOME as string;
   mkdirSync(join(home, '.state'), { recursive: true });
-  inbox = join(home, 'inbox.md');
   key = 'github.com/acme/widget';
+  inbox = join(home, 'projects', key, 'inbox.md');
+  mkdirSync(join(home, 'projects', key), { recursive: true });
   writeFileSync(inbox, '# Inbox\n');
 });
 
@@ -89,6 +93,33 @@ describe('inbox-tx append', () => {
   });
 });
 
+describe('inbox-tx append agent attribution', () => {
+  // The remember skill shells out to this helper from inside the agent's own process,
+  // so an unstamped entry is permanently misfiled: integrate reads a missing `agent=`
+  // as "this is a project fact", never as "the stamp was dropped".
+  it('stamps the running agent on the appended entry', () => {
+    json(
+      tx(
+        'append',
+        { inbox, key, entries: [{ text: 'scout prefers ripgrep', src: 'sess-a' }] },
+        { MEHMORY_AGENT: 'scout' }
+      )
+    );
+    expect(readFileSync(inbox, 'utf-8')).toContain('agent=scout');
+  });
+
+  it('omits the segment entirely when no agent is named', () => {
+    json(
+      tx(
+        'append',
+        { inbox, key, entries: [{ text: 'unnamed fact', src: 'sess-a' }] },
+        { MEHMORY_AGENT: '' }
+      )
+    );
+    expect(readFileSync(inbox, 'utf-8')).not.toContain('agent=');
+  });
+});
+
 describe('inbox-tx snapshot/clear', () => {
   it('clears exactly the snapshotted entries, so a concurrent append survives', () => {
     tx('append', {
@@ -104,15 +135,17 @@ describe('inbox-tx snapshot/clear', () => {
       snapshotId: string;
       entries: { text: string }[];
     };
-    expect(snap.entries.map(e => e.text)).toEqual(['entry one', 'entry two']);
-    expect(existsSync(join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`))).toBe(true);
+    expect(snap.entries.map((e) => e.text)).toEqual(['entry one', 'entry two']);
+    expect(
+      existsSync(
+        join(process.env.MEHMORY_HOME as string, '.state', `inbox-snapshot.${snap.snapshotId}.json`)
+      )
+    ).toBe(true);
 
     // Racing capture between snapshot and clear — the whole reason this is not a raw Edit.
     tx('append', { inbox, key, entries: [{ text: 'entry three', src: 'sess-b' }] });
 
-    const cleared = json(
-      tx('clear', { inbox, key, snapshotId: snap.snapshotId })
-    );
+    const cleared = json(tx('clear', { inbox, key, snapshotId: snap.snapshotId }));
     expect(cleared).toEqual({ removed: 2 });
 
     const body = readFileSync(inbox, 'utf-8');
@@ -127,7 +160,70 @@ describe('inbox-tx snapshot/clear', () => {
   });
 });
 
+describe('inbox-tx pause/resume', () => {
+  it('changes only the explicitly named session pause flag', () => {
+    seedSession({ ...freshSessionState('target'), stop_count: 7 });
+    seedSession(freshSessionState('other'));
+    expect(json(tx('pause', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: true,
+    });
+    expect(sessionState('target').stop_count).toBe(7);
+    expect(sessionState('other').paused).toBe(false);
+    expect(json(tx('resume', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: false,
+    });
+  });
+
+  it.each(['pause', 'resume'])(
+    '%s tells an unchanged retired session to retry after the next turn',
+    (command) => {
+      writeFileSync(markerFileFor('done'), '{}');
+
+      const result = tx(command, { session_id: 'done' });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(
+        'inbox-tx: session is busy or finalized; retry after the next turn\n'
+      );
+      expect(existsSync(stateFileFor('done'))).toBe(false);
+    }
+  );
+
+  it('fails without changing state when the session is busy, missing, or finalized', () => {
+    seedSession({ ...freshSessionState('target'), paused: true });
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', 'sessions_target.lock'), String(process.pid));
+    expect(tx('resume', { session_id: 'target' }).stderr).toContain('busy');
+    expect(JSON.parse(readFileSync(stateFileFor('target'), 'utf-8'))).toMatchObject({
+      paused: true,
+    });
+    expect(tx('pause', { session_id: 'missing' }).status).toBe(1);
+    expect(existsSync(stateFileFor('missing'))).toBe(false);
+    writeFileSync(markerFileFor('done'), '{}');
+    const finalized = tx('resume', { session_id: 'done' });
+    expect(finalized.status).toBe(1);
+    expect(finalized.stderr).toContain('finalized; retry after the next turn');
+    expect(finalized.stderr).not.toContain('unknown session_id');
+    expect(existsSync(stateFileFor('done'))).toBe(false);
+  });
+});
+
 describe('inbox-tx failure paths', () => {
+  it('exits 1 and reports a failed append instead of reporting success', { timeout: 15_000 }, () => {
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'retry this fact', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('retry');
+    expect(readFileSync(inbox, 'utf-8')).toBe('# Inbox\n');
+  });
   it('exits 1 with one stderr line and leaves the inbox untouched on bad JSON', () => {
     tx('append', { inbox, key, entries: [{ text: 'survivor', src: 'sess-a' }] });
     const before = readFileSync(inbox, 'utf-8');

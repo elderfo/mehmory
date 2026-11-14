@@ -29,6 +29,28 @@ export function isHermeticHome(dir: string | undefined, realDirName = '.mehmory'
 }
 
 /**
+ * Put `process.env` back to a snapshot taken with `{ ...process.env }`, in place.
+ *
+ * Never restore with `process.env = saved`: from Node 26 a child spawned without an
+ * explicit `env` inherits the real process environment, not the replaced object, so a
+ * variable set before the reassignment (such as `GIT_DIR`) leaks into every later child.
+ */
+export function restoreEnv(saved: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(process.env)) {
+    if (!Object.hasOwn(saved, key)) Reflect.deleteProperty(process.env, key);
+  }
+  Object.assign(process.env, saved);
+}
+
+/** Variables Pi exports to its child processes, stripped from every spawned test child. */
+export const PI_SESSION_ENV = [
+  'PI_CODING_AGENT_DIR',
+  'PI_CODING_AGENT_SESSION_DIR',
+  'PI_SESSION_ID',
+  'PI_SESSION_FILE',
+] as const;
+
+/**
  * Environment for a spawned subprocess (a built `hooks/*.mjs` fixture test).
  *
  * MUST be used instead of `process.env` when spawning: the in-process MEHMORY_HOME /
@@ -55,7 +77,14 @@ export function hermeticEnv(extra: Record<string, string> = {}): NodeJS.ProcessE
     );
   }
 
-  const env = { ...process.env, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
+  // The suite itself may run inside a Pi session, whose exports would point a spawned
+  // hook at the developer's real Pi session store instead of the temp HOME's default,
+  // and whose extension sets MEHMORY_ACTIVE_HOST=pi, which would silence every
+  // claude-code and codex hook the suite spawns.
+  const inherited = { ...process.env };
+  for (const key of [...PI_SESSION_ENV, 'MEHMORY_ACTIVE_HOST']) Reflect.deleteProperty(inherited, key);
+
+  const env = { ...inherited, MEHMORY_HOME: home, HOME: home, CODEX_HOME: codexHome, ...extra };
 
   // `extra` is applied last so a test can point HOME at a fake ~/.claude (see
   // createFakeClaudeHome) — which also means `extra` can punch straight through the

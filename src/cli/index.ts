@@ -185,7 +185,7 @@ function guarded(): number {
         exit: EXIT.FAILED,
         errors: [
           {
-            code: 'E_APPEND_FAILED',
+            code: 'E_INTERNAL',
             what: err instanceof Error ? err.message : String(err),
             consequence: 'The command stopped before it finished',
           },

@@ -21,6 +21,15 @@ import {
   QUEUE_STALE_MS,
 } from './fs.js';
 
+/** New claims publish their start time in the rename destination; legacy claims use mtime. */
+function claimAge(claim: string, claimPath: string): number {
+  const timestamp = /^\w+\.\d+\.[0-9a-f]{32}\.(\d+)\.json$/.exec(claim)?.[1];
+  return (
+    Date.now() -
+    (timestamp === undefined ? Number(stat(claimPath)?.mtimeMs ?? Date.now()) : Number(timestamp))
+  );
+}
+
 /**
  * Enqueue a job with the given data and optional type. Returns the job ID, or null on failure.
  * The job type is stored in the job payload and can be filtered when claiming.
@@ -60,7 +69,11 @@ export function enqueueJob(jobData: Record<string, unknown>, jobType?: string): 
  * When jobType is specified, only jobs matching that type are claimed.
  * Returns the claimed job ID and its data, or null if no job was claimed.
  */
-export function claimJob(jobType?: string): { readonly id: string; readonly data: Record<string, unknown> } | null {
+export function claimJob(jobType?: string): {
+  readonly id: string;
+  readonly data: Record<string, unknown>;
+  readonly claimFile: string;
+} | null {
   const queueDir = join(statePath('queue'));
   const claimedDir = join(queueDir, 'claimed');
   const failedDir = join(queueDir, 'failed');
@@ -70,16 +83,46 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
     return null;
   }
 
+  // A claim is the job payload itself. Requeue stale claims before checking the
+  // pending directory, otherwise a worker crash makes the job disappear forever.
+  if (pathExists(claimedDir)) {
+    for (const claim of listDir(claimedDir)) {
+      if (!claim.endsWith('.json')) continue;
+      const claimPath = join(claimedDir, claim);
+      try {
+        const age = claimAge(claim, claimPath);
+        if (age <= QUEUE_STALE_MS) continue;
+        const jobId = claim.slice(0, claim.indexOf('.'));
+        const pendingPath = join(queueDir, `${jobId}.json`);
+        if (pathExists(pendingPath)) {
+          remove(claimPath);
+        } else {
+          const raw = readFile(claimPath);
+          const parsed: unknown = JSON.parse(raw);
+          const payload =
+            typeof parsed === 'object' && parsed !== null
+              ? {
+                  ...(parsed as Record<string, unknown>),
+                  _attempts: Number((parsed as Record<string, unknown>)['_attempts'] ?? 0) + 1,
+                }
+              : { _attempts: 1 };
+          atomicWrite(pendingPath, JSON.stringify(payload, null, 2));
+          remove(claimPath);
+        }
+      } catch {
+        // Another worker may have reclaimed or completed the claim.
+      }
+    }
+  }
+
   let jobs: string[];
   try {
-    jobs = listDir(queueDir).filter(f => f.endsWith('.json'));
+    jobs = listDir(queueDir).filter((f) => f.endsWith('.json'));
   } catch {
     return null;
   }
 
-  if (jobs.length === 0) {
-    return null;
-  }
+  if (jobs.length === 0) return null;
 
   // List claimed files once before the loop (fixing O(n) repeated directory reads)
   const claimedFiles = pathExists(claimedDir) ? listDir(claimedDir) : [];
@@ -111,16 +154,13 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
     }
 
     // Count existing claims for this job in claimed/
-    const jobClaims = claimedFiles.filter(f => f.startsWith(jobId + '.'));
+    const jobClaims = claimedFiles.filter((f) => f.startsWith(jobId + '.'));
 
     // Clean up stale claims
-    jobClaims.forEach(claim => {
+    jobClaims.forEach((claim) => {
       const claimPath = join(claimedDir, claim);
       try {
-        const s = stat(claimPath);
-        if (!s) return;
-        const mtime = typeof s.mtimeMs === 'number' ? s.mtimeMs : 0;
-        const age = Date.now() - mtime;
+        const age = claimAge(claim, claimPath);
         if (age > QUEUE_STALE_MS) {
           remove(claimPath);
         }
@@ -129,9 +169,9 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
       }
     });
 
+    const attempts = typeof jobData['_attempts'] === 'number' ? jobData['_attempts'] : 0;
     // If this job has already failed 3 times, move to failed/
-    const currentClaimCount = jobClaims.length;
-    if (currentClaimCount >= QUEUE_CLAIM_ATTEMPTS) {
+    if (attempts >= QUEUE_CLAIM_ATTEMPTS) {
       mkdir(failedDir);
       try {
         rename(jobPath, join(failedDir, jobId + '.json'));
@@ -143,12 +183,14 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
 
     // Try to claim this job with atomic rename
     mkdir(claimedDir);
-    const claimedPath = join(claimedDir, `${jobId}.${String(process.pid)}.json`);
+    const claimToken = randomBytes(16).toString('hex');
+    const claimFile = `${jobId}.${String(process.pid)}.${claimToken}.${String(Date.now())}.json`;
+    const claimedPath = join(claimedDir, claimFile);
 
     try {
       rename(jobPath, claimedPath);
       // We won! Return the job data.
-      return { id: jobId, data: jobData };
+      return { id: jobId, data: jobData, claimFile };
     } catch {
       // Rename failed; someone else claimed it or job doesn't exist. Try next job.
       continue;
@@ -164,12 +206,17 @@ export function claimJob(jobType?: string): { readonly id: string; readonly data
  * `claimJob` moves the job into `claimed/`; without this the marker sits there until
  * the staleness bound reclaims it and the job is applied a second time. Idempotent.
  */
-export function completeJob(jobId: string): void {
+export function completeJob(jobId: string, claimFile?: string): void {
   const claimedDir = join(statePath('queue'), 'claimed');
   if (!pathExists(claimedDir)) return;
 
-  for (const file of listDir(claimedDir)) {
-    if (!file.startsWith(jobId + '.')) continue;
+  const files = claimFile === undefined ? [] : [claimFile];
+  for (const file of files) {
+    if (
+      !file.startsWith(jobId + '.') ||
+      !/^\d+\.[0-9a-f]{32}(?:\.\d+)?\.json$/.test(file.slice(jobId.length + 1))
+    )
+      continue;
     try {
       remove(join(claimedDir, file));
     } catch {

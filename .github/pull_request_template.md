@@ -7,4 +7,4 @@
 - [ ] `pnpm lint`, `pnpm test`, `pnpm typecheck`, and `pnpm build` pass locally
 - [ ] Behavior changes have a test that fails without this change
 - [ ] Docs in `docs/` (and `README.md` / `AGENTS.md` if relevant) updated in the same PR
-- [ ] Conventional commit messages
+- [ ] PR title is a Conventional Commit (it becomes the changelog line and picks the version bump)

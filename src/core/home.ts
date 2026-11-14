@@ -19,6 +19,18 @@ export function codexHome(): string {
   return join(homedir(), '.codex');
 }
 
+/**
+ * Where Pi writes session files. Honors PI_CODING_AGENT_SESSION_DIR, else `sessions/`
+ * under PI_CODING_AGENT_DIR (default ~/.pi/agent). Never creates it.
+ */
+export function piSessionsDir(): string {
+  const envDir = process.env.PI_CODING_AGENT_SESSION_DIR;
+  if (envDir) {
+    return envDir;
+  }
+  return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'), 'sessions');
+}
+
 /** Construct a path under <home>/.state/ */
 export function statePath(...segments: string[]): string {
   return join(mehmoryHome(), '.state', ...segments);

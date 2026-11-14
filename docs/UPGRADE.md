@@ -40,10 +40,37 @@ train you to ignore the warning entirely by the time a real template drift shows
 There is no automatic migration step in v1. `doctor`'s warning is the entire upgrade signal
 you get; treat it as a nudge to go read the diff, not as an error that needs suppressing.
 
+## Inbox text escapes (one-way compatibility change)
+
+New writes escape backslashes before escaping line separators and comment terminators,
+so new entries round-trip exactly. The parser now treats `\\`, `\n`, `\r`, and `--\>`
+as escapes in entry text. This is a **one-way** change for legacy inbox entries that
+contained raw backslashes: `a\\b` now reads as `a\b`, and `C:\Users\name\repo` gains
+both a newline (`\n`) and a carriage return (`\r`). Legacy lines are not rewritten or
+version-stamped, so the parser cannot distinguish an old literal from an escape. Review
+backslash-heavy legacy facts before integrating them; double literal backslashes in the
+entry text if needed. Pages already integrated are unaffected.
+
 ## `FORMAT_VERSION` history
 
+- **3** — inbox entries carry an optional `agent=` field recording which named agent
+  captured them, immediately after `host=` in the trailing comment. Entries from unnamed
+  agents omit it, as do all entries already in your store from before this change; those
+  are **not** rewritten, the parser still reads them, and they stay unattributed — an
+  entry with no agent is never routed into an agent scope. A value that fails agent-name
+  validation is dropped at parse time and the entry survives without attribution. No
+  action needed when upgrading.
+
+  **Downgrading is not symmetric.** An older build's parser requires `ts=` to follow
+  `host=` directly, so a line carrying `agent=` fails to match *entirely* — the whole
+  entry, not just the new field. Under an older build such an entry is invisible: it is
+  never integrated, never cleared, and not reachable by `purge --session`; because
+  deduplication only sees ids the running parser can read, a replayed capture can append a
+  second copy of the same fact. If you need to roll back, run `/mehmory:integrate` first so
+  nothing is left un-integrated in an inbox. This applies to a store shared across machines
+  or synced by git, where one side can lag the other.
 - **2** (issue #20) — inbox entries carry a `host=` field recording which harness
-  captured them (`claude-code` or `codex`), between `src=` and `ts=` in the trailing
+  captured them (`claude-code`, `codex`, or, since the Pi host, `pi`), between `src=` and `ts=` in the trailing
   comment. Entries already in your store from before this change have no `host=`
   field; they are **not** rewritten, and the parser still reads them, attributing them
   to `claude-code`. No action needed.

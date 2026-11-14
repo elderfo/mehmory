@@ -2,14 +2,28 @@
 
 All notable changes to this project are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
-project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-`VERSION` is the canonical version source; `package.json`, `plugin.json`, and
-`.claude-plugin/plugin.json` mirror it and tests enforce that they match.
+release-please writes this file from Conventional Commit PR titles when a release PR
+merges; do not edit it by hand. Sections up to 0.4.0 were written by hand in the
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-08-25
 
 ### Added
+
+- **Agent scopes: per-agent memory beside the shared project scope.** A third scope,
+  `agents/<name>/`, holds what an agent _is_ — its preferences, its style, what it has
+  learned about itself — alongside `global/` (facts about you) and `projects/<key>/` (facts
+  about the repo). An agent declares its name through `MEHMORY_AGENT`, falling back to the
+  new `identity.agent` config key; instances that share a model can then accumulate distinct
+  selves instead of pooling into one. Captured entries carry an `agent=` stamp,
+  and `/mehmory:integrate` files self-facts into that agent's scope. A named agent's own
+  content is injected at `SessionStart` as a fourth share of the existing
+  `injection.budget_tokens`, which stays a hard cap — naming an agent does not raise it.
+  Addressing agent scopes from `search`, `stats` and `purge` is not part of this change.
+
+  An agent that declares no name is unaffected: capture, recall, injection budget and
+  on-disk layout are all unchanged, and no agent scope is created for it.
 
 - **Portable Agent Plugins packaging.** The root `plugin.json` and `skills/` directory now
   expose the Agent Plugins v1.0.0 surface while preserving Claude Code's compatibility
@@ -17,9 +31,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`FORMAT_VERSION` is 3 and `schema_version` is 2.** Inbox entries gained an optional
+  `agent=` field; older entries are not rewritten and still parse. Downgrading is not
+  symmetric — an older build cannot parse a line carrying `agent=` at all, so integrate
+  before rolling back. `SCHEMA.md`'s scope rule gained a third clause, so `doctor` now
+  reports drift against a customized copy; adopt the new rule to route agent facts.
+
+- **The Stop nudge no longer reads as a hook error on Claude Code.** The once-per-threshold
+  request to save learnings is carried as `hookSpecificOutput.additionalContext` rather than
+  `{"decision": "block"}`. Both block the turn identically — same re-invoke, same
+  `stop_hook_active` guard on the next Stop — but the transcript now shows
+  `Stop hook feedback: …` instead of `Stop hook error: …`, with no error toast. The reason
+  text also dropped from ~700 to ~310 characters: the literal `inbox-tx` command is now
+  emitted only for Codex, where skill invocation is not a slash command. Codex keeps
+  `{"decision": "block"}`, the only shape its Stop event accepts.
+
 - **Skill metadata is portable across clients.** Skill `allowed-tools` values now use the
   Agent Skills space-separated format, and the generated hook chunks are tracked so clean
   marketplace checkouts contain every runtime bundle.
+
+### Fixed
+
+- **ACP sessions no longer lose their transcript to a finalize race.** The Claude Agent SDK
+  (ACP) writes its rollout _after_ `SessionEnd` fires, so `finalizeSession` was retiring the
+  session and capturing nothing when the file had not yet reached disk. It now defers a
+  named-but-absent transcript, leaving the session pending so the next start's sweep captures
+  it once the rollout lands; a transcript that never appears still retires after the sweep's
+  idle window.
 
 ### Security
 
@@ -237,7 +275,7 @@ preceded it; `0.0.1` was scaffolding and was never published.
 - No release has been published before this one, so the tag-driven publish path runs
   against the live registry for the first time here.
 
-[Unreleased]: https://github.com/elderfo/mehmory/compare/v0.3.1...HEAD
+[0.4.0]: https://github.com/elderfo/mehmory/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/elderfo/mehmory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/elderfo/mehmory/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/elderfo/mehmory/compare/v0.2.0...v0.2.1

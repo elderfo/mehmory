@@ -1,3 +1,4 @@
+import { changeSession } from './session-fixture.js';
 /**
  * Codex host end-to-end: recall (#22) and capture (#23) through the built bundles.
  *
@@ -10,8 +11,10 @@
  * same project key, the same inbox — only the reader and the `host=` attribution differ.
  */
 
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createTempDir } from './helpers.js';
+import { createTempDir, hermeticEnv } from './helpers.js';
 import {
   additionalContext,
   keyFor,
@@ -23,8 +26,9 @@ import {
   statsLines,
   writeCodexRollout,
   writeTranscript,
+  TODAY,
 } from './hook-fixture.js';
-import { setPaused, updateSessionState } from '../src/core/session.js';
+import { setPaused } from '../src/core/session.js';
 import { loadConfig } from '../src/core/config.js';
 import { estimateTokens } from '../src/core/tokens.js';
 import { parseInboxEntries } from '../src/schema/format.js';
@@ -38,7 +42,7 @@ const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
 const CODEX_TURN = '019fbf44-51af-7693-a39d-3b7b66c5c195';
 
 const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
@@ -114,7 +118,7 @@ function stopThreshold(): number {
 
 /** Put the session one Stop away from the capture threshold. */
 function primeCounter(sessionId: string): void {
-  updateSessionState(sessionId, state => ({ ...state, stop_count: stopThreshold() - 1 }));
+  changeSession(sessionId, state => ({ ...state, stop_count: stopThreshold() - 1 }));
 }
 
 describe('Codex recall (#22)', () => {
@@ -206,7 +210,7 @@ describe('Codex recall (#22)', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(additionalContext(run)).toContain('relevant: pages/deployment.md');
+    expect(additionalContext(run)).toContain(`relevant: ${join(paths(key).pages, 'deployment.md')}`);
     expect(statsLines().at(-1)).toMatchObject({
       hook: 'UserPromptSubmit',
       host: 'codex',
@@ -224,7 +228,7 @@ describe('Codex recall (#22)', () => {
       })
     );
 
-    expect(context).toContain('relevant: pages/deployment.md (stale)');
+    expect(context).toContain(`relevant: ${join(paths(key).pages, 'deployment.md')} (stale)`);
   });
 
   it('suppresses injection on both events while paused', () => {
@@ -317,6 +321,30 @@ describe('Codex capture (#23)', () => {
     const reason = String(output['reason']);
     expect(reason).toContain('the mehmory-remember skill');
     expect(reason).not.toContain('/mehmory:remember');
+  });
+
+  it('embeds an inbox-tx invocation that actually runs', () => {
+    primeCounter(CODEX_SESSION);
+    const reason = String(
+      outputJson(runHook('stop', stop(cwd, rollout), { cwd, args: CODEX_ARGS }))['reason']
+    );
+
+    // Codex is the host that still carries the literal command: skill invocation there
+    // is not a first-class slash command, so the reason is the model's only guaranteed
+    // executable path to the inbox. Pull it out of the reason and run it, placeholder
+    // filled in. The learning carries an apostrophe: the embedded form must survive
+    // model prose that contains a single quote, which `echo '<json>' |` did not.
+    const match = /node ['"]?[^'"\n]*inbox-tx\.mjs['"]? append <<'JSON'\n[\s\S]*?\nJSON\n/.exec(reason);
+    expect(match).not.toBeNull();
+    const learning = "deploys need the VPN, don't repeat this";
+    const command = String(match?.[0]).replace('<the learning>', learning);
+
+    const run = spawnSync('sh', ['-c', command], { env: hermeticEnv(), encoding: 'utf-8' });
+
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ appended: 1 });
+    expect(readIfPresent(paths(key).inbox)).toContain(learning);
   });
 
   it('redacts secrets in a Codex capture exactly as in a Claude Code one', () => {

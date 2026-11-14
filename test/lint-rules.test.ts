@@ -9,6 +9,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
     it('allows fs imports in src/core/fs.ts', () => {
       const context = {
         filename: '/project/src/core/fs.ts',
+        cwd: '/project',
         report: function() {
           throw new Error('Should not report');
         },
@@ -24,6 +25,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
     it('allows fs imports in src/core/errors.ts', () => {
       const context = {
         filename: '/project/src/core/errors.ts',
+        cwd: '/project',
         report: function() {
           throw new Error('Should not report');
         },
@@ -38,6 +40,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
     it('allows fs imports in test/ files', () => {
       const context = {
         filename: '/project/test/errors.test.ts',
+        cwd: '/project',
         report: function() {
           throw new Error('Should not report');
         },
@@ -53,6 +56,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/redact.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -69,6 +73,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/tokens.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -89,6 +94,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/redact.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -106,6 +112,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/store.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -123,6 +130,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/home.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -144,6 +152,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/store.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -160,6 +169,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/redact.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -176,6 +186,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/home.ts',
+        cwd: '/project',
         sourceCode: {
           getText: () => 'Promise<string>',
         },
@@ -201,6 +212,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/errors.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -221,6 +233,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/home.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -241,6 +254,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/core/store.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -265,6 +279,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const context = {
         filename: '/project/src/redact.ts',
+        cwd: '/project',
         report: function() {
           reported = true;
         },
@@ -290,6 +305,7 @@ describe('custom ESLint rules (A3, A9, A11, U2, A17)', () => {
       let reported = false;
       const listeners = rule.create({
         filename,
+        cwd: '/project',
         report: function () {
           reported = true;
         },

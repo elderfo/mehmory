@@ -18,6 +18,9 @@ export const INJECTION_PROJECT_TOKENS = 200;
 export const INJECTION_INDEX_TOKENS = 400;
 export const INJECTION_BUDGET_TOKENS = 800; // sum of above
 
+/** Run-2 amendment 14: at most two maintenance lines beside the memory frame. */
+export const MAINTENANCE_ALLOWANCE_TOKENS = 150;
+
 /**
  * Estimate the number of tokens in a text string using chars/4 heuristic.
  *

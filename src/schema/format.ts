@@ -3,9 +3,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isSafeAgentName } from '../core/agent-name.js';
 
 /** Format version, bumped when the template or structure changes deliberately (U1). */
-export const FORMAT_VERSION = 2;
+export const FORMAT_VERSION = 3;
 
 /** Page type enumeration for frontmatter. */
 export const PAGE_TYPES = ['decision', 'procedure', 'entity', 'preference', 'gotcha'] as const;
@@ -26,7 +27,7 @@ export const FRONTMATTER_KEYS = {
   type: 'type',
   refs: 'refs',
   decay: 'decay',
-  schema_version: 'schema_version'
+  schema_version: 'schema_version',
 } as const;
 
 /** Divider text used to separate frontmatter from content. */
@@ -51,8 +52,12 @@ export function readFrontmatter(contents: string): Record<string, string> {
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** Age of a page in days from its `updated` frontmatter; null when absent/unparseable. */
-export function pageAgeDays(contents: string, now: number): number | null {
-  const updated = readFrontmatter(contents)['updated'];
+export function pageAgeDays(
+  contents: string | Readonly<Record<string, string>>,
+  now: number
+): number | null {
+  const fields = typeof contents === 'string' ? readFrontmatter(contents) : contents;
+  const updated = fields['updated'];
   if (!updated) return null;
   const parsed = Date.parse(updated);
   return Number.isNaN(parsed) ? null : (now - parsed) / MS_PER_DAY;
@@ -88,13 +93,20 @@ export const STALE_SCORE_MULTIPLIER = 0.7;
 export const ARCHIVED_SCORE_MULTIPLIER = 0.5;
 
 /**
- * True when a page body's `updated` frontmatter is older than `staleAfterDays`.
+ * True when a default-decay page's `updated` is older than `staleAfterDays`.
+ * Evergreen and ephemeral pages are exempt from mechanical aging.
  *
  * A page with no parseable `updated` is NOT stale: unknown age is not evidence of age,
  * and treating it as stale would demote every hand-written page that skipped frontmatter.
  */
-export function isStalePage(contents: string, now: number, staleAfterDays: number): boolean {
-  const age = pageAgeDays(contents, now);
+export function isStalePage(
+  contents: string | Readonly<Record<string, string>>,
+  now: number,
+  staleAfterDays: number
+): boolean {
+  const fields = typeof contents === 'string' ? readFrontmatter(contents) : contents;
+  if ((fields['decay'] ?? 'default') !== 'default') return false;
+  const age = pageAgeDays(fields, now);
   return age !== null && age > staleAfterDays;
 }
 
@@ -137,21 +149,21 @@ export function formatIndexLine(slug: string, summary: string): string {
 export const INBOX_ENTRY_ID_LENGTH = 16;
 
 /**
- * The closed set of harnesses that can capture an inbox entry (measured against
- * `.research/codex-spike/VERDICT.md`: mehmory runs under exactly these two). Not a
- * general provenance system — a fixed enum, matching what the rest of the effort
- * threads through hook and CLI arguments.
+ * The closed set of harnesses that can capture an inbox entry (Codex measured against
+ * `.research/codex-spike/VERDICT.md`, Pi against pi-coding-agent 0.87.1). Not a general
+ * provenance system — a fixed enum, matching what the rest of the effort threads
+ * through hook and CLI arguments.
  */
-export const INBOX_HOSTS = ['claude-code', 'codex'] as const;
+export const INBOX_HOSTS = ['claude-code', 'codex', 'pi'] as const;
 export type InboxHost = (typeof INBOX_HOSTS)[number];
 
 /** Host attributed to entries written before the `host=` field existed (FORMAT_VERSION 1). */
 export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
 
 /**
- * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 2):
+ * Normative single-line inbox entry serialization (A14, FORMAT_VERSION 3):
  *
- *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex> ts=<iso8601>-->`
+ *   `- <text> <!--mehmory id=<sha256-16> src=<sessionId> host=<claude-code|codex|pi>[ agent=<name>] ts=<iso8601>-->`
  *
  * The text is human-readable markdown; the trailing HTML comment carries machine
  * identity and is invisible in rendered markdown. Exactly one line per entry, so a
@@ -162,9 +174,19 @@ export const DEFAULT_INBOX_HOST: InboxHost = 'claude-code';
  * written under FORMAT_VERSION 1 have no `host=` segment at all, and the transactional
  * helper that builds entries pre-dates host-threading too. `parseInboxEntries` fills
  * the gap with `DEFAULT_INBOX_HOST`; `serializeInboxEntry` always emits the field.
+ *
+ * `agent` follows `host` and is optional in both directions (R7, KTD5): an unnamed
+ * agent's entry omits the segment entirely rather than carrying a sentinel, exactly as
+ * a pre-`host=` line omits its host. There is no default to fall back to — an entry
+ * either names an agent or names none.
+ *
+ * Its value group is `\S*`, not `\S+`, so a hand-edited `agent=` with nothing after it
+ * still matches. The inbox is a file people edit, and requiring a non-empty value would
+ * make that typo fail the whole line — losing the entry rather than its attribution.
+ * Validation below discards the empty value; the entry survives unattributed.
  */
 export const INBOX_ENTRY_PATTERN =
-  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))? ts=(\S+)-->$/;
+  /^- (.*) <!--mehmory id=([0-9a-f]{16}) src=(\S*)(?: host=(\S+))?(?: agent=(\S*))? ts=(\S+)-->$/;
 
 /** One parsed inbox entry. */
 export interface InboxEntry {
@@ -181,6 +203,13 @@ export interface InboxEntry {
    * returns.
    */
   readonly host?: InboxHost;
+  /**
+   * Agent that captured the entry, when one was named (R7). Absent for an unnamed
+   * agent and for every entry written before FORMAT_VERSION 3 — and absent, too, for a
+   * line whose stamped value fails `isSafeAgentName`, since the value becomes a
+   * directory segment under `agents/` and the inbox is hand-editable.
+   */
+  readonly agent?: string;
   /** ISO-8601 capture timestamp. */
   readonly ts: string;
 }
@@ -199,8 +228,8 @@ export function inboxEntryId(seed: string): string {
  *
  * Embedded newlines are JSON-escaped (`\n` → `\\n`) so the one-line invariant holds
  * before the record reaches `appendRecord`, whose escape pass is then a no-op.
- * Carriage returns are dropped; a comment terminator in the text would break the
- * comment, so it is neutralized.
+ * Backslashes are escaped first, and carriage returns and Unicode line separators
+ * are escaped too. A comment terminator in the text is neutralized.
  *
  * Both spellings are neutralized: HTML ends a comment on `--!>` as well as `-->`, and
  * escaping only the latter left the other one live (CodeQL js/bad-tag-filter). The
@@ -209,12 +238,25 @@ export function inboxEntryId(seed: string): string {
  */
 export function serializeInboxEntry(entry: InboxEntry): string {
   const text = entry.text
-    .replace(/\r/g, '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n')
-    .replace(/--(!?)>/g, '--$1\\>')
-    .trim();
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+    .replace(/--(!?)>/g, '--$1\\>');
+  if (!/^[A-Za-z0-9._:-]+$/.test(entry.src)) {
+    throw new Error('inbox entry source contains unsafe metadata characters');
+  }
+  if (!/^[0-9a-f]{16}$/.test(entry.id) || Number.isNaN(Date.parse(entry.ts))) {
+    throw new Error('inbox entry metadata is malformed');
+  }
   const host = entry.host ?? DEFAULT_INBOX_HOST;
-  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host} ts=${entry.ts}-->`;
+  // Omitted entirely when there is no name — no sentinel to teach every reader about.
+  // Revalidated here as well as on parse (KTD5): this is the write boundary, and an
+  // unsafe value must never reach the file in the first place.
+  const agent =
+    entry.agent !== undefined && isSafeAgentName(entry.agent) ? ` agent=${entry.agent}` : '';
+  return `- ${text} <!--mehmory id=${entry.id} src=${entry.src} host=${host}${agent} ts=${entry.ts}-->`;
 }
 
 /**
@@ -226,7 +268,7 @@ export function parseInboxEntries(content: string): InboxEntry[] {
   for (const line of content.split('\n')) {
     const m = INBOX_ENTRY_PATTERN.exec(line.trimEnd());
     if (!m) continue;
-    const [, text, id, src, rawHost, ts] = m;
+    const [, text, id, src, rawHost, rawAgent, ts] = m;
     if (text === undefined || id === undefined || src === undefined || ts === undefined) {
       continue;
     }
@@ -237,11 +279,35 @@ export function parseInboxEntries(content: string): InboxEntry[] {
       rawHost !== undefined && (INBOX_HOSTS as readonly string[]).includes(rawHost)
         ? (rawHost as InboxHost)
         : DEFAULT_INBOX_HOST;
+    // Unlike `host`, a missing agent has no default — and a *present* one is only kept
+    // when it is safe (KTD5). The inbox is hand-editable and shared by every agent in a
+    // repo, so a stamped `agent=../../global` read back here would reach a routing
+    // decision that composes a filesystem path. The value is dropped, the entry is not.
+    const agent = rawAgent !== undefined && isSafeAgentName(rawAgent) ? rawAgent : undefined;
     entries.push({
       id,
-      text: text.replace(/--(!?)\\>/g, '--$1>').replace(/\\n/g, '\n'),
+      // One pass prevents an escaped backslash from becoming a second escape.
+      text: text.replace(
+        /\\(\\|n|r|u2028|u2029)|--(!?)\\>/g,
+        (_match, escape: string | undefined, bang: string | undefined) => {
+          if (escape === undefined) return `--${bang ?? ''}>`;
+          switch (escape) {
+            case 'n':
+              return '\n';
+            case 'r':
+              return '\r';
+            case 'u2028':
+              return '\u2028';
+            case 'u2029':
+              return '\u2029';
+            default:
+              return '\\';
+          }
+        }
+      ),
       src,
       host,
+      ...(agent !== undefined ? { agent } : {}),
       ts,
     });
   }

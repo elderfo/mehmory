@@ -7,28 +7,28 @@
  * otherwise; the next session picks it up.
  */
 
+import assert from 'node:assert/strict';
 import { mehmoryHome } from '../core/home.js';
 import type { MehmoryConfig } from '../core/config.js';
-import { pendingWarnings } from '../core/errors.js';
+import { logError, pendingWarnings } from '../core/errors.js';
 import { runHook } from '../core/hook.js';
-import { isPaused, sweepSessionState } from '../core/session.js';
+import { isPaused } from '../core/session.js';
+import { maintainSessions } from '../core/session-lifecycle.js';
 import { readInboxEntries } from '../core/inbox.js';
 import { initStore } from '../core/store.js';
 import { decayPass } from '../core/decay.js';
 import { tryProjectLock } from '../core/lock.js';
 import { claimJob, completeJob } from '../core/queue.js';
-import { estimateTokens } from '../core/tokens.js';
+import { estimateTokens, MAINTENANCE_ALLOWANCE_TOKENS } from '../core/tokens.js';
+import { truncateToTokens } from '../core/injection.js';
 import {
-  applyDistillJob,
+  applyDistillJobResult,
   buildScopeInjection,
-  finalizePendingSessions,
   inboxBytes,
-  scopePaths,
-  storeExists,
   skillRef,
-  storeIsUnpopulated,
 } from '../core/capture.js';
 import type { Host } from '../core/host.js';
+import { scopePaths, storeExists, storeIsUnpopulated } from '../core/wiki.js';
 
 /** Maintenance-line allowance (U4 / spec gap 14): 2 lines, ~150 tokens. */
 const MAX_MAINTENANCE_LINES = 2;
@@ -36,10 +36,8 @@ const MAX_MAINTENANCE_LINES = 2;
 /**
  * Run the best-effort lane. Every step yields rather than waits (A16).
  *
- * Pending finalization goes first, ahead of both the queue drain and the state sweep,
- * which would otherwise be free to delete a pending session's state before anyone read it
- * (issue #24). The drain claims `queue.claims_per_start` jobs — 1 by default — so a
- * session finalized here normally has its delta applied at the *next* start, not this one.
+ * The lifecycle module recovers pending tails before sweeping their state (issue #24).
+ * The queue drain claims at most `queue.claims_per_start` jobs — 1 by default.
  *
  * @returns number of abandoned sessions finalized
  */
@@ -49,33 +47,43 @@ function maintenance(
   host: Host,
   config: MehmoryConfig
 ): number {
-  const finalized = finalizePendingSessions(sessionId, project, host, config);
+  const { finalized } = maintainSessions(sessionId, project, host, config);
 
-  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir));
+  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
 
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob('distill-final');
     if (!job) break;
-    applyDistillJob(job.data, config);
-    completeJob(job.id);
+    try {
+      const result = applyDistillJobResult(job.data, config);
+      if (result.failed === 0) completeJob(job.id, job.claimFile);
+    } catch (err) {
+      logError({
+        code: 'E_QUEUE_CLAIM',
+        kind: 'informational',
+        what: err instanceof Error ? err.message : String(err),
+        consequence: 'The queued job remains for stale recovery',
+      });
+    }
   }
 
-  sweepSessionState();
   return finalized;
 }
 
 runHook('SessionStart', (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  if (!config.hooks.session_start.enabled) return {};
+
+  if (isPaused(input.session_id)) return {};
 
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
 
   // Priority order is fixed: warning > compact notice > nudge > init notice.
   const candidates: string[] = [];
-  const warning = pendingWarnings()[0];
+  const warning = pendingWarnings(1)[0];
   if (warning !== undefined) candidates.push(`mehmory: ${warning}`);
   // Every maintenance line names a skill, and how a skill is invoked is harness-specific
   // — a Codex user has no slash commands to run (F3-4).
@@ -94,8 +102,19 @@ runHook('SessionStart', (input, project, host, config) => {
     );
   }
 
-  const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const selected = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const lines: string[] = [];
+  let remaining = MAINTENANCE_ALLOWANCE_TOKENS;
+  for (const [index, line] of selected.entries()) {
+    // Reserve separators and a share for the next notice, even when a warning is long.
+    const allowance = Math.floor(remaining / (selected.length - index));
+    const text = truncateToTokens(line, allowance - 1).text;
+    lines.push(text);
+    remaining -= estimateTokens(text) + 1;
+  }
   const context = [injection.text, ...lines].filter(Boolean).join('\n');
+  assert(lines.length <= MAX_MAINTENANCE_LINES);
+  assert(estimateTokens(context) <= config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS);
 
   const finalized = maintenance(input.session_id, project, host, config);
 

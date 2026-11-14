@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "bump-minor-pre-major": true,
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "bootstrap-sha": "b5b05bbb1dda197a5a1b47c5bbfbe2bb26a5fbbf",
+  "packages": {
+    ".": {
+      "package-name": "mehmory",
+      "version-file": "VERSION",
+      "extra-files": [
+        { "type": "json", "path": "package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+      ]
+    }
+  }
+}

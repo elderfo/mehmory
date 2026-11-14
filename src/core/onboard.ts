@@ -13,9 +13,9 @@
 
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { listDir, lstat, pathExists, readFile, stat } from './fs.js';
 import { statePath } from './home.js';
-import { failOpen, logError } from './errors.js';
+import { failOpen, logError, shellQuote, type MehmoryError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { appendInboxEntries } from './inbox.js';
 import { atomicWrite, remove } from './fs.js';
@@ -79,7 +79,7 @@ export function claudeProjectsDir(): string {
 
 function isDirectory(path: string): boolean {
   try {
-    return stat(path)?.isDirectory() === true;
+    return lstat(path)?.isSymbolicLink() !== true && stat(path)?.isDirectory() === true;
   } catch {
     return false;
   }
@@ -136,7 +136,7 @@ function sessionsIn(dir: string): readonly TranscriptSession[] {
     let mtime = 0;
     try {
       const info = stat(file);
-      if (info?.isFile() !== true) continue;
+      if (lstat(file)?.isSymbolicLink() || info?.isFile() !== true) continue;
       bytes = Number(info.size);
       mtime = Number(info.mtimeMs);
     } catch {
@@ -223,6 +223,7 @@ export interface OnboardResult {
 
 export type OnboardOutcome =
   | { readonly kind: 'ok'; readonly result: OnboardResult }
+  | { readonly kind: 'failed'; readonly result: OnboardResult; readonly error: MehmoryError }
   /** `--resume` with nothing to resume. */
   | { readonly kind: 'no-state' }
   /** `--resume` under different scope flags than the interrupted run used. */
@@ -357,6 +358,7 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
   let skipped = 0;
   let bytes = 0;
   let cappedByBytes = false;
+  let failed = 0;
 
   for (const session of candidates) {
     if (done.has(session.file)) {
@@ -377,6 +379,8 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
       const written = appendInboxEntries(inboxFile, produced, options.scopeLabel);
       appended += written.appended;
       skipped += written.skipped;
+      failed = written.failed ?? 0;
+      if (failed > 0) break;
     }
     done.add(session.file);
     if (!options.dryRun) writeState({ scope: options.scopeLabel, done: [...done] });
@@ -398,21 +402,32 @@ export function runOnboard(options: OnboardOptions): OnboardOutcome {
     if (pathExists(stubFile)) stub = stubFile;
   }
 
-  if (!options.dryRun) clearState();
+  if (!options.dryRun && !cappedByBytes && failed === 0) clearState();
 
-  return {
-    kind: 'ok',
-    result: {
-      scan,
-      candidates: candidates.length,
-      distilled,
-      alreadyDone,
-      entries,
-      appended,
-      skipped,
-      bytes,
-      cappedByBytes,
-      stub,
-    },
+  const result: OnboardResult = {
+    scan,
+    candidates: candidates.length,
+    distilled,
+    alreadyDone,
+    entries,
+    appended,
+    skipped,
+    bytes,
+    cappedByBytes,
+    stub,
   };
+  if (failed > 0) {
+    return {
+      kind: 'failed',
+      result,
+      error: {
+        code: 'E_APPEND_FAILED',
+        kind: 'actionable',
+        what: `could not append ${String(failed)} entries to ${inboxFile}; the store may be busy, or the inbox path, permissions or disk space may need repair`,
+        consequence: `${String(appended)} entries were appended; progress was saved in ${onboardStateFile()}; retry when the store is available or repaired`,
+        fix: `mehmory onboard --resume ${options.isGlobal ? '--global' : `--project ${shellQuote(options.scopeLabel)}`}`,
+      },
+    };
+  }
+  return { kind: 'ok', result };
 }

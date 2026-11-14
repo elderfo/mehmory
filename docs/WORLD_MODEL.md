@@ -20,6 +20,12 @@ Any error in memory operations returns a fallback (defaults for config, empty fo
 
 All file I/O is mediated through `src/core/fs.ts` so the module dependency graph is controllable and testable. Errors are an exception: errors.ts must be able to log to disk before fs.ts exists, so it has its own bounded append.
 
+The five custom ESLint rules normalize both slash styles and scope filenames relative to
+ESLint's working directory. A3's `test/` exception applies only to the checkout's test
+subtree, not to a checkout whose parent directory is named `test`. A3 and A17 check
+static imports, re-exports, dynamic imports and unshadowed `require` calls, including
+module specifiers written as template literals without expressions.
+
 **Rejected:** Scattered fs calls (defeats the purpose of a fs layer).
 
 ### A4. Format constants are code, not data
@@ -51,10 +57,28 @@ Distill patterns and the error registry are established at run 1 and are a contr
 ### A8. All fail-open bounds are one protocol
 
 A8 defines bounds for fail-open operations in one module so later runs can override them together:
+
 - Log rotation: 5 MB, keeping 1 prior generation
 - Warning rate limit: 1 per hour per error code
 - Lock retry: 50 × 100 ms then proceed lock-free
-- `index.lock` defer: retry 1 × then defer with no queue
+- Lock reclamation: after 30 s only if the owner has exited; after 5 min regardless of
+  owner liveness (`LOCK_MAX_AGE_MS` in `lock.ts`)
+- Reclaim guard abandonment: after 30 s (`LOCK_STALE_MS`); a guard serializes the file
+  identity/owner recheck and unlink, and abandoned guards use the same guarded protocol
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
+
+**Lock age-cap decision.** A PID can be reused after its original owner exits, so a liveness
+probe alone could protect an abandoned lock forever. The five-minute cap deliberately favors
+recovery over indefinite exclusivity: a live critical section longer than five minutes, such
+as a huge `purge --export`, can lose exclusivity to a reclaimer. A live owner younger than or
+exactly at the cap is protected. Release checks the owner token so a superseded holder does
+not normally remove its successor's lock. Reclaim guards are short-lived, not renewed leases;
+a guard holder stalled beyond the 30-second abandonment bound can likewise be superseded.
 
 **Rejected:** Hardcoded bounds (scattered magic numbers make overrides fragile).
 
@@ -74,6 +98,10 @@ Exported functions from `src/core/` are synchronous. No Promises, no async/await
 
 Exported functions return values or typed errors via `MehmoryError`. `process.exit()` and `process.abort()` are banned in `src/core/` by ESLint rule. This makes A2's fail-open promise enforceable rather than aspirational—a library that can exit can kill the user's session.
 
+The lint rule also rejects exit/abort access through identifiers initialized from
+`process` or `globalThis.process`, declaration and assignment destructuring, and
+computed property keys written as template literals without expressions.
+
 **Rejected:** Exit on unrecoverable (there is no error worth killing a user's session over).
 
 ---
@@ -88,7 +116,7 @@ These items resolve findings from the spec-stage and plan-stage design reviews:
 
 3. **`index.lock` defer bound.** Retry once after 100 ms; then leave staged and return `deferred: true`. The next `commitPaths` commits accumulated paths—bounded because deferral accumulates no queue.
 
-4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; stale claims reclaimable by mtime; 3 failed claims → `queue/failed/`.
+4. **Queue claim protocol.** Claim by atomic `rename()` into `queue/claimed/`; new claims carry their claim time in the rename destination; legacy claims remain reclaimable by mtime; 3 failed claims → `queue/failed/`.
 
 5. **Concurrent-session decay race.** Index rewrites and decay run under `withProjectLock`; lock acquisition is itself fail-open after bounded wait.
 
@@ -135,11 +163,53 @@ gets the same deduplication without a dispatch layer).
 
 ### A13. Capture state is session-scoped
 
-One `.state/<session-id>.json` per session holds the transcript cursor, the Stop counter,
-the topic cache, the cached project key, and the pause flag. This **amends run 1's global
+One `.state/<sha256(session-id)>.json` per session holds the transcript cursor, the Stop
+counter, the topic cache, the project key and agent the session ran under, the generation
+(which run of a reused session id this is), and the pause flag. `./core/session-lifecycle`
+owns opening/observing, origin recording, resumption, finalization and ordered recovery/sweep.
+Its `openSession` records origin and resumes before recording a SessionStart origin;
+`observeSession` holds one loaded state across a mutation, and `finalizeSession` uses that
+same snapshot for generation, pause, delta cursor and retirement. Marker files and generation
+transitions are private; `./core/session` retains the cursor/counter/topic/pause value helpers,
+and `./core/session-state` holds their shared types and fresh defaults.
+The former `setCachedProjectKey` export is removed. The project key is recorded as the
+session's origin rather than cached for speed: a deferred finalize runs inside another
+session's hook, so this file is the only surviving record of which project the transcript
+belongs to. This **amends run 1's global
 `cursor.json` contract** (run-2 amendment 2); the global-cursor API is removed rather
 than kept alongside — one way to do it, and nothing shipped consumes it yet, so the break
 is free now and expensive after run 3.
+
+Capture holds the session lock across reading a delta and its durable append or enqueue.
+The cursor advances only after every append succeeds (dedup skips count as success) or the
+final-delta job is enqueued; failure leaves the delta and Stop counter available for retry.
+`distillDelta` is a preview and does not advance the cursor by itself. Read-only pause and
+topic gates use lock-free `inspectSession` snapshots, so contention never substitutes a fresh,
+unpaused state. Only inbox-tx requests a locked availability probe before its locked mutation.
+Callback failures in `observeSession` use the caller's operation error code; state I/O keeps
+`E_SESSION_STATE`. Finalization reports `E_APPEND_FAILED` on marker-write failure and retains
+its completed capture count with `markerFailed`, not `deferred`: removed state cannot be picked
+up by a later sweep. SessionEnd exposes that outcome as `marker_failed` in stats.jsonl.
+
+Finalized markers block unchanged trailing hooks, not a session's later work. The lifecycle
+module explicitly resumes a SessionStart id before origin recording, clearing a retired
+session's saved pause before injection regardless of transcript timing. `maintainSessions`
+finalizes pending tails before sweeping their state; hook callers cannot invert that order.
+Ordinary capture and mutations also resume it under the session lock when its transcript exists and has grown beyond
+both the saved cursor offset and file size. Only without a real cursor (`file_id` is empty or
+absent) does modification after the marker count instead. An already-present incomplete tail,
+an mtime bump with a real cursor, or truncation is not new activity.
+Both paths restore the marker cursor and increment the generation rather than recreating
+state at offset zero. Markers retain the transcript path and origin so even
+mutations without a hook payload can detect later activity. Activity-detected resumes also
+preserve a session pause. No later activity means no resurrection. Deferred tails use the
+recorded origin agent, never the sweeping
+process's name. An unnamed origin is recorded as null; legacy or invalid names remain
+unattributed instead of being guessed.
+
+Stop nudges only at the first threshold crossing. A failed append leaves the cursor and
+counter intact, gets one immediate silent retry, then at most one silent retry per threshold
+window; persistent failure is reported once after that immediate retry.
 
 **Rejected:** Global cursor (spec blocker: interleaved sessions reset each other into a
 full re-distill); separate files per concern (`cursor.<id>`, `topics.<id>`, … — N files
@@ -159,7 +229,17 @@ human-readable-markdown premise, which is the product).
 ### A15. Transactional mutations from skills go through a bundled helper, never raw model edits
 
 `hooks/inbox-tx.mjs` wraps the inbox primitives; `integrate` and `remember` invoke it via
-Bash. It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
+Bash. `pause` and `resume` also use the helper with the session id from the `session: <id>`
+line inside SessionStart's `<mehmory-memory>` frame; the line takes a share of the memory
+budget. All six skills use that id to read `.state/<sha256(session-id)>.json`; recency is
+only a legacy project hint requiring user confirmation, never proof of session identity.
+When only that session's `.finalized.json` marker exists, skills read `project_key` and `host`
+from it; it records the same session retired by the idle sweep.
+The helper changes the flag under the session lock, not through raw state edits. The CLI
+`mehmory inbox-tx` shares these operations. A failed append is an error, including partial
+failure: retrying the same entries dedups those already written.
+
+It lives beside the hook bundles deliberately — `hooks.json` is the hook registry,
 the directory is not — but it is **not a hook**: it reports failures via stderr and a
 non-zero exit like the CLI it prefigures, and is exempt from the U2 no-stderr rule.
 
@@ -176,6 +256,16 @@ Injection, pointers and capture must complete. Decay, queue claims and sweeps ru
 when uncontended (first-attempt lock, ≤1 job) and skip silently otherwise — the next
 session retries.
 
+Atomic replacements fsync the temporary file before rename and the containing directory
+best-effort afterward. Budget approximately 1–2 ms per write on SSD, more on network or
+WSL mounts. Git add/commit/diff belong to SessionEnd, purge, or maintenance, not the
+response lane, so their 10 s timeout is deliberately larger than cheap read probes.
+Store git calls strip repository-location and pathspec-mode environment overrides,
+disable hooks and fsmonitor, suppress signature display in history reads, and use
+`LC_ALL=C`; discovery ceilings are retained.
+Project-identity reads retain the caller's repository environment because they name the
+user's repo rather than the store, but remain bounded by the cheap-probe timeout.
+
 **Rejected:** Maintenance on the response path (the spec's own bounds compose to a 5 s
 lock wait inside a <1 s budget); a background daemon (nothing in v1 owns a resident
 process, and the durable queue exists precisely so short-lived processes can hand work
@@ -191,7 +281,12 @@ protocol family. A8's bound list now reads:
 - Lock retry (default lane): 50 × 100 ms then proceed lock-free
 - **Lock retry (hook-maintenance lane): 1 attempt, then skip and defer to the next
   session** — the injection path must never sit inside a retry loop
-- `index.lock` defer: retry 1 × then defer with no queue
+- Git cheap read probes (`rev-parse`, project-identity config reads): 500 ms, SIGTERM
+- Git add/commit/diff/init/config/status/log: 10 s, SIGTERM; git cleans up its own lock,
+  mehmory never deletes `index.lock` and logs the safe manual remedy on timeout
+- `index.lock` defer: retry 1 × then defer with no queue; locks older than 30 s trigger
+  the existing rate-limited warning with the manual remedy
+- Store git >= 2.37: `core.fsmonitor=false` is a boolean disabling fsmonitor
 
 **WORLD_MODEL check.** A12 upholds A1/A3/A9/A11/U2; A13 amends the run-1 cursor contract
 (named amendment, raised at the gate); A14 extends A4; A15 upholds A2/A6; A16 upholds A2
@@ -208,6 +303,7 @@ including the three that change previously fixed contracts and were approved as 
 the gate: **2** (session-scoped capture state; global-cursor API removed), **10**
 (UserPromptSubmit budget restated as <100 ms in-hook / <300 ms end-to-end) and **14**
 (maintenance token allowance: ≤2 lines, 150 tokens, combined injection asserted ≤950).
+`injection.budget_tokens` includes the memory frame's framing; maintenance retains its separate 150-token allowance.
 
 Items 25–28 were discovered during implementation and are recorded here in full:
 
@@ -239,8 +335,8 @@ Established in run 3 (CLI, search, docs, CI). Binding on run 4.
 `src/cli/` owns argument parsing, exit codes, stdout/stderr and the `--json` envelope;
 every behavior lives in `src/core|schema|distill`. Extends A12 to the run's second
 consumer, upholding A1. The core's `no-process-exit` and `no-stderr` rules gate on
-`filename.includes('src/core/')` (`eslint-rules/index.js`), so the CLI needs no rule
-change to exit or write stderr; a new import-boundary rule (`custom/no-cli-imports`)
+normalized, checkout-relative `src/core/` paths (`eslint-rules/index.js`), so the CLI
+needs no rule change to exit or write stderr; an import-boundary rule (`custom/no-cli-imports`)
 keeps the dependency edge from inverting — `src/core/**` and `src/hooks/**` may never
 import `src/cli/**`.
 
@@ -250,9 +346,10 @@ beside `inbox-tx.ts` (that file is a skill helper, not a user-facing binary).
 
 ### A18. Search is one scan over pages + archive + log; there is no index
 
-`src/core/search.ts` extends the landed matcher (`match.ts`) rather than adding a second
-retrieval path. `matchPages()` keeps its existing signature and scope for the
-`UserPromptSubmit` hook.
+`src/core/wiki.ts` owns scope layout, lazy page/index reads and the project/global
+fallback rule. `matchPages()` ranks its live pages for `UserPromptSubmit`;
+`src/core/search.ts` extends the same scoring (`match.ts`) to archive pages and the log.
+The former disk-reading matcher signature is replaced by in-memory wiki pages.
 
 **Rejected:** FTS5 with a SQLite index (the spec's own original choice, declined at the
 gate) — the degraded grep fallback would have had to exist regardless and `matchPages`
@@ -324,8 +421,8 @@ existing `fs.ts` surface); A18 upholds A2/A3/A9/A16 — with FTS dropped there i
 outside `fs.ts` and no sync/async question; A19 upholds A2; A20 is a **named, narrow
 exception** to A4, recorded as such; A21 upholds A2 and A9; A22 upholds A4 (the
 multipliers and the staleness predicate live in `schema/format.ts`, the format authority)
-and A21 (`archive_days` is threaded in from the caller's config, never read inside
-`match.ts` or `search.ts`). A11 is unthreatened: scoped to core by its own text.
+and A21 (`archive_days` is threaded into `wiki.ts` from the caller's config, never
+loaded inside the reader or the scorers). A11 is unthreatened: scoped to core by its own text.
 
 **Amendment to A6.** `initStore()`'s owned layout grows: it now also creates, when
 absent, `~/.mehmory/.gitignore` (containing `.state/`) and an **empty** `{}`
@@ -334,7 +431,7 @@ the layout it owns just grows by two files.
 
 **Note on A12's enforcement claim.** A12 (run 2) states the eslint boundary rules
 `no-exported-promise`, `no-process-exit`, and `no-stderr` "extend to `src/hooks/`." In
-practice, all three gate on `filename.includes('src/core/')` in
+practice, all three gate on normalized, checkout-relative `src/core/` paths in
 `eslint-rules/index.js` and **never fire in `src/hooks/`** — only the
 `fs`/`no-cli-imports` boundary rules genuinely extend there. Consequently
 `eslint.config.js`'s rule exemption carved out for `inbox-tx.ts` (A15's bundled helper,
@@ -448,3 +545,160 @@ sync with the portable metadata and are not presented as portable Agent Plugins 
 **Rejected:** Removing `.claude-plugin/` and `hooks/` in favor of the portable manifest alone —
 Agent Plugins v1 standardizes skills and MCP servers, while Claude Code still owns its plugin
 manifest and lifecycle-hook conventions.
+
+## Architectural Decisions — Run 5
+
+Established in run 5 (agent scopes). Binding on later run-5 units.
+
+### A27. The agent name is environment-primary; A23 still governs the host
+
+A23 has the host declared as an argument on the hook command and threaded from a single
+core module, with environment detection only as a fallback for a hand-written config. The
+agent name inverts that precedence: `src/core/agent.ts` resolves `MEHMORY_AGENT` first and
+`config.identity.agent` second. Nothing is added to `hooks/hooks.json` and `runHook` gains
+no positional.
+
+The two are not the same kind of fact. A23's reasoning is that mehmory writes both hook
+configurations itself, so it can always declare the host rather than infer it — the wiring
+is mehmory's own. mehmory does not launch the agent. The name is a launch-time property of
+a process mehmory does not start and cannot see coming: it does not exist when `init` writes
+the hook configuration, and one `hooks.json` is shared by every agent the machine ever runs,
+so a positional could only ever carry one name. Whoever starts the process is the only party
+that knows which agent it is, and the environment is the channel they already have.
+
+`config.identity.agent` sits underneath as the store-wide default for the single-agent
+machine, which is why it loses to the environment rather than winning: a machine running
+several agents leaves the config key unset and names each process at launch.
+
+**Rejected:** *An `--agent` positional mirroring `--host`* — mehmory would have to know the
+name at install time, when no agent exists yet, and could not vary it per launched process.
+*Detecting the agent* — there is nothing to detect; no agent announces what it is, and
+guessing from the host is precisely the conflation (several agents resolving to one
+`claude-code`) that agent scopes exist to undo.
+
+**WORLD_MODEL check.** Narrows A23 to the host rather than overturning it — the host stays
+declared and threaded — and upholds A21: config still arrives as a parameter, and the
+environment is read once at the resolution site the way `mehmoryHome()` reads
+`MEHMORY_HOME`.
+
+### A28. A Codex install is not live until Codex trusts it, so `doctor` reads the trust state
+
+Codex refuses to run a registered hook until the user has reviewed and approved it, and
+records that decision in `config.toml` under
+`[hooks.state."<hooks.json>:<event>:<group>:<index>"]`. An unreviewed hook is skipped in
+silence: nothing in the session, nothing in `codex exec` output, nothing anywhere mehmory
+can see. Measured against Codex CLI 0.153.4 — sentinel hooks on every event fired zero
+times, and only `--dangerously-bypass-hook-trust` made them run.
+
+So `mehmory init --host codex` writing both files correctly is not the same as mehmory
+working, and every check `doctor` had could pass on an install that had never captured a
+single event (issue #39). `doctor` gains `codex.hooks_trust`, which reads those keys back,
+and `init` says the review is outstanding rather than reporting plain success.
+
+The check is presence-only. mehmory cannot recompute Codex's `trusted_hash`, so it detects
+the install that was never reviewed and not the approval that went stale when an upgrade
+moved the bundle path. Presence is what the reported failure is made of, and a check that
+diagnoses the common case honestly beats one that guesses at the hash and is wrong.
+
+The same measurement retired the exclusion behind A22's Codex hook set: Codex fires
+`SessionEnd` now, with the payload Claude Code sends, so it is wired like every other
+event. Deferred finalization stays exactly as it is — it is still the only route for a
+session whose end-hook never ran, on either harness — but it is no longer the *only* route
+Codex has.
+
+**Rejected:** *Writing `trusted_hash` from `init`* — it is a security control, forging it
+would defeat the review Codex added on purpose, and the hash algorithm is not mehmory's to
+depend on. *Warning unconditionally after install* — it would keep firing at users who
+approved the hooks months ago, which is how a real warning gets ignored.
+
+**WORLD_MODEL check.** Upholds A2 (the probe never throws; an unreadable `config.toml`
+reads as unknown) and A21 (the trust state arrives through the existing `CodexProbe`
+parameter rather than being read ambiently at the check site).
+
+### A29. Pi is a host through a Pi package whose extension is the hook runner
+
+Pi (`@earendil-works/pi-coding-agent`, measured against 0.87.1) has no command-hook
+configuration to write into. It loads extensions in-process and installs packages from git.
+So the repository is also a Pi package: `package.json`'s `pi` manifest names
+`hooks/pi-extension.mjs` and `skills/`, and `pi install git:github.com/elderfo/mehmory`
+brings both. `init --host pi` writes nothing into Pi; the package manager owns the install.
+
+The extension is Pi's `hooks.json`, not a second implementation. It maps Pi lifecycle events
+onto the same five bundles, spawned with `node` and `pi` as the host argument (A12, A23),
+and maps their stdout back into Pi results. Everything host-specific below it is one row in
+a per-host table: the reader (`readPiSession`), the approved transcript root
+(`PI_CODING_AGENT_SESSION_DIR`, else `sessions/` under `PI_CODING_AGENT_DIR`, default
+`~/.pi/agent`), the skill wording (`/skill:<name>`), and the Stop nudge shape.
+
+Three event choices are forced by measurement, not taste:
+
+- **Injection rides `before_agent_start`, not `session_start`.** Pi creates the session file
+  lazily and has no prompt at `session_start`, so there is nothing to attach a message to.
+  SessionStart output is held and joined to the first prompt's UserPromptSubmit output as
+  one hidden `custom_message`, which Pi persists and the model sees that turn. `session_compact`
+  re-queues it, because compaction dropped the earlier one. A `reload` runs nothing: the
+  session and its injection are already there.
+- **`agent_before_settle` is the Stop block.** Returning a `custom_message` entry with
+  `continue: true` re-invokes the model once, and the next settle carries the extension's
+  own loop guard as `stop_hook_active`. Only a `completed` outcome counts. The nudge carries
+  the literal `inbox-tx` command as Codex's does, since Pi's model cannot type a slash
+  command either, but in the `additionalContext` shape the extension turns into a message.
+- **The session file is complete by the time settle and shutdown fire**, so Stop and
+  SessionEnd read the same file Pi is writing, from the same cursor, like every other host.
+
+Pi's session file is a tree (`parentId`), and the reader reads every branch, abandoned ones
+included. Mehmory's own `custom_message` entries are never records, and a `/skill:` expansion
+is reduced to what the user typed after it, so a SKILL.md body is never filed as a user
+decision.
+
+**Rejected:** *Running the hook bodies in-process inside the extension* — a second
+implementation of every hook, and it would inherit Pi's runtime (possibly bun) instead of the
+Node the bundles are built for. *Injecting from `session_start`* — measured: the file does
+not exist yet and there is no turn to carry a message. *Walking `parentId` to read only the
+live branch* — correct but not yet worth it; an abandoned branch's decisions were still said.
+
+**WORLD_MODEL check.** Upholds A2 (every extension failure, including a missing `node`, is
+silence), A7 (one normalized record type; the tree is a parse detail below `readSession`),
+A12 and A23 (thin adapters, host declared as an argument), and A25 (the extension is a
+committed bundle under `hooks/`, covered by the same drift gate).
+
+### A30. `MEHMORY_ACTIVE_HOST` names the one harness that runs mehmory in a process tree
+
+A harness can run inside another. Pi's claude-bridge provider launches a nested Claude Code
+session with Pi's environment, so with the Pi extension and the Claude Code plugin both
+installed, one conversation was captured twice: by Pi as `host=pi`, and by the nested session
+as `host=claude-code`, which also filed Pi's injected `<mehmory-memory>` frame because it
+arrives inside the prompt. `hosts.<host>.enabled` could not fix that. It is store-wide, so
+turning `claude-code` off there silences a standalone Claude Code too.
+
+The environment is the channel that follows the nesting. `MEHMORY_ACTIVE_HOST` holds a member
+of `INBOX_HOSTS`, or `none`. `runHook` reads it once, resolves it with `resolveActiveHost` in
+`src/core/host.ts`, and skips the body for any other host exactly as it skips a disabled one:
+stdin is read only to resolve the project for the stats line, then no capture, no injection,
+the normal no-op output. The stats line records `suppressed: 'active_host'` (a disabled host
+records `host_disabled`) under that project, so `mehmory stats` can explain an empty inbox.
+
+Unset or empty means no restriction. So does an unrecognized value, the typo tolerance
+`resolveHost` already gives the host argument: a misspelling must never silently disable
+capture. `none` disables mehmory on every host, for one launch.
+
+The Pi extension sets `MEHMORY_ACTIVE_HOST=pi` in its factory when the variable is unset or
+empty, and keeps any value the user exported. Its own hook spawns inherit `pi` and pass. So
+does every other descendant of that Pi process: a `claude` started from Pi's bash tool is
+silenced too. `MEHMORY_ACTIVE_HOST=claude-code pi …` prefers the nested capture instead.
+
+This gates and nothing else. Which host an invocation *is* stays declared by its hook argument
+(A23); the variable only decides whether that host may run. Explicit skill-driven writes
+(`hooks/inbox-tx.mjs`, `mehmory inbox-tx`) are not gated. They are user intent, not ambient
+capture, and a user who asks to remember something in a nested session gets it filed.
+
+**Rejected:** *Detecting nesting* (a parent-process probe, or a provider-specific variable) —
+it would recognize one bridge and miss the next, where a declared variable covers any launcher
+that passes its environment on. *Turning `hosts.claude-code.enabled` off from the extension* —
+the config is store-wide and persistent, and would outlive the Pi session. *Gating
+`inbox-tx`* — it would throw away a write the user asked for.
+
+**WORLD_MODEL check.** Upholds A2 (an unusable value degrades to no restriction), A21 (the
+environment is read once at the `runHook` boundary and the resolved value is threaded to the
+gate), and A23 (the host is still declared, never inferred from this variable). Mirrors A27
+in reading a launch-time fact from the environment, because only the launcher knows it.

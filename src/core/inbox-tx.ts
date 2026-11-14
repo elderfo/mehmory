@@ -11,6 +11,8 @@
  *   append   {inbox, key, host?, entries:[{text, src}]}  -> {appended, skipped}
  *   snapshot {inbox, key}                                -> {snapshotId, entries}
  *   clear    {inbox, key, snapshotId}                    -> {removed}
+ *   pause    {session_id}                                -> {session_id, paused:true}
+ *   resume   {session_id}                                -> {session_id, paused:false}
  *
  * `snapshot` persists the snapshotted id list under `<MEHMORY_HOME>/.state/`; `clear`
  * removes exactly those ids and deletes the snapshot file. Entries appended between the
@@ -19,12 +21,16 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { currentAgentName } from './agent.js';
 import { type MehmoryConfig } from './config.js';
-import { statePath } from './home.js';
-import { atomicWrite, pathExists, readFile, remove } from './fs.js';
+import { mehmoryHome, statePath } from './home.js';
+import { atomicWrite, lstat, pathExists, readFile, realpath, remove } from './fs.js';
 import { appendInboxEntries, clearInboxEntries, readInboxEntries } from './inbox.js';
 import { redact } from './redact.js';
-import { readSessionState } from './session.js';
+import { setPaused } from './session.js';
+import { inspectSession } from './session-lifecycle.js';
+import { isContainedProjectKey } from './identity.js';
 import { INBOX_HOSTS, inboxEntryId, type InboxEntry, type InboxHost } from '../schema/format.js';
 
 /** Thrown for any bad input or unusable state; callers report it and exit non-zero. */
@@ -63,6 +69,57 @@ function snapshotFile(snapshotId: string): string {
   return statePath(`inbox-snapshot.${snapshotId}.json`);
 }
 
+function validateInbox(input: Record<string, unknown>): { inbox: string; key: string } {
+  const inbox = requireString(input, 'inbox');
+  const key = requireString(input, 'key');
+  const home = resolve(mehmoryHome());
+  const candidate = resolve(inbox);
+  const within = (root: string, path: string): boolean => {
+    const suffix = relative(root, path);
+    return suffix === '' || (suffix !== '..' && !suffix.startsWith(`..${sep}`));
+  };
+  if (!within(home, candidate) || basename(candidate) !== 'inbox.md') {
+    throw new TxError('"inbox" must be an inbox.md inside MEHMORY_HOME');
+  }
+
+  try {
+    if (lstat(candidate)?.isSymbolicLink()) {
+      throw new TxError('"inbox" must not be a symlink');
+    }
+  } catch (err) {
+    if (err instanceof TxError) throw err;
+  }
+  const homeReal = realpath(home);
+  const targetReal = realpath(candidate);
+  const parentReal = realpath(dirname(candidate));
+  if (
+    !within(homeReal, targetReal) ||
+    !within(homeReal, parentReal) ||
+    (pathExists(candidate) && targetReal !== candidate)
+  ) {
+    throw new TxError('"inbox" must not resolve outside MEHMORY_HOME');
+  }
+  if (
+    key === 'global' &&
+    candidate !== resolve(home, 'global', 'inbox.md') &&
+    candidate !== resolve(home, 'inbox.md')
+  ) {
+    throw new TxError('"key" does not match "inbox"');
+  }
+  if (key !== 'global') {
+    const projects = resolve(home, 'projects');
+    if (!within(projects, candidate)) throw new TxError('"key" does not match "inbox"');
+    const actual = relative(projects, dirname(candidate)).split(sep).join('/');
+    if (actual !== key || !isContainedProjectKey(key)) {
+      throw new TxError('"key" does not match "inbox"');
+    }
+  }
+  if (!within(homeReal, targetReal)) {
+    throw new TxError('"inbox" must resolve inside MEHMORY_HOME');
+  }
+  return { inbox: candidate, key };
+}
+
 /**
  * The harness to attribute an appended entry to.
  *
@@ -73,7 +130,7 @@ function snapshotFile(snapshotId: string): string {
  *
  * With no `host` declared, the entry's `src` — a session id — is resolved against that
  * session's recorded state, which is the authoritative record of which harness wrote it
- * (`finalizePendingSessions` prefers it over the running host for the same reason). That
+ * (`maintainSessions` prefers it over the running host for the same reason). That
  * keeps a re-appended older entry attributed to the session that produced it rather than
  * to whatever harness is running now. Only when neither is available does the entry go
  * out without a host and pick up the serializer's default.
@@ -87,52 +144,85 @@ function declaredHost(input: Record<string, unknown>): InboxHost | undefined {
   return value as InboxHost;
 }
 
-function doAppend(
-  input: Record<string, unknown>,
-  config: MehmoryConfig
-): Record<string, unknown> {
-  const inbox = requireString(input, 'inbox');
-  const key = requireString(input, 'key');
+/**
+ * Why `agent` has no declared counterpart to `host`.
+ *
+ * `host` accepts a top-level override because a *better* source than the running
+ * process exists: the session that produced the entry recorded its own harness, so a
+ * re-appended entry stays attributed to it. Explicit remember writes name the running
+ * agent, not the agent that previously owned a reused session id. This helper runs
+ * inside that agent's own process, where `MEHMORY_AGENT` is the authoritative answer.
+ *
+ * A declared value is refused rather than ignored, for the same reason an unknown
+ * `host` is refused: `agent=` is the routing decision integrate reads, so a wrong or
+ * silently-dropped one files the memory into the wrong scope permanently, and that is
+ * invisible once written.
+ *
+ * Checked on the payload *and* on every entry: refusing only the top level would leave an
+ * `entries[i].agent` silently dropped and the running agent stamped in its place — the
+ * exact ignored-not-refused outcome this exists to prevent. (`host` differs: it takes a
+ * top-level override because session state is a better source than the running process,
+ * so the two are not one rule.)
+ */
+function rejectDeclaredAgent(input: Record<string, unknown>, where: string): void {
+  if (input['agent'] !== undefined) {
+    throw new TxError(`"agent" cannot be declared${where}; it comes from MEHMORY_AGENT`);
+  }
+}
+
+function doAppend(input: Record<string, unknown>, config: MehmoryConfig): Record<string, unknown> {
+  const { inbox, key } = validateInbox(input);
   const raw = input['entries'];
   if (!Array.isArray(raw)) throw new TxError('"entries" must be an array');
 
   const host = declaredHost(input);
+  rejectDeclaredAgent(input, '');
+  // The running agent, resolved once for the whole append the way `secrets` is: the CLI
+  // and the bundled helper both run in the agent's own process (R1). Without this the
+  // remember path drops the stamp that `distillDelta`/`rememberEntry` set, and integrate
+  // reads a missing `agent=` as "project fact", never as "stamp lost".
+  const agent = currentAgentName(config);
   // Config is threaded from the adapter (A21); `redact` never reads it itself, and one
   // read serves the whole append rather than one per entry (criterion 13).
   const secrets = config.secrets;
   const ts = new Date().toISOString();
   const entries: InboxEntry[] = raw.map((item, i) => {
     const entry = asRecord(item, `entries[${String(i)}]`);
+    rejectDeclaredAgent(entry, ` on entries[${String(i)}]`);
     const text = redact(requireString(entry, 'text'), secrets);
     const src = requireString(entry, 'src');
-    const entryHost = host ?? readSessionState(src).host;
+    if (!/^[A-Za-z0-9._:-]+$/.test(src)) {
+      throw new TxError('"src" contains unsafe comment characters');
+    }
+    const entryHost = host ?? inspectSession(src).state.host;
     return {
       id: inboxEntryId(src + text),
       text,
       src,
       ...(entryHost !== undefined ? { host: entryHost } : {}),
+      ...(agent !== undefined ? { agent } : {}),
       ts,
     };
   });
 
-  return appendInboxEntries(inbox, entries, key);
+  const result = appendInboxEntries(inbox, entries, key);
+  if ((result.failed ?? 0) > 0) throw new TxError('inbox append failed; retry the same entries');
+  return result;
 }
 
 function doSnapshot(input: Record<string, unknown>): Record<string, unknown> {
-  const inbox = requireString(input, 'inbox');
-  requireString(input, 'key');
+  const { inbox, key } = validateInbox(input);
   const entries = readInboxEntries(inbox);
   const snapshotId = randomBytes(8).toString('hex');
   atomicWrite(
     snapshotFile(snapshotId),
-    JSON.stringify({ inbox, ids: entries.map(e => e.id) })
+    JSON.stringify({ inbox, key, ids: entries.map((e) => e.id) })
   );
   return { snapshotId, entries };
 }
 
 function doClear(input: Record<string, unknown>): Record<string, unknown> {
-  const inbox = requireString(input, 'inbox');
-  const key = requireString(input, 'key');
+  const { inbox, key } = validateInbox(input);
   const path = snapshotFile(requireString(input, 'snapshotId'));
   if (!pathExists(path)) throw new TxError('unknown snapshotId (already cleared?)');
 
@@ -140,13 +230,34 @@ function doClear(input: Record<string, unknown>): Record<string, unknown> {
   // TxError as a mis-shaped one, instead of leaking a raw JSON SyntaxError to the skill.
   const stored = parseJsonRecord(readFile(path), 'snapshot file');
   const ids = stored['ids'];
-  if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) {
-    throw new TxError('corrupt snapshot file');
+  if (
+    stored['inbox'] !== inbox ||
+    stored['key'] !== key ||
+    !Array.isArray(ids) ||
+    ids.some((id) => typeof id !== 'string')
+  ) {
+    throw new TxError('snapshot does not match the requested inbox');
   }
 
   const result = clearInboxEntries(inbox, key, ids as string[]);
+  if (result === undefined) throw new TxError('inbox is busy; retry the same snapshot');
   remove(path);
   return result;
+}
+
+function doPause(input: Record<string, unknown>, paused: boolean): Record<string, unknown> {
+  const sessionId = requireString(input, 'session_id');
+  const session = inspectSession(sessionId, { requireAvailable: true });
+  if (!session.available) {
+    throw new TxError('session is busy or finalized; retry after the next turn');
+  }
+  if (sessionId.trim() === '' || (!session.finalized && !session.exists)) {
+    throw new TxError('unknown session_id; use the current live session id');
+  }
+  if (!setPaused(sessionId, paused)) {
+    throw new TxError('session is busy or finalized; retry after the next turn');
+  }
+  return { session_id: sessionId, paused };
 }
 
 /**
@@ -170,7 +281,13 @@ export function runInboxTx(
       return doSnapshot(input);
     case 'clear':
       return doClear(input);
+    case 'pause':
+      return doPause(input, true);
+    case 'resume':
+      return doPause(input, false);
     default:
-      throw new TxError(`unknown subcommand "${subcommand}" (expected append|snapshot|clear)`);
+      throw new TxError(
+        `unknown subcommand "${subcommand}" (expected append|snapshot|clear|pause|resume)`
+      );
   }
 }

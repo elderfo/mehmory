@@ -1,324 +1,55 @@
-/**
- * Session-scoped capture state (A13): one `.state/<session-id>.json` per session.
- *
- * Holds everything a hook needs to know about *this* session and nothing about any
- * other: the transcript cursor, the Stop counter, the topic cache, the resolved
- * project key, and the pause flag. Run 1's global `cursor.json` is gone — two sessions
- * reading different transcripts alternately would see a file_id change on every
- * invocation and reset each other into a full re-distill.
- *
- * Every read is fail-open: unreadable or corrupt state resets to fresh and logs
- * `E_SESSION_STATE`, never throws (A2, A11).
- */
-
-import { join } from 'node:path';
-import { statePath } from './home.js';
-import { atomicWrite, listDir, pathExists, readFile, remove, stat } from './fs.js';
-import { logError } from './errors.js';
-import { advanceCursor, freshCursor, isCursorState, resetCursor, type CursorState } from './cursor.js';
+/** Cursor, Stop counter, topic cache and pause values for one session (A13). */
+import { advanceCursor, resetCursor, type CursorState } from './cursor.js';
 import { jaccard } from './match.js';
 import { loadConfig } from './config.js';
-import { INBOX_HOSTS, type InboxHost } from '../schema/format.js';
+import { observeSession, inspectSession } from './session-lifecycle.js';
+import type { SessionState } from './session-state.js';
 
-/** Cached prompt token set used to skip repeat lookups within a TTL. */
-export interface TopicCache {
-  /** Token set of the last prompt that triggered a lookup. */
-  readonly tokens: readonly string[];
-  /** Epoch ms when it was cached. */
-  readonly ts: number;
-}
-
-/** Everything one session remembers between hook invocations. */
-export interface SessionState {
-  /** The session id this file belongs to (also the sweep marker). */
-  session_id: string;
-  /** Transcript read position for this session. */
-  cursor: CursorState;
-  /** Stop invocations since the last capture. */
-  stop_count: number;
-  /** Last prompt token set + timestamp, for the UserPromptSubmit topic cache. */
-  topic?: TopicCache;
-  /** Resolved project key, cached to keep UserPromptSubmit off the git path. */
-  project_key?: string;
-  /**
-   * Transcript the last hook invocation reported for this session. The cursor stores
-   * file identity, not a path, so without this a session that never reaches SessionEnd
-   * has nothing to re-read at the next session start (issue #24).
-   */
-  transcript_path?: string;
-  /**
-   * Harness that wrote that transcript. Recorded rather than assumed: it selects the
-   * reader *and* stamps the entries, so finalizing a leftover session under whichever
-   * harness happens to start next would both mis-parse and mis-attribute it (issue #20).
-   */
-  host?: InboxHost;
-  /** Session-level capture pause (subtractive only: never re-enables config-off hooks). */
-  paused: boolean;
-}
-
-/** Session ids come from the harness; flattened to characters safe in a filename. */
-function sanitizeSessionId(sessionId: string): string {
-  return sessionId.replace(/[^A-Za-z0-9._-]/g, '_');
-}
-
-/** Path of a session's state file. Session ids are sanitized into a flat filename. */
-export function sessionStatePath(sessionId: string): string {
-  return statePath(`${sanitizeSessionId(sessionId)}.json`);
-}
-
-/** A session that has captured nothing yet. */
-export function freshSessionState(sessionId: string): SessionState {
-  return { session_id: sessionId, cursor: freshCursor(), stop_count: 0, paused: false };
-}
-
-function parseSessionState(raw: string, sessionId: string): SessionState | null {
-  const parsed: unknown = JSON.parse(raw);
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const v = parsed as Record<string, unknown>;
-  if (typeof v['session_id'] !== 'string') return null;
-  if (!isCursorState(v['cursor'])) return null;
-  if (typeof v['stop_count'] !== 'number') return null;
-
-  const topic = v['topic'];
-  let topicCache: TopicCache | undefined;
-  if (typeof topic === 'object' && topic !== null) {
-    const t = topic as Record<string, unknown>;
-    if (Array.isArray(t['tokens']) && typeof t['ts'] === 'number') {
-      topicCache = { tokens: t['tokens'].filter(x => typeof x === 'string'), ts: t['ts'] };
-    }
-  }
-
-  const rawHost = v['host'];
-  const host =
-    typeof rawHost === 'string' && (INBOX_HOSTS as readonly string[]).includes(rawHost)
-      ? (rawHost as InboxHost)
-      : undefined;
-
-  return {
-    session_id: sessionId,
-    cursor: v['cursor'],
-    stop_count: v['stop_count'],
-    ...(topicCache ? { topic: topicCache } : {}),
-    ...(typeof v['project_key'] === 'string' ? { project_key: v['project_key'] } : {}),
-    ...(typeof v['transcript_path'] === 'string' ? { transcript_path: v['transcript_path'] } : {}),
-    ...(host !== undefined ? { host } : {}),
-    paused: v['paused'] === true,
-  };
-}
-
-/**
- * Read a session's state. Missing file → fresh state. Corrupt file → fresh state plus
- * an `errors.log` entry (spec review change 3); the caller cannot tell the difference
- * and does not need to.
- */
-export function readSessionState(sessionId: string): SessionState {
-  const path = sessionStatePath(sessionId);
-  if (!pathExists(path)) return freshSessionState(sessionId);
-
-  try {
-    const state = parseSessionState(readFile(path), sessionId);
-    if (state) return state;
-  } catch {
-    // fall through to the reset below
-  }
-
-  logError({
-    code: 'E_SESSION_STATE',
-    kind: 'informational',
-    what: `session state for ${sessionId} was unreadable or malformed`,
-    consequence: 'Capture state reset to fresh; the transcript may be re-distilled once',
-  });
-  return freshSessionState(sessionId);
-}
-
-/** Persist a session's state atomically. */
-export function writeSessionState(state: SessionState): void {
-  atomicWrite(sessionStatePath(state.session_id), JSON.stringify(state));
-}
-
-/** Read-modify-write a session's state; returns the state that was written. */
-export function updateSessionState(
+function mutateSession(
   sessionId: string,
-  mutate: (_state: SessionState) => SessionState
+  mutate: (state: SessionState) => SessionState
+): SessionState | undefined {
+  const result = observeSession(sessionId, (state) => Object.assign(state, mutate(state)));
+  return result.status === 'observed' ? result.value : undefined;
+}
+
+function mutateOrCurrent(
+  sessionId: string,
+  mutate: (state: SessionState) => SessionState
 ): SessionState {
-  const next = mutate(readSessionState(sessionId));
-  writeSessionState(next);
-  return next;
-}
-
-/** Delete a session's state file (SessionEnd). No-op if it is already gone. */
-export function deleteSessionState(sessionId: string): void {
-  const path = sessionStatePath(sessionId);
-  if (!pathExists(path)) return;
-  try {
-    remove(path);
-  } catch {
-    // Fail-open: a stale file is swept later.
-  }
-}
-
-/**
- * Marker recorded once `finalizeSession` (issue #16) has completed for a session, so a
- * retried or duplicate SessionEnd invocation can tell "already finalized" apart from "a
- * session that never wrote state" — `deleteSessionState` removes the file the marker
- * would otherwise share, so the cursor's absence alone cannot mean "done".
- *
- * Deliberately a top-level `.state/*.json` with a `session_id` field, same shape
- * `sweepSessionState` already looks for: it ages out on the same schedule as ordinary
- * session state without any dedicated sweep code.
- */
-function finalizedMarkerPath(sessionId: string): string {
-  return statePath(`${sanitizeSessionId(sessionId)}.finalized.json`);
-}
-
-/** True once this session's `finalizeSession` call has already run to completion. */
-export function isSessionFinalized(sessionId: string): boolean {
-  return pathExists(finalizedMarkerPath(sessionId));
-}
-
-/** Record that this session's finalization completed, so a retry becomes a no-op. */
-export function markSessionFinalized(sessionId: string): void {
-  atomicWrite(finalizedMarkerPath(sessionId), JSON.stringify({ session_id: sessionId }));
-}
-
-/**
- * Record where this session's material lives, so a session that never reports an end can
- * still be finalized later (issue #24).
- *
- * Every hook payload carries `transcript_path`, and `runHook` already knows the harness,
- * so the cheapest place to learn both is the invocation itself. Written only when
- * something actually changed — the common case is a no-op read.
- */
-export function rememberSessionOrigin(
-  sessionId: string,
-  transcriptPath: string | undefined,
-  host: InboxHost
-): void {
-  if (transcriptPath === undefined || transcriptPath === '') return;
-  const state = readSessionState(sessionId);
-  if (state.transcript_path === transcriptPath && state.host === host) return;
-  writeSessionState({ ...state, transcript_path: transcriptPath, host });
-}
-
-/**
- * How long a session's state must sit untouched before another session's start treats it
- * as abandoned and finalizes it (issue #24).
- *
- * A live session touches its state on every prompt and every Stop, so the window only has
- * to outlast a quiet stretch. Finalizing a session that is merely idle is not data loss —
- * entry ids are stable, so its next capture re-distills and dedups — but it does retire
- * that session early, which is why the window is not tighter.
- *
- * ponytail: fixed constant, not a config knob. Promote it to `session_state` if a real
- * session is ever observed idling past it.
- */
-export const PENDING_FINALIZE_IDLE_MS = 30 * 60 * 1000;
-
-/**
- * Sessions with state on disk, no finalization marker, and nothing left to lose but their
- * transcript delta: the leftovers of a session that crashed, was killed, or ran under a
- * harness with no session-end event at all (Codex).
- *
- * Only states idle for `idleMs` qualify, so a session running concurrently in another
- * terminal is not retired out from under itself. States with no recorded transcript are
- * skipped — there is nothing to distill, and finalizing them would only add a log line
- * and a commit per dead session.
- */
-export function listPendingSessions(idleMs: number = PENDING_FINALIZE_IDLE_MS): SessionState[] {
-  const dir = statePath();
-  if (!pathExists(dir)) return [];
-
-  const cutoff = Date.now() - idleMs;
-  const pending: SessionState[] = [];
-
-  for (const name of listDir(dir)) {
-    // `<id>.finalized.json` is the marker, not state, and parses as neither.
-    if (!name.endsWith('.json') || name.endsWith('.finalized.json')) continue;
-    try {
-      const path = join(dir, name);
-      const mtime = stat(path)?.mtimeMs;
-      if (mtime === undefined || mtime > cutoff) continue;
-
-      const raw = readFile(path);
-      const id: unknown = (JSON.parse(raw) as Record<string, unknown>)['session_id'];
-      if (typeof id !== 'string' || id.trim() === '') continue;
-
-      const state = parseSessionState(raw, id);
-      if (!state || state.transcript_path === undefined) continue;
-      if (isSessionFinalized(id)) continue;
-      pending.push(state);
-    } catch {
-      // Not a session-state file, or it vanished mid-scan: leave it to the sweep.
-    }
-  }
-
-  return pending;
-}
-
-/**
- * Delete session-state files older than `maxAgeDays` (SessionStart maintenance lane).
- * Only files that parse as session state are considered — `.state/` also holds
- * `warnings.json`, locks and logs.
- *
- * @returns number of files deleted
- */
-export function sweepSessionState(maxAgeDays?: number): number {
-  const days = maxAgeDays ?? loadConfig().session_state.max_age_days;
-  const dir = statePath();
-  if (!pathExists(dir)) return 0;
-
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  let deleted = 0;
-
-  for (const name of listDir(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const path = join(dir, name);
-    try {
-      const mtime = stat(path)?.mtimeMs;
-      if (mtime === undefined || mtime > cutoff) continue;
-      const parsed: unknown = JSON.parse(readFile(path));
-      if (typeof parsed !== 'object' || parsed === null) continue;
-      if (typeof (parsed as Record<string, unknown>)['session_id'] !== 'string') continue;
-      remove(path);
-      deleted++;
-    } catch {
-      // Not a session-state file, or vanished mid-sweep: leave it alone.
-    }
-  }
-
-  return deleted;
+  return mutateSession(sessionId, mutate) ?? inspectSession(sessionId).state;
 }
 
 // ─── Cursor ───
 
-/** Advance this session's cursor past a consumed record and persist it. */
+/** Advance this session's cursor, returning undefined when lock contention skips it. */
 export function advanceSessionCursor(
   sessionId: string,
   filepath: string,
   recordHash: string,
   newOffset: number
-): CursorState {
-  return updateSessionState(sessionId, s => ({
+): CursorState | undefined {
+  return mutateSession(sessionId, (s) => ({
     ...s,
     cursor: advanceCursor(s.cursor, filepath, recordHash, newOffset),
-  })).cursor;
+  }))?.cursor;
 }
 
 /** Reset this session's read position to the start of the transcript. */
 export function resetSessionCursor(sessionId: string): CursorState {
-  return updateSessionState(sessionId, s => ({ ...s, cursor: resetCursor(s.cursor) })).cursor;
+  return mutateOrCurrent(sessionId, (s) => ({ ...s, cursor: resetCursor(s.cursor) })).cursor;
 }
 
 // ─── Stop counter ───
 
 /** Increment and return the Stop counter for this session. */
 export function incrementStopCount(sessionId: string): number {
-  return updateSessionState(sessionId, s => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
+  return mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: s.stop_count + 1 })).stop_count;
 }
 
 /** Reset the Stop counter — called on every capture (Stop-threshold or PreCompact). */
 export function resetStopCount(sessionId: string): void {
-  updateSessionState(sessionId, s => ({ ...s, stop_count: 0 }));
+  mutateOrCurrent(sessionId, (s) => ({ ...s, stop_count: 0 }));
 }
 
 // ─── Topic cache ───
@@ -350,22 +81,17 @@ export function rememberTopic(
   tokens: ReadonlySet<string>,
   now: number = Date.now()
 ): void {
-  updateSessionState(sessionId, s => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
+  mutateOrCurrent(sessionId, (s) => ({ ...s, topic: { tokens: [...tokens], ts: now } }));
 }
 
-// ─── Project key cache / pause ───
-
-/** Cache the resolved project key on the session (avoids re-resolving per prompt). */
-export function setCachedProjectKey(sessionId: string, key: string): void {
-  updateSessionState(sessionId, s => ({ ...s, project_key: key }));
-}
+// ─── Pause ───
 
 /** Set or clear the session pause flag. */
-export function setPaused(sessionId: string, paused: boolean): void {
-  updateSessionState(sessionId, s => ({ ...s, paused }));
+export function setPaused(sessionId: string, paused: boolean): boolean {
+  return mutateSession(sessionId, (s) => ({ ...s, paused })) !== undefined;
 }
 
 /** True when this session is paused. */
 export function isPaused(sessionId: string): boolean {
-  return readSessionState(sessionId).paused;
+  return inspectSession(sessionId).state.paused;
 }

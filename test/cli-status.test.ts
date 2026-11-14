@@ -2,11 +2,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir } from './helpers.js';
 import { envelopeOf, runCli } from './cli-fixture.js';
-import { recordWarning } from '../src/core/errors.js';
+import { recordWarning, peekWarnings, pendingWarnings } from '../src/core/errors.js';
 
 function home(): string {
   return process.env.MEHMORY_HOME ?? '';
@@ -59,15 +59,44 @@ describe('mehmory status', () => {
 
   it('counts only real index lines, not every line in index.md', () => {
     const cwd = populated();
-    const data = envelopeOf(runCli(['status', '--json'], { cwd }))['data'] as Record<string, unknown>;
+    const data = envelopeOf(runCli(['status', '--json'], { cwd }))['data'] as Record<
+      string,
+      unknown
+    >;
     expect(data['indexLines']).toBe(2);
     expect(data['pages']).toBe(2);
+  });
+
+  it('counts only readable regular pages, excluding symlinks and markdown directories', () => {
+    const cwd = populated();
+    const dir = join(home(), 'projects', envelopeKey(cwd));
+    symlinkSync(join(dir, 'pages', 'vpn.md'), join(dir, 'pages', 'linked.md'));
+    mkdirSync(join(dir, 'pages', 'directory.md'));
+    mkdirSync(join(dir, 'archive'));
+    writeFileSync(join(dir, 'archive', 'old.md'), '# Old\n');
+    symlinkSync(join(dir, 'archive', 'old.md'), join(dir, 'archive', 'linked.md'));
+    mkdirSync(join(dir, 'archive', 'directory.md'));
+    const data = envelopeOf(runCli(['status', '--json'], { cwd }))['data'] as Record<
+      string,
+      unknown
+    >;
+    expect(data['pages']).toBe(2);
+    expect(data['archived']).toBe(1);
+    rmSync(join(dir, 'pages'), { recursive: true });
+    symlinkSync(join(dir, 'archive'), join(dir, 'pages'));
+    const linked = envelopeOf(runCli(['status', '--json'], { cwd }))['data'] as Record<
+      string,
+      unknown
+    >;
+    expect(linked['pages']).toBe(0);
   });
 
   it('reports the store’s last commit', () => {
     const cwd = populated();
     execFileSync('git', ['-C', home(), 'add', '-A'], { stdio: 'pipe' });
-    execFileSync('git', ['-C', home(), 'commit', '--no-gpg-sign', '-m', 'seeded'], { stdio: 'pipe' });
+    execFileSync('git', ['-C', home(), 'commit', '--no-gpg-sign', '-m', 'seeded'], {
+      stdio: 'pipe',
+    });
     expect(runCli(['status'], { cwd }).stdout).toContain('seeded');
   });
 
@@ -76,7 +105,10 @@ describe('mehmory status', () => {
     // `status` that used it would be the last place the user ever saw the warning.
     const cwd = populated();
     recordWarning('E_GIT_COMMIT');
-    const before = readFileSync(join(home(), '.state', 'warnings.json'), 'utf-8');
+    const before = [
+      `E_GIT_COMMIT (informational, 1 occurrences): see ${join(home(), '.state', 'errors.log')}`,
+    ];
+    expect(peekWarnings()).toEqual(before);
 
     for (let run = 0; run < 2; run++) {
       const result = runCli(['status', '--json'], { cwd });
@@ -85,7 +117,8 @@ describe('mehmory status', () => {
       expect(String((envelope['warnings'] as string[])[0])).toContain('E_GIT_COMMIT');
     }
 
-    expect(readFileSync(join(home(), '.state', 'warnings.json'), 'utf-8')).toBe(before);
+    expect(pendingWarnings()).toEqual(before);
+    expect(peekWarnings()).toEqual([]);
   });
 
   it('exits 2 with a runnable fix when there is no store', () => {

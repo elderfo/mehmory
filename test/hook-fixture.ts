@@ -24,6 +24,13 @@ export type HookName =
 /** Directory the build writes bundles to (repo root is vitest's cwd). */
 export const HOOKS_DIR = join(process.cwd(), 'hooks');
 
+/**
+ * Today's date as a page `updated:` value. Hooks run decay, which archives pages older than
+ * `decay.purge_days`, so a page fixture with a fixed date starts vanishing from pointers once
+ * the calendar passes it. Tests about a page's age pass their own date instead.
+ */
+export const TODAY = new Date().toISOString().slice(0, 10);
+
 /** Result of one hook invocation. */
 export interface HookRun {
   readonly status: number | null;
@@ -35,11 +42,12 @@ export interface HookRun {
  *
  * `args` are extra command-line arguments, e.g. the host argument `hooks.json` passes
  * on every command (`["claude-code"]`) — omit it to exercise the no-argument fallback.
+ * `env` adds variables on top of the hermetic environment.
  */
 export function runHook(
   hook: HookName,
   input: Record<string, unknown>,
-  options: { cwd?: string; args?: readonly string[] } = {}
+  options: { cwd?: string; args?: readonly string[]; env?: Record<string, string> } = {}
 ): HookRun {
   const script = join(HOOKS_DIR, `${hook}.mjs`);
   if (!existsSync(script)) {
@@ -47,7 +55,7 @@ export function runHook(
   }
   const result = spawnSync(process.execPath, [script, ...(options.args ?? [])], {
     input: JSON.stringify(input),
-    env: hermeticEnv(),
+    env: hermeticEnv(options.env),
     encoding: 'utf-8',
     cwd: options.cwd ?? createTempDir('mehmory-hook-cwd'),
   });
@@ -141,8 +149,9 @@ export function writeTranscript(
   records: readonly Record<string, unknown>[],
   sessionId = 'session-a'
 ): string {
-  const dir = createTempDir('mehmory-transcript');
-  const path = join(dir, 'transcript.jsonl');
+  const dir = join(mehmoryHome(), '.state', 'transcripts');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `transcript-${sessionId}.jsonl`);
   const lines = records.map((record, i) =>
     JSON.stringify({
       type: 'message',
@@ -169,7 +178,8 @@ export function writeCodexRollout(
   messages: readonly { text: string; role?: 'user' | 'assistant' }[],
   sessionId = '019fbf44-4f17-7a53-8914-1002bc65fbae'
 ): string {
-  const dir = createTempDir('mehmory-codex-rollout');
+  const dir = join(mehmoryHome(), '.state', 'transcripts');
+  mkdirSync(dir, { recursive: true });
   const path = join(dir, `rollout-${sessionId}.jsonl`);
 
   const lines: string[] = [
@@ -194,6 +204,48 @@ export function writeCodexRollout(
         payload: { type: 'message', role, content: [{ type: 'input_text', text: message.text }] },
       })
     );
+  });
+
+  writeFileSync(path, `${lines.join('\n')}\n`);
+  return path;
+}
+
+/**
+ * Write a Pi session file where a spawned hook's default Pi session root resolves:
+ * `hermeticEnv` sets the child's HOME to MEHMORY_HOME, so `~/.pi/agent/sessions` is
+ * under the temp store. Mirrors the measured shape: a `session` header, then `message`
+ * entries whose user content is a list of text blocks.
+ */
+export function writePiSession(
+  messages: readonly { text: string; role?: 'user' | 'assistant' }[],
+  sessionId = 'dd000000-0000-4000-8000-00000000pi01'
+): string {
+  const dir = join(mehmoryHome(), '.pi', 'agent', 'sessions', '--tmp-project--');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `2026-09-01T10-00-00-000Z_${sessionId}.jsonl`);
+
+  const lines: string[] = [
+    JSON.stringify({
+      type: 'session',
+      version: 3,
+      id: sessionId,
+      timestamp: '2026-09-01T10:00:00.000Z',
+      cwd: '/tmp/project',
+    }),
+  ];
+  let parentId: string | null = null;
+  messages.forEach((message, i) => {
+    const id = `e${String(i).padStart(7, '0')}`;
+    lines.push(
+      JSON.stringify({
+        type: 'message',
+        id,
+        parentId,
+        timestamp: `2026-09-01T10:00:${String(10 + i).padStart(2, '0')}.000Z`,
+        message: { role: message.role ?? 'user', content: [{ type: 'text', text: message.text }] },
+      })
+    );
+    parentId = id;
   });
 
   writeFileSync(path, `${lines.join('\n')}\n`);

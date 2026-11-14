@@ -107,7 +107,10 @@ export function treeDigest(dir: string): string {
       if (name === '.git') continue;
       const path = join(current, name);
       if (statSync(path).isDirectory()) {
-        hash.update(`d:${relative(dir, path)}\n`);
+        // The empty shared locks directory persists, but leaked files still count.
+        if (relative(dir, path) !== join('.state', 'locks')) {
+          hash.update(`d:${relative(dir, path)}\n`);
+        }
         walk(path);
       } else {
         hash.update(`f:${relative(dir, path)}:`);

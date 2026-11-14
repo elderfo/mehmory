@@ -1,42 +1,40 @@
 ---
 name: resume
-description: Turn mehmory capture and injection back on for this session after /mehmory:pause. Use when the user says resume memory, unpause, or start capturing again. Clears one flag under ~/.mehmory/.state (outside the project), so Claude Code may prompt for permission. It never re-enables a hook that was switched off in config.json — that stays the user's explicit choice.
-allowed-tools: Read Edit Bash
+description: Resume mehmory capture and injection after a session pause when the user says resume memory, unpause, or start capturing again. Uses a locked helper to clear the flag under ~/.mehmory/.state (outside the project), so permission may be required. Hooks disabled in config stay disabled.
+allowed-tools: Read Bash
 ---
 
 # Resume
 
-Clear the session pause flag. Nothing else.
+Clear only the pause flag for the explicitly identified current session.
 
-## Mechanism
+1. Read the `session: <id>` line inside the injected `<mehmory-memory>` frame; decode
+   the id if JSON-quoted. It identifies `$HOME_DIR/.state/<sha256(session-id)>.json`
+   (`HOME_DIR` is `${MEHMORY_HOME:-$HOME/.mehmory}`). If unavailable, ask the user for
+   the id; concurrent sessions make recency unsafe.
+   If the frame names a session but only
+   `$HOME_DIR/.state/<sha256(session-id)>.finalized.json` exists, read `project_key` and
+   `host` from that marker; it is the same session retired by the idle sweep.
+2. Pass that exact id as `session_id` in JSON on stdin:
 
-Find this session's state file the same way `pause` did — newest `.state/*.json`
-carrying a `session_id` field:
+   ```bash
+   mehmory inbox-tx resume <<'JSON'
+   {"session_id":"<current session id>"}
+   JSON
+   ```
 
-```bash
-HOME_DIR="${MEHMORY_HOME:-$HOME/.mehmory}"
-STATE=$(grep -l '"session_id"' "$HOME_DIR"/.state/*.json 2>/dev/null \
-  | xargs -r ls -t 2>/dev/null | head -1)
-cat "$STATE"
-```
+   If the CLI is unavailable, use the installed bundle with the same payload and `resume`:
+   - Claude Code: `node "${CLAUDE_PLUGIN_ROOT}/hooks/inbox-tx.mjs" resume`.
+   - Codex: read `${CODEX_HOME:-$HOME/.codex}/hooks.json`; use the `inbox-tx.mjs`
+     sibling of the absolute `session-start.mjs` path in mehmory's `SessionStart` command.
+   - Pi git install: `node "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/elderfo/mehmory/hooks/inbox-tx.mjs" resume`.
+     For a project-local install, the package is under `.pi/git/github.com/elderfo/mehmory/`.
 
-Set `"paused": false` with Edit, leaving `cursor`, `stop_count`, `topic` and
-`project_key` untouched. Confirm which session id you resumed.
+3. Confirm the returned `session_id` and `paused: false` only after exit 0. Report any
+   failure instead of promising capture is enabled. Busy sessions can be retried; for a
+   finalized session, retry after the next turn. This operation unpauses a live session,
+   not a finalized generation. Never edit state files directly.
 
-If `paused` is already `false`, say so — capture was never off — and check the next
-section before promising the user that memory is working.
-
-## What resume must NOT do
-
-Resume is strictly the inverse of pause and nothing more. **Never** edit
-`$HOME_DIR/config.json`, and never flip a `hooks.<name>.enabled` key back to `true`.
-Precedence is subtractive: the session flag only ever disables. A hook disabled in
-config was disabled deliberately, at project or global level, by the user — clearing it
-from inside a session would silently undo a decision made outside it.
-
-If capture still looks dead after resuming, read `config.json` and **tell** the user
-which hooks are disabled there and that they must re-enable them by hand:
-
-```bash
-cat "$HOME_DIR/config.json"
-```
+The helper preserves every other state field under the session lock. It leaves
+`config.json` unchanged: a hook disabled there remains disabled. If memory still looks
+inactive, read the config and tell the user which hooks they must re-enable themselves.

@@ -6,7 +6,6 @@
 import {
   writeFileSync,
   readFileSync,
-  appendFileSync,
   openSync,
   closeSync,
   writeSync,
@@ -14,6 +13,7 @@ import {
   fstatSync,
   existsSync,
   statSync,
+  lstatSync,
   renameSync,
   mkdirSync,
   readdirSync,
@@ -21,6 +21,8 @@ import {
   unlinkSync,
   realpathSync,
   chmodSync,
+  fsyncSync,
+  constants,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { logError, type MehmoryError } from './errors.js';
@@ -77,6 +79,11 @@ export function stat(path: string): ReturnType<typeof statSync> {
   return statSync(path);
 }
 
+/** Get file metadata without following symlinks. */
+export function lstat(path: string): ReturnType<typeof lstatSync> {
+  return lstatSync(path);
+}
+
 /** Read file as UTF-8 string. */
 export function readFile(path: string): string {
   return readFileSync(path, 'utf-8');
@@ -96,6 +103,22 @@ export function readFile(path: string): string {
  */
 export function readFileFrom(path: string, offset: number): string {
   const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const start = offset > 0 ? Math.min(offset, size) : 0;
+    const length = size - start;
+    if (length <= 0) return '';
+    const buf = Buffer.allocUnsafe(length);
+    const read = readSync(fd, buf, 0, length, start);
+    return buf.subarray(0, read).toString('utf-8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Read a regular file without following a symlink at open time. */
+export function readFileFromNoFollow(path: string, offset: number): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const size = fstatSync(fd).size;
     const start = offset > 0 ? Math.min(offset, size) : 0;
@@ -153,12 +176,18 @@ export function listDir(path: string): string[] {
 }
 
 /** Create a lock file exclusively (fails if it already exists). Returns true on success. */
-export function createLockExclusive(path: string): boolean {
+export function createLockExclusive(
+  path: string,
+  owner = '',
+  onError?: (_error: unknown) => void
+): boolean {
   try {
     const fd = openSync(path, 'wx');
+    if (owner !== '') writeSync(fd, owner);
     closeSync(fd);
     return true;
-  } catch {
+  } catch (err) {
+    onError?.(err);
     return false;
   }
 }
@@ -167,7 +196,9 @@ export function createLockExclusive(path: string): boolean {
 
 /**
  * Write contents atomically: write to a temp file in the same directory,
- * then rename into place. Creates parent directories.
+ * then rename into place, replacing a symlink only at the final path component.
+ * A symlinked parent directory still redirects the write; store directories are trusted
+ * as part of the store. Creates parent directories.
  *
  * The rename carries the *temp* file's permissions, so without this the destination's
  * mode is silently replaced by whatever the umask gives — a 0600 file rewritten in place
@@ -181,27 +212,48 @@ export function createLockExclusive(path: string): boolean {
 export function atomicWrite(path: string, contents: string, mode?: number): void {
   const dir = dirname(path);
   mkdir(dir);
-
-  // Write to temp file with random suffix
   const tempPath = path + '.tmp-' + Math.random().toString(36).slice(2, 8);
-  const target = mode ?? existingMode(path);
-  if (target !== undefined) {
-    writeFileSync(tempPath, contents, { encoding: 'utf-8', mode: target });
-    // umask can still mask bits out of the mode passed to writeFileSync,
-    // so force the exact target mode rather than trust the create-time result.
-    chmodSync(tempPath, target);
-  } else {
-    writeFileSync(tempPath, contents, 'utf-8');
+  const targetMode = mode ?? existingMode(path);
+  let created = false;
+  try {
+    const fd = openSync(tempPath, 'wx', targetMode);
+    created = true;
+    try {
+      writeFileSync(fd, contents, 'utf-8');
+      if (targetMode !== undefined) chmodSync(tempPath, targetMode);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tempPath, path);
+    // Some filesystems do not support directory fsync; the replacement still succeeded.
+    try {
+      const directoryFd = openSync(dir, 'r');
+      try {
+        fsyncSync(directoryFd);
+      } finally {
+        closeSync(directoryFd);
+      }
+    } catch {
+      // Best-effort directory durability.
+    }
+  } catch (error) {
+    if (created) {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // Preserve the original write/rename error if cleanup also fails.
+      }
+    }
+    throw error;
   }
-
-  // Atomic rename on POSIX
-  rename(tempPath, path);
 }
 
 /** Permission bits of an existing file, or undefined when it does not exist. */
 function existingMode(path: string): number | undefined {
   try {
-    return statSync(path).mode & 0o777;
+    const info = lstatSync(path);
+    return info.isSymbolicLink() ? undefined : info.mode & 0o777;
   } catch {
     return undefined;
   }
@@ -249,7 +301,15 @@ export function appendRecord(
     try {
       lockPath(key, () => {
         mkdir(dirname(path));
-        appendFileSync(path, escaped + '\n', 'utf-8');
+        const fd = openSync(
+          path,
+          constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+        );
+        try {
+          writeSync(fd, escaped + '\n', null, 'utf-8');
+        } finally {
+          closeSync(fd);
+        }
       });
       return { ok: true };
     } catch (err) {
@@ -259,10 +319,12 @@ export function appendRecord(
     }
   } else {
     // Direct O_APPEND write for atomicity (POSIX guarantee)
-    mkdir(dirname(path));
-
     try {
-      const fd = openSync(path, 'a');
+      mkdir(dirname(path));
+      const fd = openSync(
+        path,
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW
+      );
       try {
         writeSync(fd, escaped + '\n', null, 'utf-8');
       } finally {

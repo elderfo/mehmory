@@ -34,16 +34,27 @@ they include the one you will hit most often.
 
 ## E_CONFIG_PARSE (actionable)
 
-Two consequences, same code:
+Three consequences, same code:
 
 - **`config.json` itself is unparseable.**
   Consequence: *Memory is running on defaults, so your settings are not applied.*
   Fix: `$EDITOR <path to config.json>`.
+- **One or more settings have invalid types, values, or bounds.**
+  Consequence: *Only invalid settings use defaults; valid settings are still applied.*
+  Fix: `$EDITOR <path to config.json>`.
+  The warning lists the invalid paths; other settings and valid project aliases survive.
 - **A `secrets.patterns` entry in your config is not a usable regex.**
   Consequence: *That pattern is skipped; the built-in secret patterns still apply.*
   Fix: `$EDITOR <path to config.json>`.
   Your other settings still load; only the one bad pattern is dropped, and the hardcoded
   secret patterns keep working regardless.
+
+## E_REDACT_FAILED (informational)
+
+Secret filtering encountered an unexpected failure, or the input exceeded 256 KiB of UTF-8
+text. Consequence: *The entire text was redacted.* The caller receives `[REDACTED]` instead
+of unchecked text, and the harness continues. No `Fix:` clause. Neither the input nor an
+exception message is included in this error log.
 
 ## E_STORE_INIT (actionable or informational)
 
@@ -55,21 +66,47 @@ Two consequences, same code:
   No `Fix:` — there's no single runnable command that's right for every cause; check the
   `<what>` text this once, since there's no other lead.
 
-## E_APPEND_FAILED (informational)
+## E_APPEND_FAILED (actionable)
 
 A single-line append to the store (inbox, log, or stats) failed — usually permissions or
 disk space. Consequence: *Record was not appended.* No `Fix:` clause; "check permissions and
 disk space" is prose, not a command, so it's omitted rather than printed as if it were one.
 
-The same code is also raised through `failOpen` by read-shaped operations that fall back
-rather than append (the store summary behind `status` and `doctor`, for one). Those print
-the generic *Operation failed; using fallback* consequence instead, so match on the
-`MEHMORY E_APPEND_FAILED` prefix rather than on the sentence after it.
+Capture append exceptions also use this code, not `E_SESSION_STATE`; their cursor stays available
+for retry. A retirement marker write logs `E_APPEND_FAILED: SessionEnd hook failed: ...` after
+final-delta handling. Its stats retain `captured_entries`, set `marker_failed: true`, and leave
+`deferred: false`: the queued work already landed, but removed state is not pending for a sweep.
+A repeated SessionEnd uses the log's generation tag to avoid duplicating the queued delta or log.
+
+During `mehmory onboard`, an append failure instead returns exit 3 with the partial appended
+count and an actionable `Fix: mehmory onboard --resume ...` command. Progress is retained;
+wait for a busy store's write lock to become available, or repair the named inbox (it must
+be a writable file, not a directory or symlink), permissions or disk-space problem before
+resuming. A byte-capped run also retains progress and names `--resume`, but
+is not an error. Completed sessions are skipped; a partially appended session is retried
+with entry-id deduplication.
+
+## E_STORE_READ (informational)
+
+A store read, directory listing or metadata probe failed. Consequence: _Operation failed;
+using fallback._ `status` and `doctor` use empty or unknown summary values; SessionStart
+keeps the memory it can read even when a pages directory or inbox size probe fails.
+No `Fix:` clause — the raw I/O error identifies the cause, and no single repair fits all
+read failures. A `pages` path that is a file is reported directly by `doctor` as a scope
+error with a command to move it aside and create the expected directory.
+
+## E_INTERNAL (informational)
+
+An unexpected exception escaped to the CLI's catch-all. Consequence: _The command stopped
+before it finished._ Exit 3, with no stack trace. This indicates a bug, not necessarily an
+append failure. The message does not promise rollback: inspect the affected store before
+retrying and report the command and error text. No `Fix:` clause — no single command can
+repair an unknown internal failure.
 
 ## E_ATOMIC_WRITE (informational in practice)
 
-Covers a temp-file-plus-rename write that failed — building the injection frame, or a decay
-pass rewriting `index.md`. Consequence: *Operation failed; using fallback.* The registry
+Covers a temp-file-plus-rename write that failed, such as a decay pass rewriting `index.md`.
+Consequence: *Operation failed; using fallback.* The registry
 marks this code `actionable`, but every current call site routes through the library's
 fail-open wrapper, which always synthesizes an `informational` instance with no invented fix
 (there's no single remedy for "a rewrite failed" that's right in general). No `Fix:` clause
@@ -100,16 +137,31 @@ was not recorded*, *Failed to stage paths; commit aborted*, or *Commit failed; t
 staged for manual recovery*. No `Fix:` clause; `mehmory doctor` flags an uncommitted store so
 you don't have to notice on your own.
 
+Git probes have a 500 ms timeout; add, commit, diff, init, config, status, and log have
+10 s. A timeout sends SIGTERM so git can release its lock. A stale `.git/index.lock`
+left by an interrupted git (especially older builds using SIGKILL) can block every later
+commit. Mehmory never deletes an index lock: neither its age nor its creation during
+our call proves ownership. Timeouts log that the lock is left untouched and include the
+manual remedy. Deferral on a lock older than 30 s also logs that remedy and queues an
+`E_GIT_COMMIT` warning through the existing hourly rate limit; fresh contention is silent.
+If no git process is running, the manual remedy is `rm <store>/.git/index.lock`
+(replace `<store>` with the resolved store home), then retry. A timed-out repository
+probe is reported as a timeout, not a missing repo.
+
+Store operations assume git >= 2.37, which interprets `core.fsmonitor=false` as a boolean
+to disable fsmonitor rather than as the name of an executable hook.
+
 ## E_QUEUE_CLAIM (informational)
 
 A durable job could not be enqueued. Consequence: *Job was not enqueued.* No `Fix:`.
 
 ## E_SESSION_STATE (informational)
 
-Either a session's state file (`.state/<session-id>.json`) was corrupt or unreadable and got
-reset, or a hook ran with no `session_id` at all. Consequence is one of: *Capture state reset
-to fresh; the transcript may be re-distilled once*, or *The invocation was skipped; no session
-state was read or written.* No `Fix:` — both are self-healing.
+Either a session's state file (`.state/<sha256(session-id)>.json`) was corrupt or unreadable and got
+reset, a session state write failed after a capture had already landed (the Stop counter is
+kept, so the next threshold retries), or a hook ran with no `session_id` at all. Consequence is one of: _Capture state reset
+to fresh; the transcript may be re-distilled once_, or _The invocation was skipped; no session
+state was read or written._ No `Fix:` — both are self-healing.
 
 ## E_CURSOR_RESET (informational)
 
@@ -135,18 +187,56 @@ never guessed. No `Fix:`; there's no correct guess to offer.
 
 ## E_PURGE_FAILED (actionable)
 
-`mehmory purge` deleted the target files from the working tree but the commit failed — the
-store is left dirty, with the files already gone. Consequence: *the store is left in a dirty,
-uncommitted state.* Fix: `git -C <resolved store home> commit -a`. This is the one purge
-failure mode with a real remedy: the delete already happened, so re-running `purge` is not
-the fix — committing the pending removal is.
+`mehmory purge` could not export, delete, clear an inbox, or commit its removal. An export
+or baseline failure reports _Nothing was deleted_. A deletion or index rewrite failure
+reports the number of paths and catalog lines deleted before it stopped.
+
+If clearing an inbox fails, earlier inbox clears may already have succeeded. The consequence
+reports the exact deleted/remaining selected-entry counts and _no purge commit was made_.
+Fix: `git -C <resolved store home> status`. Inspect those changes, repair the named inbox or
+wait for its lock to be released, then retry the remaining purge; do not assume the earlier
+clears were rolled back.
+
+If the commit fails after deletion, consequence: _The content is deleted but the store is
+left dirty_. Fix: `git -C <resolved store home> commit -a -m purge`. The files are already
+gone — committing the pending removal, not rerunning the delete, finishes this case.
 
 ## E_CODEX_INSTALL (actionable)
 
-`mehmory init --host codex` could not read or write a file under `$CODEX_HOME`. Consequence:
-*the file was left exactly as it is, so no hook registration was changed.* Fix: `$EDITOR
-<the named file>` when it does not parse, `ls -l <its directory>` when the write itself
-failed.
+`mehmory init --host codex` could not safely edit configuration, install skills, or acquire
+its installation lock. Reasons and stable consequence sentences:
+
+- **Unsupported features shape or unsafe TOML:** _`<file>` was left exactly as it is,
+  so no hook registration was changed._ The refusal names the reason (for example an
+  unterminated multiline string, a non-boolean hooks value, or `[[features]]`, which is
+  an array of tables). Fix: `$EDITOR <file>`; repair the named syntax or use a supported
+  table, dotted boolean key, or single-line boolean inline table. Valid multiline basic
+  (`"""`) and literal (`'''`) strings are supported and preserved, never read as settings.
+  For unreadable or unsupported config, `doctor` says **could not be determined** at
+  **warn** level, not **unset** at error level; running install cannot resolve that warning
+  until the named syntax or read failure is repaired.
+- **Missing hook bundles:** _`<file>` was not modified, so the Codex integration is not in place._
+  Fix: `pnpm build` in a checkout, or reinstall a complete package. No configuration is written.
+- **Missing skill sources or symlinked skills paths:** _no mehmory skill was installed for Codex_
+  for missing sources; _`<path>` was not modified, so the Codex integration is not in place_
+  for unsafe destinations. Restore the shipped sources or replace the skill-path symlink
+  with a real directory. All targets are checked before configuration or backups are written.
+- **Lock contention:** _Codex configuration was not changed._ Retry after the other process
+  finishes; if no installation is running, remove the named `$CODEX_HOME/.mehmory-install.lock`.
+  Failure to create a lock when none exists is an immediate write failure, not contention.
+- **Staged-skill cleanup incomplete:** _Codex integration was removed, but staged skill cleanup is incomplete._
+  Hooks and discoverable skills stay removed. Run the error's `rm -r <staging directory>` fix.
+- **Symlinked configuration targets:** resolved `config.toml` and `hooks.json` symlinks are
+  supported; writes and backups go next to their real targets, including outside `$CODEX_HOME`
+  (for example into a dotfiles repository).
+  A dangling or unresolvable target is refused: _`<path>` was not modified, so the Codex integration is not in place._
+  Repair the link and check target-directory permissions before retrying.
+- **Write failure during uninstall:** _`<path>` was not modified, so the Codex integration was not removed._
+  Fix: `ls -l <its directory>`. The same write failure during install ends with
+  _the Codex integration is not in place_ instead.
+
+Malformed JSON also reports _`<file>` was left exactly as it is, so no hook registration was changed._
+Fix: `$EDITOR <the named file>` when it does not parse, `ls -l <its directory>` when the write itself failed.
 
 The refusal is deliberate. `~/.codex/hooks.json` is shared with every other tool that
 registers a Codex hook, so a file mehmory cannot parse is left alone rather than replaced —
@@ -165,7 +255,11 @@ instead of the uninstall above.
 
 ## E_CODEX_HOOKS_DISABLED (actionable)
 
-Codex's `[features] hooks` flag is `false` or unset in `$CODEX_HOME/config.toml`.
+Codex's `[features] hooks` flag is `false` or unset in readable, supported
+`$CODEX_HOME/config.toml`; `doctor` reports either state at **error** level. An unreadable
+or unsupported config instead produces a **warn** finding saying the flag **could not be determined**,
+without `E_CODEX_HOOKS_DISABLED`. A parsed `true` flag reports **ok**, including when
+unrelated multiline strings are present.
 Consequence: *no hook fires at all* — not mehmory's, and not any other tool's. Fix:
 `mehmory init --host codex`, which turns the flag on without touching the rest of the file.
 
@@ -174,14 +268,29 @@ perfectly registered and still never run, because the flag gates all of them.
 
 ## E_CODEX_HOOKS_UNWIRED (actionable)
 
-`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the four Codex events
-mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`) — or the file
+`$CODEX_HOME/hooks.json` carries no mehmory entry for one or more of the five Codex events
+mehmory captures (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `SessionEnd`)
+— or the file
 does not parse, in which case nothing at all is registered. Consequence: *those events
 capture and inject nothing under Codex.* Fix: `mehmory init --host codex`, or `$EDITOR
 $CODEX_HOME/hooks.json` when `doctor` reports the file as unparseable.
 
 `mehmory doctor` names the specific events that are missing, so a partial wiring — one hook
 hand-deleted, or an install interrupted — reads as such rather than as "not installed".
+
+## E_CODEX_HOOKS_UNTRUSTED (actionable)
+
+Codex will not run a hook it has not been told to trust. It records each decision in
+`config.toml` under `[hooks.state]`, and it skips an unreviewed hook silently: no warning
+in the session, nothing in `codex exec` output, nothing in mehmory's own logs. Every other
+check passes and `stats.jsonl` has no `host=codex` line. Consequence: *mehmory captures
+nothing under Codex, and no surface says why.* Fix: run `codex` and approve the mehmory
+hooks when it asks you to review them.
+
+The check is presence-only. mehmory cannot recompute Codex's `trusted_hash`, so it can
+tell you the review never happened but not that an approval has gone stale after an
+upgrade moved the bundle path. If capture stops after a mehmory upgrade and
+`codex.hooks_trust` is green, start `codex` and look for a second review prompt.
 
 ## E_CODEX_SKILLS_MISSING (actionable)
 
@@ -192,6 +301,20 @@ onboard) are unavailable there. Fix: `mehmory init --host codex`.
 Reported as a **warning**, not an error: the hooks are what capture and inject, and they
 keep working. What you will notice instead is the inbox filling up and never being merged
 into the wiki.
+
+## E_AGENT_NAME_INVALID (actionable)
+
+`MEHMORY_AGENT`, or `identity.agent` in `config.json`, holds a value that cannot be a
+directory name under `agents/`. Consequence: *this agent runs unnamed* — it captures and
+recalls the project and global scopes exactly as before, but gets no agent scope of its own
+and stamps no attribution on what it captures. Fix: set the name to 1-64 characters of
+`[a-z0-9._-]`, not starting with a dot, and not one of `global`, `projects`, `agents`, `all`.
+
+An invalid name is refused rather than rewritten, and does not fall back to the other source:
+a hashed or substituted name would be unreadable, and silently adopting `config.identity.agent`
+after rejecting `MEHMORY_AGENT` would file this agent's memory under a different identity than
+the one it declared. Lowercase only, because `Scout` and `scout` would share one directory on a
+case-insensitive filesystem.
 
 ## CLI-level codes (not in `ERROR_KINDS`)
 
@@ -207,9 +330,10 @@ The command didn't run: an unknown command or flag, wrong arity, a flag missing 
 mutually exclusive forms at once, or a scope selector that matched more than one project.
 Consequence: *The command did not run.* Fix: always a runnable command — usually
 `mehmory <command> --help`, and for an ambiguous purge slug the disambiguated command itself
-(`mehmory purge <slug> --project <key>`). Exit code **1**. This is the code you will see most
-often, and it is the one a script should treat as "I called it wrong", never as "the store is
-broken".
+(`mehmory purge <slug> --project <key>`, `--global`, or `--agent <name>`). Exit code **1**,
+including invalid purge session ids and zero onboard byte caps. This is the code you will
+see most often, and it is the one a script should treat as "I called it wrong", never as
+"the store is broken".
 
 ### E_ABORTED (actionable)
 
@@ -228,6 +352,28 @@ confirmation is two invocations (see `docs/CLI.md` and `docs/PRIVACY.md`).
 `doctor` already prints; the remedy is whatever that finding's `fix` names. They are generated
 from the check list, which is why they are described as a shape here rather than enumerated —
 `mehmory doctor` is the authoritative list, and `docs/CLI.md` documents the checks themselves.
+
+## Not an error: `Stop hook feedback:` in the Claude Code transcript
+
+Once per threshold crossing the Stop hook asks the model to write down what only it knows, and
+Claude Code prints that request into the session log:
+
+```
+● Ran 3 stop hooks
+  ⎿  Stop hook feedback: mehmory: before stopping, append anything durable …
+```
+
+That is the nudge working, not a hook failure. Claude Code has no way to hold a turn open
+silently — a Stop hook that produces no visible output also does not block — so the text is
+always shown. mehmory keeps it as short as the instruction allows and carries it as
+`hookSpecificOutput.additionalContext` rather than `{"decision": "block"}`: both block the turn
+identically, but the block shape renders as `Stop hook error: …` and raises an error toast, which
+this is not.
+
+Codex keeps the `{"decision": "block"}` shape, which is the only one its Stop event accepts.
+
+To stop the nudge entirely, set `hooks.stop.enabled` to `false` in `config.json` — but note that
+the deterministic transcript distill runs in the same threshold branch and goes with it.
 
 ## Not an error: the stop nudge never appears under `codex exec`
 
@@ -248,12 +394,36 @@ the alternatives (writing the nudge to stderr, blocking a run that cannot answer
 be noise or would hang the run. If you want the model's own account of a `codex exec` run, ask
 for it in the prompt — `remember:` works there like anywhere else.
 
-## Not an error: a Codex session is finalized by the *next* session, not by its own end
+## Pi: mehmory does nothing, and says nothing
 
-Codex has no session-end event. Claude Code fires `SessionEnd`, mehmory distills the last
-stretch of the transcript there, and the next `SessionStart` writes it to the inbox. Under Codex
-that first half never happens — nothing tells mehmory the session is over, including when the
-session is over because the terminal was closed or the process was killed.
+The Pi extension runs the hook bundles with `node` from `PATH`, and treats every failure as
+silence so it can never break a Pi session (A2). If `node` is missing from the `PATH` Pi was
+started with, or is older than 22, every hook fails and nothing is injected or captured, with
+no message. Run `node --version` in the same shell you start `pi` from. `mehmory stats` shows
+no `host: pi` invocations when this is the cause.
+
+## Not an error: Claude Code captures nothing when started from Pi
+
+The Pi extension sets `MEHMORY_ACTIVE_HOST=pi` for Pi and every process it starts, so a Claude
+Code session that Pi's provider runs underneath it (claude-bridge, for example) stays quiet
+and one Pi conversation is captured once, as `host=pi`. Before this, the nested session also
+captured it as `host=claude-code` and filed mehmory's own injected frame into the inbox.
+
+The same variable silences a `claude` you start from Pi's bash tool. `mehmory stats`
+shows those invocations as `suppressed (active_host)`. To capture in the nested Claude Code
+instead of Pi, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`. If you exported another
+value yourself, the extension keeps it. See `MEHMORY_ACTIVE_HOST` in `docs/CONFIG.md`.
+
+## Not an error: a session is finalized by the *next* session when its end hook never runs
+
+This is the fallback for any session whose `SessionEnd` mehmory never sees, on either
+harness: a terminal closed, a process killed, or a Codex hook skipped for want of a trust
+decision. It was Codex's only route into the inbox until mehmory started wiring
+`SessionEnd` there, which Codex 0.153.4 fires.
+
+Claude Code fires `SessionEnd`, mehmory distills the last stretch of the transcript there,
+and the next `SessionStart` writes it to the inbox. When no session-end hook runs, that
+first half never happens — nothing tells mehmory the session is over.
 
 So finalization moves to the front of the next session instead. Every hook invocation records
 which transcript the session is reading and which harness is reading it; a session whose state is
@@ -261,8 +431,20 @@ still on disk, has no finalization marker, and has sat untouched for 30 minutes 
 abandoned, and the next `SessionStart` in any project distills its remaining delta, files it,
 logs one `session-end` line, commits, and marks it finalized. The marker is what makes this safe
 to repeat: a session finalized once — by its own `SessionEnd` or by a previous session start —
-is skipped, so nothing is written or committed twice. The 30-minute idle window is what keeps a
-second terminal from retiring a session that is merely quiet.
+is skipped while its transcript is unchanged, so nothing is written or committed twice.
+Both state and transcript must be idle for 30 minutes. A live session can still outwait
+that window. With a real cursor (`file_id` is non-empty), only byte growth beyond both its
+saved offset and size lets the next ordinary hook or mutation resume with a new generation;
+an mtime bump or truncation does not. Without a real cursor, including a fresh cursor with
+`file_id: ''`, only modification after the marker counts. No SessionStart is required, and
+old entries are not replayed.
+
+SessionStart explicitly resumes a retired session, clears its saved pause, and runs injection
+and maintenance whether or not the transcript was touched first. A live session without a
+marker keeps its pause. Skills can read `project_key` and `host` from the named session's
+`.state/<sha256(session-id)>.finalized.json` when its ordinary state file is absent; that marker
+belongs to the same session retired by the idle sweep. If pause/resume cannot change a retired
+session yet, retry after the next turn rather than waiting for another SessionStart.
 
 **Nothing is lost, but it is late.** Material from a Codex session that ended abruptly appears in
 the inbox when the next session starts, not when the session ended. If that session was the last

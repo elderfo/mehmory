@@ -7,13 +7,9 @@
  * shape, so there is nothing to degrade.
  */
 
-import { join } from 'node:path';
-import { storeExists } from '../../core/capture.js';
-import { mehmoryHome } from '../../core/home.js';
-import { listProjects } from '../../core/scopes.js';
+import { listWikiTargets, openScope, storeExists } from '../../core/wiki.js';
 import { searchScope, type SearchHit } from '../../core/search.js';
-import { scopeFiles } from '../../core/status.js';
-import { ARCHIVE_DIR } from '../../schema/format.js';
+
 import { flagInteger, parseFlags } from '../args.js';
 import { EXIT, storeMissing, usageError, type Command } from '../command.js';
 import { SCOPE_FLAGS, scopeLabel, selectScope } from '../scope.js';
@@ -57,10 +53,7 @@ export const command: Command = {
 
     const targets: readonly { readonly label: string; readonly dir: string }[] =
       scope.kind === 'all'
-        ? [
-            { label: 'global', dir: join(mehmoryHome(), 'global') },
-            ...listProjects().map(p => ({ label: p.key, dir: p.dir })),
-          ]
+        ? listWikiTargets()
         : scope.kind === 'global'
           ? [{ label: 'global', dir: scope.dir }]
           : [{ label: scope.key, dir: scope.dir }];
@@ -68,17 +61,8 @@ export const command: Command = {
     const warnings: string[] = [];
     let hits: SearchHit[] = [];
     for (const target of targets) {
-      const files = scopeFiles(target.dir);
-      const scan = searchScope(
-        query,
-        target.label,
-        {
-          pagesDir: files.pagesDir,
-          archiveDir: join(target.dir, ARCHIVE_DIR),
-          logFile: files.logFile,
-        },
-        { staleAfterDays: ctx.config.decay.archive_days }
-      );
+      const wiki = openScope(target.dir, { staleAfterDays: ctx.config.decay.archive_days });
+      const scan = searchScope(query, target.label, wiki);
       hits.push(...scan.hits);
       warnings.push(...scan.warnings);
     }
@@ -97,7 +81,7 @@ export const command: Command = {
       hits.length === 0
         ? [`no hits for \`${query}\` in ${scopeLabel(scope)}`]
         : hits.map(
-            hit =>
+            (hit) =>
               `${hit.path} (${hit.scope})${hit.stale ? ' [stale]' : ''}  score=${String(hit.score)}\n  ${hit.snippet}`
           );
 

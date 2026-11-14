@@ -1,5 +1,5 @@
 ---
-schema_version: "1"
+schema_version: "2"
 ---
 
 # mehmory Schema
@@ -59,7 +59,7 @@ Lines below a `## Archive` heading are pages the mechanical decay pass demoted; 
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed — including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. `\\`, `\n`, `\r`, and `--\>` are escape sequences in entry text (backslash, newline, carriage return, and `-->` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the `remember:` prompt prefix.
@@ -82,7 +82,7 @@ Token estimation uses chars/4 with ±20% tolerance.
 - **Caveman-telegraphic bullets** — short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** — avoid elaborate sentences
 - **Wikilinks** — use `[[page-name]]` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** — user-level facts (preferences, tooling) → `global/`; codebase facts → `projects/<key>/`
+- **Scope rule** — route by what a fact is *about*: user-level facts (preferences, tooling) → `global/`; codebase facts → `projects/<key>/`; an agent's own facts (its style, its non-project knowledge) → `agents/<name>/`. The `agent=` stamp names *whose* scope a self-fact belongs to; it is set on every entry that agent captured, so it never decides *whether* a fact is a self-fact
 
 ## Secret Filter Limitation
 

@@ -8,7 +8,7 @@
 
 import { join, sep } from 'node:path';
 import { mehmoryHome } from './home.js';
-import { listDir, pathExists, stat } from './fs.js';
+import { listDir, lstat, pathExists, stat } from './fs.js';
 import { failOpen } from './errors.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
 
@@ -47,13 +47,13 @@ export function listProjects(): readonly ProjectScope[] {
   return failOpen(
     () => {
       const root = join(mehmoryHome(), 'projects');
-      if (!pathExists(root)) return [];
+      if (!pathExists(root) || lstat(root)?.isSymbolicLink()) return [];
 
       const found: ProjectScope[] = [];
       const walk = (dir: string, segments: readonly string[]): void => {
         for (const name of listDir(dir)) {
           const child = join(dir, name);
-          if (!pathExists(child) || !stat(child)?.isDirectory()) continue;
+          if (lstat(child)?.isSymbolicLink() || !pathExists(child) || !stat(child)?.isDirectory()) continue;
 
           const path = [...segments, name];
           if (pathExists(join(child, 'inbox.md'))) {

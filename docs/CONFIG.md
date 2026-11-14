@@ -4,7 +4,17 @@ mehmory reads `<store home>/config.json`. `mehmory init` writes an **empty** `{}
 a fully-defaulted file — every key below has a real default that applies whether or not you
 set it, and a defaults file on disk would pin every current default forever, silently
 freezing out future default changes. Set only the keys you want to override; `loadConfig()`
-deep-merges your file over the defaults below.
+deep-merges your file over the defaults below. Invalid JSON or a non-object root (including
+an array) uses all defaults. For an object, validation falls back **only for invalid keys**:
+valid siblings, hook/host toggles, and project aliases stay applied. Invalid alias values are
+removed individually, without changing valid aliases. One `E_CONFIG_PARSE` log entry per
+load names the invalid paths, not their values.
+
+Numbers must be finite and non-negative. Entry/byte counts, retry counts, claim counts, and
+`stop.capture_threshold` must be safe integers. `match.jaccard` is in `[0, 1]`,
+`distill.max_loss_percent` in `[0, 100]`, and `log.rotation_size_mb` must be positive.
+`injection.budget_tokens` must be an integer from **1 to 8000** inclusive. Zero remains valid
+for other bounds, including `queue.claims_per_start` (no maintenance claims).
 
 **Store home:** every path in this document is `~/.mehmory` by convention, but the real
 location is `$MEHMORY_HOME` when that environment variable is set. If you've set it, read
@@ -24,15 +34,15 @@ down and the wiki you have a year from now is a different wiki; the effect is in
 the day you change it and unrecoverable afterwards, because the material was never captured.
 Change these deliberately, and prefer to note *why* somewhere your future self will find:
 
-| Key | What a change actually does |
-|---|---|
-| `hooks.*.enabled` | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never *destroys* material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how Codex, which has no session-end event, captures every session's tail. |
-| `hosts.*.enabled` | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` mid-adoption is a silent gap in the record for every Codex session until it is turned back on. |
-| `stop.capture_threshold` | How often mid-session capture fires. Raise it and short sessions stop producing entries at all. |
-| `distill.max_loss_percent` | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss. |
-| `secrets.patterns` / `secrets.whitelist` | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently. |
-| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move. |
-| `injection.budget_tokens` | The always-on context cap. Lowering it truncates what every session starts with. |
+| Key                                       | What a change actually does                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks.*.enabled`                         | Off means that lifecycle event captures or injects **nothing**. A disabled `stop` hook is a session that leaves no trace. `doctor` warns for exactly this reason. Off never _destroys_ material: a disabled `session_end` leaves the session pending, and the next `session_start` finalizes it — which is also how any session whose end-hook never ran — killed, or skipped by Codex for want of a trust decision — captures its tail. |
+| `hosts.*.enabled`                         | Off means that harness captures or injects **nothing**, across every lifecycle event. Turning off `hosts.codex.enabled` (or `hosts.pi.enabled`) mid-adoption is a silent gap in the record for every Codex session until it is turned back on.                                                                                                                                                                                           |
+| `stop.capture_threshold`                  | How often mid-session capture fires. Raise it and short sessions stop producing entries at all.                                                                                                                                                                                                                                                                                                                                          |
+| `distill.max_loss_percent`                | The tolerance for unparseable transcript lines before mehmory admits the pass was lossy. Raising it silences the signal, not the loss.                                                                                                                                                                                                                                                                                                   |
+| `secrets.patterns` / `secrets.whitelist`  | The filter every capture and injection passes through. A wrong whitelist entry is a secret in the store, permanently.                                                                                                                                                                                                                                                                                                                    |
+| `decay.archive_days` / `decay.purge_days` | When a page is demoted in retrieval and when it leaves `pages/` (A22). Nothing is deleted, but retrieval ranking and the shape of `index.md` both move.                                                                                                                                                                                                                                                                                  |
+| `injection.budget_tokens`                 | The always-on context cap. Lowering it truncates what every session starts with.                                                                                                                                                                                                                                                                                                                                                         |
 
 **Preference — safe to tune to taste, reversible, affects only this machine's ergonomics.**
 Get one wrong and you notice immediately, and setting it back undoes the damage:
@@ -49,15 +59,41 @@ content-shaping key changes what mehmory *keeps*. Only one of those is undoable.
 { "injection": { "budget_tokens": 800 } }
 ```
 
-This budget governs **stored memory only**. `SessionStart` also emits a fixed
-`<mehmory-routing>` block of about 80 tokens telling the model how to use that memory
-(follow pointers before grepping, what `(stale)` means, how to capture). It sits outside
-`budget_tokens` on purpose — a large wiki must not crowd out the lines explaining what to
-do with it — and is capped by its own test rather than by this key.
+`budget_tokens` includes the **memory frame's framing**, estimated as characters / 4,
+rounded up: stored memory, `<mehmory-memory>` delimiters, section headers, the
+`session: <id>` metadata line, and the `<mehmory-routing>` block (~75 tokens). The session
+line lets skills identify this session without guessing from state-file recency. Routing is
+reserved on every populated session, however large the store; it is dropped only when the
+budget is so small that keeping it would leave stored content less room than routing itself.
+Framing cost is reserved before allocating that content.
+Closing tags and session ids are never truncated.
 
-- `budget_tokens` — total token budget for `SessionStart`'s injected identity + project +
-  index content. At the default 800, the split is identity 200 / project 200 / index 400;
-  below 800, sub-budgets scale proportionally. **Honored** (`buildInjection`).
+Maintenance notices have a **separate 150-token allowance** (`MAINTENANCE_ALLOWANCE_TOKENS`),
+with at most two lines in priority order: warning, post-compaction notice, integrate nudge,
+onboarding notice. Long lines are truncated to fit, not discarded after claiming a warning;
+unselected warnings remain pending for the next session. SessionStart asserts the combined
+context stays within `budget_tokens + 150`, and `doctor` uses that same KPI threshold
+(default 950). This preserves run-2 amendment 14's maintenance allowance.
+
+- `budget_tokens` — integer from 1 to 8000, default 800. The **remaining content allowance**
+  after framing is split identity / project / index in a 1:1:2 ratio, with flooring remainder
+  assigned to index. **Honored** (`buildInjection`, `buildScopeInjection`, `SessionStart`).
+
+If the budget cannot accommodate content framing, the frame drops content and section
+headers, then the reference-data sentence. The complete `session: <id>` line is kept last,
+whenever its minimal framed form fits. Only below that cost is session metadata omitted.
+The empty frame, `<mehmory-memory></mehmory-memory>`, costs 9 estimated tokens; below 9 the
+memory frame is empty. Maintenance notices can still use their separate allowance.
+
+**The named-agent share.** When the running agent has a name (see `identity.agent` below),
+its own scope is injected too, taking a fourth share of the *same* `budget_tokens` rather
+than adding to it. Its nominal size is identity's, so a named frame's nominal split is
+identity 200 / agent 200 / project 200 / index 400 and every share scales to the
+remaining content allowance against that total of 1000: identity / agent / project / index
+have a 1:1:1:2 ratio after framing is reserved. `budget_tokens` stays a hard cap either way.
+Truncation runs in priority order — index, then project, then the agent share, then identity.
+Identity survives when there is room for content; the minimal session frame has no content.
+Truncation never splits a UTF-16 surrogate pair.
 
 ## `decay`
 
@@ -69,32 +105,40 @@ do with it — and is capped by its own test rather than by this key.
 - `archive_days` — index pages older than this move below the Archive divider. **Also the
   staleness horizon for retrieval** (A22): past it, a page is scored ×0.7 in both
   `matchPages` and `search` and comes back flagged `stale`. Raising this makes retrieval
-  trust old pages for longer; it does not make them disappear either way.
+  trust old pages for longer; it does not make them disappear either way. Only `default`
+  decay pages age mechanically: `evergreen` and `ephemeral` pages are exempt in both
+  decay and retrieval. A missing decay class means `default`.
 - `purge_days` — index pages older than this move into `archive/`. Archived pages stay
   searchable, scored ×0.5 — lower than the staleness demotion, because archival is an
-  explicit act rather than mere drift.
+  explicit act rather than mere drift. Decay refuses symlinked archive directories and
+  any destination whose canonical path escapes the scope, including its exact parent.
 
-  All three **honored** (`decay.ts`, and `archive_days` additionally by `match.ts` /
-  `search.ts`). Neither demotion multiplier is configurable: they are calibration
+  All three **honored** (`decay.ts`, with retrieval's `archive_days` passed into
+  `wiki.ts`). Neither demotion multiplier is configurable: they are calibration
   constants in `schema/format.ts`, and `archive_days` already controls when demotion
-  starts. Nothing is ever excluded from retrieval for age.
+  starts. Nothing is ever excluded from retrieval for age. Both the prompt matcher and
+  CLI search skip symlinked pages and symlinked page directories. Prompt `relevant:`
+  pointers are absolute store paths, including pointers from the global fallback;
+  search results remain scope-relative for CLI attribution. Unreadable retrieval
+  directories yield no hits, status falls back to zero/unknown, and a failing doctor
+  check becomes an error finding rather than aborting the remaining checks.
 
 ## `secrets`
 
 ```json
-{ "secrets": { "patterns": ["/AKIA[0-9A-Z]{16}/", "..."], "whitelist": [] } }
+{ "secrets": { "patterns": [], "whitelist": [] } }
 ```
 
 - `patterns` — extra regexes (as `RegExp.prototype.toString()` strings, e.g. `"/foo/i"`),
-  **additive** to the five built-in patterns baked into `redact.ts` (AWS keys, GitHub
-  tokens, bearer tokens, private-key blocks, `.env`-shaped `KEY=value` lines). **The default
-  value of `patterns` is a literal mirror of those five built-in patterns** — meaning every
-  `redact()` call runs the built-ins *plus* five duplicates of themselves. This is correct
-  (redacting twice changes nothing) but a real, currently-unowned cost: every capture and
-  every injection pays for five redundant regex passes. Changing the default to `[]` is a
-  behavior change nobody has approved this run, so it's recorded here rather than silently
-  fixed.
-- `whitelist` — literal substrings exempt from redaction. **Whitelist semantics are precise
+  default **`[]`**, purely **additive** to the built-in corpus in `redact.ts`. Setting this
+  array, even to `[]`, never removes built-ins. They cover AWS access/temporary keys,
+  GitHub tokens (including fine-grained tokens), Anthropic/OpenAI project keys, Slack tokens,
+  bearer tokens, private-key blocks, credential-bearing URLs (including database and broker
+  schemes), and JSON/YAML/env secret assignments, including quoted `.env` values.
+  Malformed or overly complex user regexes are logged and skipped; built-ins still run.
+  The complexity guard counts `+`, `*`, and brace quantifiers such as `{n,m}`.
+- `whitelist` — literal substrings exempt from redaction, default **`[]`** (there are no
+  implicit exemptions). **Whitelist semantics are precise
   and matter**: an entry exempts a secret match only when the entry **fully contains** that
   match. A partial overlap still redacts — a whitelist entry can never make the built-in
   patterns catch less than they otherwise would. (The first implementation of this run had
@@ -111,8 +155,11 @@ do with it — and is capped by its own test rather than by this key.
 { "stop": { "capture_threshold": 15 } }
 ```
 
-- `capture_threshold` — Stop-hook invocations since the last capture before the next capture
-  + block fires. **Honored** (`src/hooks/stop.ts`, `src/core/capture.ts`).
+- `capture_threshold` — Stop-hook invocations since the last successful capture before the
+  next capture + nudge fires. After an append failure, the delta and counter are retained:
+  one immediate silent retry, then at most one silent retry per threshold window. The nudge
+  fires only on the first crossing; persistent failure is logged once after the immediate
+  retry. **Honored** (`src/hooks/stop.ts`, `src/core/capture.ts`).
 
 ## `hooks`
 
@@ -139,17 +186,20 @@ a hook is found disabled.
 {
   "hosts": {
     "claude-code": { "enabled": true },
-    "codex": { "enabled": true }
+    "codex": { "enabled": true },
+    "pi": { "enabled": true }
   }
 }
 ```
 
-Per-harness on/off switch, so you can adopt the Codex side gradually — turn capture on for one
-harness while leaving the other exactly as it is. Off for a harness means **every** hook that
+Per-harness on/off switch, so you can adopt a new harness gradually — turn capture on for one
+harness while leaving the others exactly as they are. A `config.json` written before a harness
+existed does not list it, and that harness defaults to on: the merge fills the missing key in
+before validation. Off for a harness means **every** hook that
 harness invokes skips capture, injection and pointers entirely: no inbox writes, no context
 injection, nothing recorded beyond the stats line that a hook fired at all. Unlike `hooks.*`,
 which is per lifecycle event, this key is per harness — the two combine, so `hooks.stop.enabled:
-false` still turns Stop off everywhere even if both harnesses are individually on.
+false` still turns Stop off everywhere even if every harness is individually on.
 
 **Honored** (`src/core/hook.ts`) — `runHook()` resolves the invoking harness and checks
 `hosts.<host>.enabled` before reading stdin or calling into the hook body, the same choke point
@@ -171,7 +221,7 @@ through.
 { "session_state": { "max_age_days": 14 } }
 ```
 
-- `max_age_days` — age at which `.state/<session-id>.json` files are swept during
+- `max_age_days` — age at which `.state/<sha256(session-id)>.json` files are swept during
   `SessionStart` maintenance. **Honored** (`src/core/session.ts`).
 
 ## `match`
@@ -189,13 +239,32 @@ through.
 ## `identity`
 
 ```json
-{ "identity": { "aliases": {} } }
+{ "identity": { "aliases": {}, "agent": "" } }
 ```
 
 - `aliases` — maps a project key you no longer want (a split-off or merged repo) to the key
   its memory should resolve to instead. **Honored** (`src/core/identity.ts`,
   `src/core/scopes.ts`) — scope resolution checks aliases before matching a `--project`
   selector.
+- `agent` — the name of the agent running on this machine. A named agent gets a scope of its
+  own at `agents/<name>/` holding what it is — its preferences, its style, its non-project
+  knowledge — captures stamped with that name, and that scope injected at `SessionStart`.
+  Empty (the default) means unnamed: no agent scope, and capture, recall, and on-disk layout
+  are exactly as they were before agent scopes existed. **Honored** (`src/core/agent.ts`,
+  `src/core/capture.ts`).
+
+  The name must be a single path segment matching `[a-z0-9._-]+`, at most 64 characters, and
+  may not be `.`, start with a dot, or be one of the tokens the scope grammar already owns
+  (`global`, `projects`, `agents`, `all`). An invalid name is **refused, never rewritten**:
+  mehmory warns with `E_AGENT_NAME_INVALID` and the agent runs unnamed rather than adopting
+  a mangled identity.
+
+  **`identity.agent` is store-wide, not per process.** It is one value in one
+  `config.json`, so every agent on the machine that reads it resolves to the same name and
+  the same scope. If you run more than one agent here, leave it unset and name each process
+  through the `MEHMORY_AGENT` environment variable at launch instead — that is what the
+  environment variable is for, and it takes precedence over this key when both are set.
+  `mehmory init` never writes an agent name, so having one stays an explicit act.
 
 ## `lock`
 
@@ -209,6 +278,11 @@ through.
   currently changes nothing — the values here describe the built-in behavior but do not
   configure it.
 
+Locks older than 30 seconds are reclaimed when their recorded owner has exited. A live
+owner, including a PID probe returning `EPERM`, retains its lock until the five-minute
+maximum age. Contended retries sleep between attempts. Reclamation rechecks the file's
+identity and owner before removal; release keeps the shared locks directory in place.
+
 ## `queue`
 
 ```json
@@ -220,6 +294,10 @@ through.
 - `max_claims` and `stale_ms` — **not honored.** `src/core/queue.ts` uses its own hardcoded
   `QUEUE_STALE_MS` constant for staleness, and nothing reads `max_claims` at all. Setting
   either currently changes nothing.
+
+New claim filenames include the claim time. Their 30-second stale window starts when a
+worker claims the job, even if it has been pending for hours. Existing claims without a
+timestamp still use their file mtime and remain recoverable.
 
 ## `distill`
 
@@ -264,6 +342,46 @@ Not a `config.json` key — an environment variable that overrides the store's l
 every command and hook. Every path example in this document, and in every other doc in this
 set, should be read relative to `$MEHMORY_HOME` when it's set, not literally `~/.mehmory`.
 
+## `MEHMORY_AGENT`
+
+Not a `config.json` key — the environment variable that names the agent running this
+process. It takes precedence over `identity.agent`, which is the machine-wide default
+underneath it, and it is the only way to give two agents on one machine different names:
+`config.json` is store-wide, so a name set there applies to every process that does not
+override it.
+
+Set it and the agent gets a scope of its own at `~/.mehmory/agents/<name>/`. Leave it
+unset with no `identity.agent` either and the agent runs unnamed — it captures to and
+recalls from the project scope and `global/` exactly as it always has, and no agent scope
+is created for it.
+
+The same value on two different surfaces unifies them: one agent reachable over two
+platforms shares one memory when both sessions declare the same name.
+
+An unusable name is refused rather than repaired, and the agent runs unnamed — see
+`E_AGENT_NAME_INVALID` in `docs/TROUBLESHOOTING.md`.
+
+## `MEHMORY_ACTIVE_HOST`
+
+Not a `config.json` key. The environment variable that names the one harness allowed to run
+mehmory in this process and everything it starts: `claude-code`, `codex`, `pi`, or `none`.
+Every other harness's hooks skip capture, injection and pointers exactly as if
+`hosts.<host>.enabled` were `false`, and record `suppressed: active_host` on their stats line
+(`mehmory stats` in that project counts them). `none` turns mehmory off on every harness for
+one launch.
+
+Unset or empty means no restriction. So does a value that is not one of those four: a typo
+never silently disables capture.
+
+The Pi extension sets it to `pi` when it is unset or empty, so a Claude Code session that a Pi
+provider runs nested inherits it and does not capture the same conversation a second time. It
+reaches every other process Pi starts too, including a `claude` run from Pi's bash tool. To
+prefer the nested capture, start Pi with `MEHMORY_ACTIVE_HOST=claude-code pi`.
+
+It only gates. Which harness a hook runs under is still the host argument on its command
+(`docs/WORLD_MODEL.md` A23, A30). `/mehmory:remember` and `mehmory inbox-tx` are not gated:
+an explicit request to remember something is filed under any value.
+
 ## `CODEX_HOME`
 
 Also not a `config.json` key — the environment variable Codex itself uses for its
@@ -272,9 +390,9 @@ Codex checks. Unset, both read `~/.codex`.
 
 Two files there are mehmory's business, and **neither belongs to mehmory**:
 
-| File | What mehmory does to it |
-|---|---|
-| `$CODEX_HOME/hooks.json` | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched. |
+| File                      | What mehmory does to it                                                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$CODEX_HOME/hooks.json`  | Merges in one entry per captured event (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`). Entries owned by other tools are never touched.               |
 | `$CODEX_HOME/config.toml` | Sets `[features] hooks = true`, which Codex requires before any hook runs. Nothing else in the file is read or rewritten, and uninstall never turns it back off. |
 
 Before either file is modified it is copied to `<file>.mehmory.bak`. A run that changes

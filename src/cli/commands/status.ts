@@ -7,7 +7,7 @@
  */
 
 import { join } from 'node:path';
-import { storeExists } from '../../core/capture.js';
+import { storeExists } from '../../core/wiki.js';
 import { mehmoryHome } from '../../core/home.js';
 import { resolveProjectKey } from '../../core/identity.js';
 import { buildStatus } from '../../core/status.js';

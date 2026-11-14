@@ -6,7 +6,7 @@
 mehmory/
 ├── src/
 │   ├── core/
-│   │   ├── home.ts            # Store root path, env overrides (A); run-4: codexHome() ($CODEX_HOME, default ~/.codex)
+│   │   ├── home.ts            # Store root path, env overrides (A); run-4: codexHome() ($CODEX_HOME, default ~/.codex); piSessionsDir() (A29)
 │   │   ├── errors.ts          # Typed errors, logging, fail-open (A)
 │   │   ├── fs.ts              # Atomic writes, append (C)
 │   │   ├── lock.ts            # Project-level locking (C)
@@ -20,13 +20,18 @@ mehmory/
 │   │   ├── tokens.ts          # Token estimation (E)
 │   │   ├── injection.ts       # Context builder, cap enforcement (E)
 │   │   ├── inbox.ts           # run 2: inbox entry read/write, snapshot-clear (A)
-│   │   ├── session.ts         # run 2: per-session capture state, cursor scoping (A)
+│   │   ├── session-state.ts   # Shared session value types and fresh defaults (A13)
+│   │   ├── session.ts         # Cursor, Stop counter, topic cache and pause value helpers (A13)
+│   │   ├── session-lifecycle.ts # Open/observe, origin, resume, finalize and ordered recovery/sweep (A13)
 │   │   ├── decay.ts           # run 2: recency decay/archive file ops (A)
 │   │   ├── stats.ts           # run 2: stats.jsonl writer (A)
-│   │   ├── match.ts           # run 2: grep-based full-text matcher (A)
-│   │   ├── capture.ts         # run 2: scope paths, injection composition, delta capture, job payloads — hook plumbing (B)
+│   │   ├── match.ts           # Keyword scoring over wiki pages (A)
+│   │   ├── wiki.ts            # Scope layout, lazy page/index reads, containment, global fallback
+│   │   ├── capture.ts         # Injection composition, delta capture, job payloads — hook plumbing (B)
 │   │   ├── hook.ts            # run 2: stdin/stdout/timing/stats/fail-open adapter runner (B)
-│   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23)
+│   │   ├── host.ts            # run-4: which harness invoked this hook, threaded not read ambiently (A21, A23); MEHMORY_ACTIVE_HOST resolution (A30)
+│   │   ├── agent.ts           # run-5: which agent is running — name resolution, MEHMORY_AGENT before config.identity.agent (A21, A27)
+│   │   ├── agent-name.ts      # run-5: the single-segment agent-name rule, import-free so schema/format.ts can share it without pulling in errors.ts
 │   │   ├── codex-install.ts   # run-4: wire/unwire mehmory in $CODEX_HOME (hooks.json, config.toml, skills) — merge-only edits, never rewrites
 │   │   └── inbox-tx.ts        # run-4: transactional inbox helper logic shared by hooks/inbox-tx.mjs and `mehmory inbox-tx` (A15, A17)
 │   ├── hooks/                 # run 2: thin hook adapters, bundled to hooks/*.mjs (B)
@@ -35,12 +40,14 @@ mehmory/
 │   │   ├── stop.ts             # run-3: reads stop.capture_threshold from config (L)
 │   │   ├── pre-compact.ts
 │   │   ├── session-end.ts
+│   │   ├── pi-extension.ts    # Pi's hooks.json: in-process runner that spawns the five bundles with host `pi` (A29)
 │   │   └── inbox-tx.ts        # bundled transactional helper for skills; run-3: config-aware redact() call site (L)
 │   ├── schema/
 │   │   └── format.ts          # Format constants, versioned template (A, F); run-2: inbox entry serialization (A); run-3: index-line format constant (L)
 │   ├── transcript/
 │   │   ├── reader.ts          # Claude Code JSONL transcript reader, incremental parsing (D)
 │   │   ├── codex.ts           # Codex rollout reader: event envelope → normalized record
+│   │   ├── pi.ts              # Pi session reader + stripPiSkillEnvelope (A29)
 │   │   └── host.ts            # readSession(path, host) — the only harness branch there is
 │   ├── distill/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
@@ -84,7 +91,8 @@ mehmory/
 │   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
 │   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR,
 │                               # plus a hooks/ bundle-drift gate — A25);
-│                               # release.yml (v* tag → build → npm publish) (X);
+│                               # release.yml (release-please PR → tag + GitHub Release → npm publish);
+│                               # pr-title.yml (PR title must be a Conventional Commit);
 │                               # pages.yml (site/** on main → vitepress build → Pages deploy)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
@@ -96,15 +104,22 @@ mehmory/
 │   ├── quickstart.test.ts     # run 3: scripted TTHW gate against dist/cli.mjs (Integration)
 │   ├── host.test.ts           # run-4: src/core/host.ts resolution
 │   ├── hooks-host.test.ts     # run-4: hook adapters branch on the resolved host, not env-sniff
+│   ├── hooks-active-host.test.ts # MEHMORY_ACTIVE_HOST gates every host but the one it names (A30)
 │   ├── hooks-codex.test.ts    # run-4: hook adapters against Codex-shaped payloads
 │   ├── transcript-codex.test.ts # run-4: Codex rollout reader normalization
+│   ├── transcript-pi.test.ts  # Pi session reader normalization, skill-envelope unwrapping
+│   ├── hooks-pi.test.ts       # hook bundles against Pi-shaped payloads and session files
+│   ├── pi-extension.test.ts   # the built Pi extension driven through a fake Pi API
+│   ├── cli-init-pi.test.ts    # `mehmory init --host pi` and its `--uninstall` refusal
 │   ├── cli-init-codex.test.ts # run-4: `mehmory init --host codex` install/uninstall
 │   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
 │   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
-│   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures
+│   ├── agent.test.ts          # run-5: src/core/agent.ts name resolution + validation
+│   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures;
+│                               # pi-*.jsonl, pi-*.distilled.json: synthetic Pi session fixtures
 ├── eslint-rules/
 │   └── index.js               # Custom ESLint rules (A3, A9, A11, U2); run-3: custom/no-cli-imports (L)
-├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L)
+├── package.json               # pnpm workspace, all devDeps (A); run-3: bin/files/engines/repository/license (L); `pi` package manifest (A29)
 ├── tsconfig.json               # strict: true, no any (A)
 ├── tsup.config.ts              # ESM-only output (A10); run-3: CLI bundle entry, splitting: false (L)
 ├── vitest.config.ts             # Test runner config (A)
@@ -118,7 +133,9 @@ mehmory/
 ├── CODE_OF_CONDUCT.md          # Contributor Covenant 2.1
 ├── SECURITY.md                 # private vuln reporting; scope centers on the secret filter
 └── docs/
-    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21 (C, X)
+    ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
+    │                          # run-4: A22–A26; run-5: A27; A28 Codex trust; A29 Pi host;
+    │                          # A30 MEHMORY_ACTIVE_HOST (C, X)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
@@ -214,19 +231,77 @@ Unlock order: L → (S, C1, C2, X in parallel) → Integration.
 - `pnpm install` — Install dependencies
 - `pnpm build` — Build ESM output via tsup (→ dist/)
 - `pnpm lint` — Run ESLint + Prettier check
-- `pnpm test` — Run vitest
+- `pnpm test` — Run vitest; global setup builds when `dist/cli.mjs` is missing or older than `src/`
 - `pnpm typecheck` — Run tsc strict mode
 - `pnpm prepare` — Install Husky hooks (runs on `pnpm install`)
 - `pnpm docs:dev` — Run the marketing/docs site locally (VitePress dev server)
 - `pnpm docs:build` — Build the site (→ site/.vitepress/dist)
 - `pnpm docs:preview` — Serve the built site
 
+## Agent Workflow
+
+This repo is set up for agent-assisted development by a solo maintainer.
+
+- **Instructions.** This file is canonical. `.github/copilot-instructions.md` adds Copilot
+  conventions and a maintenance matrix (which files move together) and defers to this file.
+  Read both before a non-trivial change; `CONTRIBUTING.md` is the human-facing summary.
+- **Work items.** GitHub Issues on `elderfo/mehmory` are the only tracker (see Agent skills
+  below). Acceptance criteria live in the issue body, or in the PR's "What and why" when there
+  is no issue. Link an issue from the PR with `Closes #N` as the PR template asks. Never close,
+  relabel or comment on an issue unless the user asks.
+- **Checks.** `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. The pre-commit hook
+  runs lint, test and typecheck. Test setup builds when `dist/cli.mjs` is missing or
+  older than any file in `src/`, so tests never run against a stale build. Run `pnpm build` yourself before committing whenever
+  `src/` changes, and commit the rebuilt `hooks/*.mjs` (A25). CI's explicit build is not
+  repeated by tests. CI's `build-test` job runs all four plus
+  actionlint and a `hooks/` drift check.
+- **Docs move with the code.** A change to behavior, commands, config keys or error codes
+  updates the matching `docs/*.md` in the same PR. The PR title is the changelog line: write
+  it as the Conventional Commit a reader of the release notes should see.
+
+### Branch protection
+
+`main` is guarded by two repository rulesets:
+
+- **`main: integrity`** binds everyone, admins included: no deletion, no force push, linear
+  history.
+- **`main: pull requests`** (repo admins may bypass): changes land through a PR, squash merge
+  only, `build-test` must pass on a branch up to date with `main`, and every review thread must
+  be resolved. No approval is required. Copilot reviews each PR once when it opens; new pushes
+  are not re-reviewed, so request a fresh review after a substantive change.
+
+Do not use the admin bypass unless the user says to for that change. The release PR is the
+one standing exception (see Releases).
+
+### Releases
+
+release-please owns releases (`release-please-config.json`, `.release-please-manifest.json`,
+`.github/workflows/release.yml`). It owns `CHANGELOG.md`, `VERSION`, and the `version` fields
+in `package.json`, `plugin.json` and `.claude-plugin/plugin.json`; nobody edits them by hand,
+and nobody pushes tags.
+
+- Each push to `main` with releasable commits opens or updates one standing release PR. To
+  release, merge that PR: release-please creates tag `vX.Y.Z` and the GitHub Release, and the
+  `publish-npm` job publishes `mehmory` to npm from the released commit. Merge it only after
+  the latest `Release` run on `main` has finished, so the PR counts every commit; the bypass
+  skips the up-to-date check that would otherwise catch a stale one.
+- Bump rules: `feat` gives a minor release, `fix` a patch; `chore`, `ci`, `docs`, `refactor`
+  and `test` give none. Below 1.0.0 a breaking change (`!` or `BREAKING CHANGE:`) gives a minor
+  release (`bump-minor-pre-major`).
+- Squash merge uses the PR title as the commit subject and the PR body as its message, so PR
+  titles must be Conventional Commits; `pr-title.yml` checks them.
+- The release PR is opened with the default `GITHUB_TOKEN`, which needs the repository setting
+  "Allow GitHub Actions to create and approve pull requests". PRs it opens trigger no CI, so
+  `build-test` never reports on the release PR: the maintainer merges it with the admin
+  bypass. That is the standing exception to the bypass rule above, and it covers only the
+  release PR, whose diff is generated version fields and `CHANGELOG.md`.
+
 ## Conventions
 
 ### Commit Messages
 
 - Conventional commits: `<type>(<scope>): <subject>`
-- Types: feat, fix, docs, chore, refactor, test
+- Types: feat, fix, docs, chore, refactor, test, ci
 - No AI/bot attribution in messages, trailers, or PR bodies
 - Sign all commits
 

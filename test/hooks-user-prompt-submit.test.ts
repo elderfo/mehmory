@@ -2,6 +2,9 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTempDir } from './helpers.js';
+import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { statePath } from '../src/core/home.js';
 import {
   additionalContext,
   keyFor,
@@ -10,13 +13,14 @@ import {
   runHook,
   seedStore,
   statsLines,
+  TODAY,
 } from './hook-fixture.js';
 import { recordWarning } from '../src/core/errors.js';
 import { recordStat } from '../src/core/stats.js';
 import { setPaused } from '../src/core/session.js';
 
 const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
@@ -44,7 +48,9 @@ describe('UserPromptSubmit hook', () => {
     );
 
     expect(run.status).toBe(0);
-    expect(additionalContext(run)).toContain('relevant: pages/deployment.md');
+    expect(additionalContext(run)).toContain(
+      `relevant: ${join(paths(key).pages, 'deployment.md')}`
+    );
     expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', pointers_offered: 1 });
   });
 
@@ -108,6 +114,23 @@ describe('UserPromptSubmit hook', () => {
     );
 
     expect(run.stdout).toBe('');
+  });
+
+  it('does not capture remember while a paused session lock is held by another owner', () => {
+    setPaused('s1', true);
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', 'sessions_s1.lock'), String(process.pid));
+
+    const run = runHook(
+      'user-prompt-submit',
+      { session_id: 's1', prompt: 'remember: this private fact must not be captured' },
+      { cwd }
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(readIfPresent(paths(key).inbox)).not.toContain('this private fact');
+    expect(statsLines().at(-1)?.['captured_entries']).toBeUndefined();
   });
 
   it('emits nothing at all when the session is paused', () => {

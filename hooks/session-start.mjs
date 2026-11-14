@@ -1,44 +1,46 @@
 import {
-  applyDistillJob,
+  runHook
+} from "./chunk-G6TCZEZQ.mjs";
+import {
+  ARCHIVE_DIVIDER,
+  MAINTENANCE_ALLOWANCE_TOKENS,
+  applyDistillJobResult,
+  archivePage,
   buildScopeInjection,
   claimJob,
   completeJob,
   estimateTokens,
-  finalizePendingSessions,
   inboxBytes,
-  runHook,
+  isPaused,
+  isStalePage,
+  maintainSessions,
+  openScope,
+  readInboxEntries,
+  runStoreGit,
   scopePaths,
   skillRef,
   storeExists,
-  storeIsUnpopulated
-} from "./chunk-5P7GCIXJ.mjs";
+  storeIsUnpopulated,
+  truncateToTokens,
+  tryProjectLock
+} from "./chunk-BP2EVYWE.mjs";
 import {
-  ARCHIVE_DIR,
-  ARCHIVE_DIVIDER,
   atomicWrite,
   failOpen,
-  isPaused,
-  listDir,
-  loadConfig,
   logError,
   mehmoryHome,
   mkdir,
-  pageAgeDays,
-  parseIndexLine,
   pathExists,
   pendingWarnings,
   readFile,
-  readFrontmatter,
-  readInboxEntries,
-  rename,
-  stat,
-  sweepSessionState,
-  tryProjectLock
-} from "./chunk-EAC7QWRN.mjs";
+  shellQuote
+} from "./chunk-ZQKNVQBL.mjs";
+
+// src/hooks/session-start.ts
+import assert from "assert/strict";
 
 // src/core/store.ts
 import { join } from "path";
-import { execFileSync } from "child_process";
 function initStore() {
   const home = mehmoryHome();
   try {
@@ -61,14 +63,8 @@ function initStore() {
     const gitDir = join(home, ".git");
     if (!pathExists(gitDir)) {
       try {
-        execFileSync("git", ["init", home], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
-        execFileSync("git", ["-C", home, "config", "commit.gpgsign", "false"], {
-          stdio: "pipe",
-          encoding: "utf-8"
-        });
+        runStoreGit(["init", home], home);
+        runStoreGit(["config", "--local", "commit.gpgsign", "false"], home);
       } catch (err) {
         const error = {
           code: "E_STORE_INIT",
@@ -77,7 +73,7 @@ function initStore() {
           consequence: "Store is initialized but git repository was not created",
           // The resolved home, not a literal `~/.mehmory`: the documented
           // MEHMORY_HOME override would otherwise make this command wrong.
-          fix: `git -C ${home} init`
+          fix: `git -C ${shellQuote(home)} init`
         };
         logError(error);
         return { ok: false, error };
@@ -155,7 +151,7 @@ type: entity
 
 Captured entries awaiting integration.
 `;
-var TEMPLATE_SCHEMA_VERSION = "1";
+var TEMPLATE_SCHEMA_VERSION = "2";
 var SCHEMA_TEMPLATE = `---
 schema_version: "${TEMPLATE_SCHEMA_VERSION}"
 ---
@@ -217,7 +213,7 @@ Lines below a \`## Archive\` heading are pages the mechanical decay pass demoted
 
 That trailing comment is invisible when the markdown is rendered and is what lets tooling deduplicate replays and clear exactly the entries an integrate consumed \u2014 including when a capture lands mid-integrate. So:
 
-- Editing or rewording the **text** of an entry is fine.
+- Editing or rewording the **text** of an entry is fine. \`\\\\\`, \`\\n\`, \`\\r\`, and \`--\\>\` are escape sequences in entry text (backslash, newline, carriage return, and \`-->\` respectively).
 - **Preserve the trailing comment**, and keep each entry on one line.
 - Deleting a whole entry line is fine (it simply never gets integrated).
 - Do not hand-write new entries; the id is a hash. Use the remember skill (or slash command, on harnesses that have one), or the \`remember:\` prompt prefix.
@@ -240,7 +236,7 @@ Token estimation uses chars/4 with \xB120% tolerance.
 - **Caveman-telegraphic bullets** \u2014 short facts per bullet, more signal per injected token
 - **Full prose only where nuance demands** \u2014 avoid elaborate sentences
 - **Wikilinks** \u2014 use \`[[page-name]]\` to link between pages (backlinks/orphans are derived, never stored)
-- **Scope rule** \u2014 user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`
+- **Scope rule** \u2014 route by what a fact is *about*: user-level facts (preferences, tooling) \u2192 \`global/\`; codebase facts \u2192 \`projects/<key>/\`; an agent's own facts (its style, its non-project knowledge) \u2192 \`agents/<name>/\`. The \`agent=\` stamp names *whose* scope a self-fact belongs to; it is set on every entry that agent captured, so it never decides *whether* a fact is a self-fact
 
 ## Secret Filter Limitation
 
@@ -277,76 +273,55 @@ Every commit has a message summarizing the operation and entry count. The full g
 `;
 
 // src/core/decay.ts
-import { join as join2 } from "path";
-function lineRefersTo(line, pageFile) {
-  return parseIndexLine(line)?.slug === pageFile.replace(/\.md$/, "");
-}
-function decayPass(scopeDir, options = {}) {
+function decayPass(scopeDir, config, options = {}) {
   const empty = { demoted: [], archived: [], rewroteIndex: false };
   return failOpen(
     () => {
-      const config = loadConfig();
       if (!config.decay.enabled) return empty;
       const now = options.now ?? Date.now();
       const archiveDays = options.archiveDays ?? config.decay.archive_days;
       const purgeDays = options.purgeDays ?? config.decay.purge_days;
-      const pagesDir = join2(scopeDir, "pages");
-      const indexPath = join2(scopeDir, "index.md");
-      if (!pathExists(pagesDir)) return empty;
+      const wiki = openScope(scopeDir, { now, staleAfterDays: archiveDays });
+      if (!wiki.pagesReadable) return empty;
       const demoted = [];
       const archived = [];
       const liveOrder = /* @__PURE__ */ new Map();
-      for (const name of listDir(pagesDir)) {
-        if (!name.endsWith(".md")) continue;
-        const pagePath = join2(pagesDir, name);
-        if (!stat(pagePath)?.isFile()) continue;
-        const contents = readFile(pagePath);
-        const fields = readFrontmatter(contents);
-        const decayClass = fields["decay"] ?? "default";
-        const age = pageAgeDays(contents, now);
-        const updatedAt = Date.parse(fields["updated"] ?? "");
-        if (decayClass !== "default" || age === null) {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
-          continue;
-        }
-        if (age > purgeDays) {
-          const archiveDir = join2(scopeDir, ARCHIVE_DIR);
-          mkdir(archiveDir);
-          rename(pagePath, join2(archiveDir, name));
+      for (const page of wiki.pages) {
+        const name = `${page.slug}.md`;
+        if (isStalePage(page.frontmatter, now, purgeDays)) {
+          if (!archivePage(wiki.scope, page)) return empty;
           archived.push(name);
-        } else if (age > archiveDays) {
+        } else if (page.stale) {
           demoted.push(name);
         } else {
-          liveOrder.set(name, Number.isNaN(updatedAt) ? 0 : updatedAt);
+          liveOrder.set(name, page.updatedAt ?? 0);
         }
       }
-      if (!pathExists(indexPath)) {
+      if (!wiki.index.readable) {
         return { demoted, archived, rewroteIndex: false };
       }
-      const original = readFile(indexPath);
-      const rewritten = rewriteIndex(original, liveOrder, demoted, archived);
+      const original = wiki.index.body;
+      const rewritten = rewriteIndex(wiki.index, liveOrder, demoted, archived);
       if (rewritten === original) return { demoted, archived, rewroteIndex: false };
-      atomicWrite(indexPath, rewritten);
+      atomicWrite(wiki.scope.indexFile, rewritten);
       return { demoted, archived, rewroteIndex: true };
     },
     empty,
     "E_ATOMIC_WRITE"
   );
 }
-function rewriteIndex(contents, liveOrder, demoted, archived) {
-  const lines = contents.split("\n");
+function rewriteIndex(index, liveOrder, demoted, archived) {
+  const lines = index.body.split("\n");
   const preamble = [];
   const live = [];
   const belowDivider = [];
-  const findPage = (line) => {
-    for (const name of [...liveOrder.keys(), ...demoted, ...archived]) {
-      if (lineRefersTo(line, name)) return name;
-    }
-    return void 0;
-  };
-  for (const line of lines) {
+  const known = /* @__PURE__ */ new Set([...liveOrder.keys(), ...demoted, ...archived]);
+  const pageLines = new Map(
+    index.lines.filter((entry) => known.has(`${entry.slug}.md`)).map((entry) => [entry.line, `${entry.slug}.md`])
+  );
+  for (const [offset, line] of lines.entries()) {
     if (line.trim() === ARCHIVE_DIVIDER) continue;
-    const page = findPage(line);
+    const page = pageLines.get(offset);
     if (page === void 0) {
       preamble.push(line);
       continue;
@@ -374,26 +349,35 @@ function rewriteIndex(contents, liveOrder, demoted, archived) {
 // src/hooks/session-start.ts
 var MAX_MAINTENANCE_LINES = 2;
 function maintenance(sessionId, project, host, config) {
-  const finalized = finalizePendingSessions(sessionId, project, host, config);
-  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir));
+  const { finalized } = maintainSessions(sessionId, project, host, config);
+  tryProjectLock(project, () => decayPass(scopePaths(project).projectDir, config));
   for (let claimed = 0; claimed < config.queue.claims_per_start; claimed++) {
     const job = claimJob("distill-final");
     if (!job) break;
-    applyDistillJob(job.data, config);
-    completeJob(job.id);
+    try {
+      const result = applyDistillJobResult(job.data, config);
+      if (result.failed === 0) completeJob(job.id, job.claimFile);
+    } catch (err) {
+      logError({
+        code: "E_QUEUE_CLAIM",
+        kind: "informational",
+        what: err instanceof Error ? err.message : String(err),
+        consequence: "The queued job remains for stale recovery"
+      });
+    }
   }
-  sweepSessionState();
   return finalized;
 }
 runHook("SessionStart", (input, project, host, config) => {
-  if (!config.hooks.session_start.enabled || isPaused(input.session_id)) return {};
+  if (!config.hooks.session_start.enabled) return {};
+  if (isPaused(input.session_id)) return {};
   const justInitialized = !storeExists() && initStore().ok;
   const paths = scopePaths(project);
-  const injection = buildScopeInjection(project, config);
+  const injection = buildScopeInjection(project, config, input.session_id);
   const entries = readInboxEntries(paths.inboxFile);
   const bytes = inboxBytes(paths.inboxFile);
   const candidates = [];
-  const warning = pendingWarnings()[0];
+  const warning = pendingWarnings(1)[0];
   if (warning !== void 0) candidates.push(`mehmory: ${warning}`);
   const integrate = skillRef(host, "integrate");
   if (input.source === "compact") {
@@ -409,8 +393,18 @@ runHook("SessionStart", (input, project, host, config) => {
       `mehmory: memory at ${mehmoryHome()} is empty \u2014 run ${skillRef(host, "onboard-session")} to seed it`
     );
   }
-  const lines = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const selected = candidates.slice(0, MAX_MAINTENANCE_LINES);
+  const lines = [];
+  let remaining = MAINTENANCE_ALLOWANCE_TOKENS;
+  for (const [index, line] of selected.entries()) {
+    const allowance = Math.floor(remaining / (selected.length - index));
+    const text = truncateToTokens(line, allowance - 1).text;
+    lines.push(text);
+    remaining -= estimateTokens(text) + 1;
+  }
   const context = [injection.text, ...lines].filter(Boolean).join("\n");
+  assert(lines.length <= MAX_MAINTENANCE_LINES);
+  assert(estimateTokens(context) <= config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS);
   const finalized = maintenance(input.session_id, project, host, config);
   return {
     context,

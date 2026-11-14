@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import type { MehmoryError } from '../src/core/errors.js';
 import {
@@ -13,13 +13,6 @@ import {
   setCliMode,
 } from '../src/core/errors.js';
 import { statePath, mehmoryHome } from '../src/core/home.js';
-
-/** Shape of a warnings.json entry, for typing `JSON.parse` results in these tests. */
-interface WarningsJsonEntry {
-  code: string;
-  lastTime: number;
-  count: number;
-}
 
 describe('formatUserError', () => {
   it('renders actionable error with Fix clause (E_CONFIG_PARSE)', () => {
@@ -332,15 +325,9 @@ describe('warning system (U2 channel)', () => {
     recordWarning('E_CONFIG_PARSE');
     recordWarning('E_LOCK_TIMEOUT');
 
-    const warningsPath = statePath('warnings.json');
-    const content = readFileSync(warningsPath, 'utf-8');
-    const parsed = JSON.parse(content) as WarningsJsonEntry[];
-
-    // Must parse successfully and have exactly 2 entries
-    expect(parsed).toHaveLength(2);
-    expect(parsed.map(w => w.code).sort()).toEqual([
-      'E_CONFIG_PARSE',
-      'E_LOCK_TIMEOUT',
+    expect(peekWarnings()).toEqual([
+      `E_CONFIG_PARSE (actionable, 1 occurrences): see ${statePath('errors.log')}`,
+      `E_LOCK_TIMEOUT (informational, 1 occurrences): see ${statePath('errors.log')}`,
     ]);
   });
 
@@ -356,32 +343,47 @@ describe('warning system (U2 channel)', () => {
   });
 
   it('rate-limits warnings (1 per hour per code)', () => {
-    const warningsPath = statePath('warnings.json');
-
-    // First call records
     recordWarning('E_CONFIG_PARSE');
-    let content = readFileSync(warningsPath, 'utf-8');
-    let parsed = JSON.parse(content) as WarningsJsonEntry[];
-    expect(parsed.length).toBe(1);
-
-    // Second call within 1 hour is skipped (returns early)
     recordWarning('E_CONFIG_PARSE');
-    content = readFileSync(warningsPath, 'utf-8');
-    parsed = JSON.parse(content) as WarningsJsonEntry[];
-    expect(parsed.length).toBe(1); // Still just one entry
+    expect(peekWarnings()).toEqual([
+      `E_CONFIG_PARSE (actionable, 1 occurrences): see ${statePath('errors.log')}`,
+    ]);
+    expect(readdirSync(statePath('warning-records'))).toHaveLength(1);
 
-    // Rewind lastTime past the rate limit window
-    const now = Date.now();
-    const first = parsed[0];
-    if (!first) throw new Error('expected a warning entry');
-    first.lastTime = now - 61 * 60 * 1000; // 61 minutes ago
-    writeFileSync(warningsPath, JSON.stringify(parsed, null, 2), 'utf-8');
-
-    // Now the third call should be allowed
+    const name = readdirSync(statePath('warning-records'))[0];
+    if (!name) throw new Error('expected a warning record');
+    writeFileSync(
+      statePath('warning-records', name),
+      JSON.stringify({
+        code: 'E_CONFIG_PARSE',
+        lastTime: Date.now() - 61 * 60 * 1000,
+        count: 1,
+      })
+    );
     recordWarning('E_CONFIG_PARSE');
-    content = readFileSync(warningsPath, 'utf-8');
-    parsed = JSON.parse(content) as WarningsJsonEntry[];
-    expect(parsed[0]?.count).toBe(2);
+    expect(peekWarnings()).toEqual([
+      `E_CONFIG_PARSE (actionable, 2 occurrences): see ${statePath('errors.log')}`,
+    ]);
+  });
+
+  it('drains legacy warning arrays alongside newly published records', () => {
+    mkdirSync(statePath(), { recursive: true });
+    writeFileSync(
+      statePath('warnings.json'),
+      JSON.stringify([
+        { code: 'E_CONFIG_PARSE', lastTime: Date.now(), count: 3 },
+        { code: 'E_LOCK_TIMEOUT', lastTime: 'invalid', count: 1 },
+      ])
+    );
+    recordWarning('E_DISTILL_LOSSY');
+    const expected = [
+      `E_CONFIG_PARSE (actionable, 3 occurrences): see ${statePath('errors.log')}`,
+      `E_DISTILL_LOSSY (informational, 1 occurrences): see ${statePath('errors.log')}`,
+    ];
+    expect(peekWarnings()).toEqual(expected);
+    expect(pendingWarnings()).toEqual(expected);
+    expect(peekWarnings()).toEqual([]);
+    expect(existsSync(statePath('warnings.json'))).toBe(false);
   });
 
   it('survives across separate processes (criterion 17)', () => {
@@ -417,18 +419,21 @@ describe('warning system (U2 channel)', () => {
       }
     );
 
-    // State file should still have count=1 (not incremented by second process)
-    const warningsPath = statePath('warnings.json');
-    const content = readFileSync(warningsPath, 'utf-8');
-    const parsed = JSON.parse(content) as WarningsJsonEntry[];
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]?.count).toBe(1); // Not 2 (rate-limited)
+    expect(peekWarnings()).toEqual([
+      `E_CONFIG_PARSE (actionable, 1 occurrences): see ${statePath('errors.log')}`,
+    ]);
+    expect(readdirSync(statePath('warning-records'))).toHaveLength(1);
 
-    // Rewind lastTime past the rate-limit window
-    const rewound = parsed[0];
-    if (!rewound) throw new Error('expected a warning entry');
-    rewound.lastTime = Date.now() - 61 * 60 * 1000; // 61 minutes ago
-    writeFileSync(warningsPath, JSON.stringify([rewound], null, 2), 'utf-8');
+    const name = readdirSync(statePath('warning-records'))[0];
+    if (!name) throw new Error('expected a warning record');
+    writeFileSync(
+      statePath('warning-records', name),
+      JSON.stringify({
+        code: 'E_CONFIG_PARSE',
+        lastTime: Date.now() - 61 * 60 * 1000,
+        count: 1,
+      })
+    );
 
     // Process 3: after rewinding, should record again
     execFileSync(
@@ -444,9 +449,9 @@ describe('warning system (U2 channel)', () => {
       }
     );
 
-    // Now count should be 2
-    const content3 = readFileSync(warningsPath, 'utf-8');
-    const parsed3 = JSON.parse(content3) as WarningsJsonEntry[];
-    expect(parsed3[0]?.count).toBe(2);
+    expect(pendingWarnings()).toEqual([
+      `E_CONFIG_PARSE (actionable, 2 occurrences): see ${statePath('errors.log')}`,
+    ]);
+    expect(peekWarnings()).toEqual([]);
   });
 });

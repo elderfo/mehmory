@@ -11,9 +11,10 @@ import { readStdin } from './fs.js';
 import { logError } from './errors.js';
 import { resolveProjectKey } from './identity.js';
 import { recordStat } from './stats.js';
-import { resolveHost, type Host } from './host.js';
+import { resolveActiveHost, resolveHost, type Host } from './host.js';
 import { loadConfig, type MehmoryConfig } from './config.js';
-import { rememberSessionOrigin } from './session.js';
+import { openSession } from './session-lifecycle.js';
+import { currentAgentName } from './agent.js';
 
 /** The fields Claude Code puts on hook stdin. All optional but `session_id`. */
 export interface HookInput {
@@ -80,6 +81,23 @@ export function renderHookOutput(event: string, result: HookResult): string {
   });
 }
 
+/** Why a hook skipped its body, recorded on the stats line so an empty inbox is explicable. */
+type Suppression = 'host_disabled' | 'active_host';
+
+/**
+ * Whether `host` may run mehmory at all: its `config.hosts` toggle, then
+ * `MEHMORY_ACTIVE_HOST` (A30), which names the one harness allowed in this process tree.
+ */
+function suppression(
+  host: Host,
+  config: MehmoryConfig,
+  activeHost: Host | 'none' | undefined
+): Suppression | undefined {
+  if (!config.hosts[host].enabled) return 'host_disabled';
+  if (activeHost !== undefined && activeHost !== host) return 'active_host';
+  return undefined;
+}
+
 /**
  * Run one hook body under the fail-open contract.
  *
@@ -95,11 +113,15 @@ export function renderHookOutput(event: string, result: HookResult): string {
  * nothing below has to read it ambiently (A21). The config loaded to evaluate that
  * toggle is the same object handed to `body` — an adapter reading `loadConfig()` again
  * would not only cost a second disk read on every invocation, it could disagree with
- * the toggle this function just checked. A disabled harness skips `body` entirely — no
- * stdin is read, so there is no capture, no injection and no pointer — `renderHookOutput`
- * still emits its normal no-op for the event (`''` for most events, `{}` for `Stop`),
+ * the toggle this function just checked. A disabled harness skips `body` entirely — stdin
+ * is read only to resolve the project for the stats line, so there is no capture, no
+ * injection and no pointer — and `renderHookOutput` still emits its normal no-op for the
+ * event (`''` for most events, `{}` for `Stop`),
  * persistent and scoped to one harness via config, unlike the single-session promise of
- * `/mehmory:pause`.
+ * `/mehmory:pause`. `MEHMORY_ACTIVE_HOST`, read once here and resolved like the host
+ * argument, skips `body` the same way for every harness but the one it names (A30), so a
+ * harness nested inside another does not capture the same conversation twice. Either
+ * skip is recorded on the stats line as `suppressed`.
  *
  * @param event - Hook event name, e.g. `SessionStart`
  * @param body - The hook itself; receives parsed stdin, the project key, the host, and
@@ -112,13 +134,18 @@ export function runHook(
   const started = Date.now();
   const host = resolveHost(process.argv[2]);
   const config = loadConfig();
+  const suppressed = suppression(
+    host,
+    config,
+    resolveActiveHost(process.env['MEHMORY_ACTIVE_HOST'])
+  );
   let result: HookResult = {};
   let project = 'unknown';
 
   try {
-    if (config.hosts[host].enabled) {
-      const input = parseHookInput(readStdin());
-      project = resolveProjectKey(input.cwd ?? process.cwd());
+    const input = parseHookInput(readStdin());
+    project = resolveProjectKey(input.cwd ?? process.cwd());
+    if (suppressed === undefined) {
       // Every hook body reaches for session state, and `.state/<id>.json` with an empty
       // id is `.state/.json` — one shared file every malformed invocation would pollute.
       // No session id, no session: log it and stay silent (A2).
@@ -130,9 +157,17 @@ export function runHook(
           consequence: 'The invocation was skipped; no session state was read or written',
         });
       } else {
-        // Where this session's material lives and who wrote it, so the next session start
-        // can finalize it even if this session never reports an end (issue #24).
-        rememberSessionOrigin(input.session_id, input.transcript_path, host);
+        openSession(
+          input.session_id,
+          {
+            transcriptPath: input.transcript_path,
+            host,
+            project,
+            agent: currentAgentName(config),
+          },
+          event,
+          config
+        );
         result = body(input, project, host, config);
       }
     }
@@ -154,7 +189,14 @@ export function runHook(
   }
 
   try {
-    recordStat({ project, hook: event, host, ms: Date.now() - started, ...result.stats });
+    recordStat({
+      project,
+      hook: event,
+      host,
+      ms: Date.now() - started,
+      ...(suppressed === undefined ? {} : { suppressed }),
+      ...result.stats,
+    });
   } catch {
     // Instrumentation must never be the thing that breaks a hook.
   }

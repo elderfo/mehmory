@@ -1,3 +1,4 @@
+import { sessionState, seedSession, stateFileFor } from './session-fixture.js';
 /**
  * `mehmory inbox-tx` — issue #17: the transactional inbox helper reachable through the
  * CLI, with the same input contract as the bundled `hooks/inbox-tx.mjs` script that
@@ -13,16 +14,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempDir, hermeticEnv } from './helpers.js';
 import { CLI, envelopeOf, type CliRun } from './cli-fixture.js';
+import { freshSessionState } from '../src/core/session-state.js';
+import { statePath } from '../src/core/home.js';
 
 /** `mehmory inbox-tx` with a JSON body piped to stdin — the CLI has no other way in. */
-function tx(subcommand: string, input: unknown, extraArgs: readonly string[] = []): CliRun {
+function tx(
+  subcommand: string,
+  input: unknown,
+  extraArgs: readonly string[] = [],
+  extraEnv: Record<string, string> = {}
+): CliRun {
   if (!existsSync(CLI)) {
     throw new Error(`${CLI} is missing — run \`pnpm build\` before \`pnpm test\`.`);
   }
   const result = spawnSync(process.execPath, [CLI, 'inbox-tx', subcommand, ...extraArgs], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf-8',
-    env: hermeticEnv({ HOME: createTempDir('mehmory-claude-home') }),
+    env: hermeticEnv({ HOME: createTempDir('mehmory-claude-home'), ...extraEnv }),
     cwd: process.env.MEHMORY_HOME,
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
@@ -32,6 +40,11 @@ function json(result: CliRun): unknown {
   expect(result.stderr).toBe('');
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
+}
+
+/** Every `agent=` value stamped on the inbox's entry lines, in file order. */
+function agentsIn(body: string): string[] {
+  return [...body.matchAll(/agent=(\S+)/g)].map(m => m[1] as string);
 }
 
 /** Every `host=` value stamped on the inbox's entry lines, in file order. */
@@ -45,12 +58,45 @@ let key: string;
 function seed(): void {
   const home = process.env.MEHMORY_HOME as string;
   mkdirSync(join(home, '.state'), { recursive: true });
-  inbox = join(home, 'inbox.md');
   key = 'github.com/acme/widget';
+  inbox = join(home, 'projects', key, 'inbox.md');
+  mkdirSync(join(home, 'projects', key), { recursive: true });
   writeFileSync(inbox, '# Inbox\n');
 }
 
+describe('mehmory inbox-tx pause/resume', () => {
+  it('changes only the explicitly named session pause flag', () => {
+    seed();
+    seedSession({ ...freshSessionState('target'), stop_count: 7 });
+    seedSession(freshSessionState('other'));
+    expect(json(tx('pause', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: true,
+    });
+    expect(sessionState('target').stop_count).toBe(7);
+    expect(sessionState('other').paused).toBe(false);
+    expect(json(tx('resume', { session_id: 'target' }))).toEqual({
+      session_id: 'target',
+      paused: false,
+    });
+  });
+});
+
 describe('mehmory inbox-tx append', () => {
+  it('exits 1 and reports a failed append instead of reporting success', { timeout: 15_000 }, () => {
+    seed();
+    mkdirSync(statePath('locks'), { recursive: true });
+    writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'retry this fact', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('retry');
+    expect(readFileSync(inbox, 'utf-8')).toBe('# Inbox\n');
+  });
   it('appends redacted entries and dedups by id — same output shape as the bundled helper', () => {
     seed();
     const first = json(
@@ -103,9 +149,8 @@ describe('mehmory inbox-tx append', () => {
 
   it('falls back to the host recorded in the src session state when none is declared', () => {
     seed();
-    const home = process.env.MEHMORY_HOME as string;
     writeFileSync(
-      join(home, '.state', 'sess-cx.json'),
+      stateFileFor('sess-cx'),
       JSON.stringify({
         session_id: 'sess-cx',
         cursor: { file_id: '0:0', size: 0, offset: 0 },
@@ -131,6 +176,75 @@ describe('mehmory inbox-tx append', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('host');
+  });
+});
+
+describe('mehmory inbox-tx append — agent attribution', () => {
+  // `every`, not `some`: one unstamped line is a fact filed into the project scope
+  // forever, because integrate reads a missing `agent=` as "not an agent fact".
+  it('stamps the running agent on every entry, so a named agent files into its own scope', () => {
+    seed();
+    json(
+      tx(
+        'append',
+        {
+          inbox,
+          key,
+          entries: [
+            { text: 'scout entry one', src: 'sess-a' },
+            { text: 'scout entry two', src: 'sess-a' },
+          ],
+        },
+        [],
+        { MEHMORY_AGENT: 'scout' }
+      )
+    );
+    const agents = agentsIn(readFileSync(inbox, 'utf-8'));
+    expect(agents).toHaveLength(2);
+    expect(agents.every(a => a === 'scout')).toBe(true);
+  });
+
+  it('appends unattributed when MEHMORY_AGENT is not a safe name, rather than failing', () => {
+    seed();
+    json(
+      tx(
+        'append',
+        { inbox, key, entries: [{ text: 'unsafe agent name', src: 'sess-a' }] },
+        [],
+        { MEHMORY_AGENT: '../../global' }
+      )
+    );
+    const body = readFileSync(inbox, 'utf-8');
+    expect(body).toContain('unsafe agent name');
+    expect(agentsIn(body)).toEqual([]);
+  });
+
+  it('rejects a declared agent on an entry, not just at the top level', () => {
+    // The rationale for `agent` is "refused rather than ignored"; a per-entry value that
+    // is silently dropped stamps the running agent instead, which is invisible once
+    // written and files the memory into the wrong scope permanently.
+    seed();
+    const result = tx('append', {
+      inbox,
+      key,
+      entries: [{ text: 'entry-declared agent', src: 'sess-a', agent: 'scout' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('agent');
+    expect(readFileSync(inbox, 'utf-8')).not.toContain('entry-declared agent');
+  });
+
+  it('rejects a declared agent in the payload rather than filing the fact under it', () => {
+    seed();
+    const result = tx('append', {
+      inbox,
+      key,
+      agent: 'scout',
+      entries: [{ text: 'declared agent', src: 'sess-a' }],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('agent');
+    expect(readFileSync(inbox, 'utf-8')).not.toContain('declared agent');
   });
 });
 

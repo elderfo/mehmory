@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import * as fs from '../src/core/fs.js';
 import { join } from 'node:path';
 import { decayPass, readFrontmatter } from '../src/core/decay.js';
-import { atomicWrite, pathExists, readFile } from '../src/core/fs.js';
+import { loadConfig } from '../src/core/config.js';
+import { atomicWrite, mkdir, pathExists, readFile } from '../src/core/fs.js';
 import { mehmoryHome } from '../src/core/home.js';
 import { ARCHIVE_DIVIDER } from '../src/schema/format.js';
 
@@ -32,7 +34,24 @@ function writeIndex(scopeDir: string, lines: string[]): void {
   );
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('decayPass', () => {
+  it('does not archive when the destination resolves to exactly the scope parent', () => {
+    const dir = scope('containment');
+    writePage(dir, 'ancient.md', 120);
+    writeIndex(dir, ['- [[ancient]] — keep inside the scope']);
+    const realpath = fs.realpath;
+    // A canonicalization race or mount can resolve an otherwise regular directory
+    // elsewhere. Pin the exact parent case that the old relative-path check accepted.
+    vi.spyOn(fs, 'realpath').mockImplementation((path) =>
+      path === join(dir, 'archive') ? join(dir, '..') : realpath(path)
+    );
+    const result = decayPass(dir, loadConfig(), { now: NOW });
+    expect(result.archived).toEqual([]);
+    expect(pathExists(join(dir, 'pages', 'ancient.md'))).toBe(true);
+    expect(readFile(join(dir, 'index.md'))).toContain('[[ancient]]');
+  });
   it('re-sorts live index lines newest-updated first', () => {
     const dir = scope('sort');
     writePage(dir, 'old.md', 30);
@@ -40,13 +59,13 @@ describe('decayPass', () => {
     writePage(dir, 'mid.md', 10);
     writeIndex(dir, ['- [[old]] — older page', '- [[new]] — newest page', '- [[mid]] — middling']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.demoted).toEqual([]);
     expect(result.archived).toEqual([]);
     const lines = readFile(join(dir, 'index.md'))
       .split('\n')
-      .filter(l => l.startsWith('- '));
+      .filter((l) => l.startsWith('- '));
     expect(lines).toEqual([
       '- [[new]] — newest page',
       '- [[mid]] — middling',
@@ -60,7 +79,7 @@ describe('decayPass', () => {
     writePage(dir, 'aged.md', 70);
     writeIndex(dir, ['- [[fresh]] — current', '- [[aged]] — stale but kept']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.demoted).toEqual(['aged.md']);
     const content = readFile(join(dir, 'index.md'));
@@ -76,13 +95,29 @@ describe('decayPass', () => {
     writePage(dir, 'fresh.md', 2);
     writeIndex(dir, ['- [[ancient]] — long gone', '- [[fresh]] — current']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual(['ancient.md']);
     expect(pathExists(join(dir, 'pages', 'ancient.md'))).toBe(false);
     expect(pathExists(join(dir, 'archive', 'ancient.md'))).toBe(true);
     expect(readFile(join(dir, 'index.md'))).not.toContain('[[ancient]]');
     expect(readFile(join(dir, 'index.md'))).toContain('[[fresh]]');
+  });
+
+  it('uses parsed index positions while preserving prose that mentions an archived page', () => {
+    const dir = scope('parsed-index');
+    writePage(dir, 'ancient.md', 120);
+    writePage(dir, 'fresh.md', 2);
+    writeIndex(dir, [
+      'Notes mention [[ancient]] but are not an index line.',
+      '  - [[ancient]] — remove this entry',
+      '- [[fresh]] — current',
+    ]);
+    expect(decayPass(dir, loadConfig(), { now: NOW }).archived).toEqual(['ancient.md']);
+    const content = readFile(join(dir, 'index.md'));
+    expect(content).toContain('Notes mention [[ancient]] but are not an index line.');
+    expect(content).not.toContain('remove this entry');
+    expect(content).toContain('- [[fresh]] — current');
   });
 
   it('leaves evergreen and ephemeral pages alone however old they are', () => {
@@ -92,7 +127,7 @@ describe('decayPass', () => {
     writePage(dir, 'normal.md', 400);
     writeIndex(dir, ['- [[forever]]', '- [[scratch]]', '- [[normal]]']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual(['normal.md']);
     expect(pathExists(join(dir, 'pages', 'forever.md'))).toBe(true);
@@ -109,18 +144,26 @@ describe('decayPass', () => {
     writePage(dir, 'fresh.md', 1);
     writeIndex(dir, ['- [[aged]]', '- [[fresh]]']);
 
-    decayPass(dir, { now: NOW });
+    decayPass(dir, loadConfig(), { now: NOW });
     const first = readFile(join(dir, 'index.md'));
 
-    const second = decayPass(dir, { now: NOW });
+    const second = decayPass(dir, loadConfig(), { now: NOW });
     expect(second.rewroteIndex).toBe(false);
     expect(readFile(join(dir, 'index.md'))).toBe(first);
     expect(first).toContain('# Index');
     expect(readFrontmatter(first)['type']).toBe('entity');
   });
 
+  it('preserves index normalization when an existing pages directory is empty', () => {
+    const dir = scope('empty-pages');
+    mkdir(join(dir, 'pages'));
+    atomicWrite(join(dir, 'index.md'), '# Index\n\n\n');
+    expect(decayPass(dir, loadConfig(), { now: NOW }).rewroteIndex).toBe(true);
+    expect(readFile(join(dir, 'index.md'))).toBe('# Index\n');
+  });
+
   it('is a no-op on a scope with no pages directory', () => {
-    expect(decayPass(scope('empty'), { now: NOW })).toEqual({
+    expect(decayPass(scope('empty'), loadConfig(), { now: NOW })).toEqual({
       demoted: [],
       archived: [],
       rewroteIndex: false,
@@ -132,7 +175,7 @@ describe('decayPass', () => {
     atomicWrite(join(dir, 'pages', 'nodate.md'), '# no frontmatter at all\n');
     writeIndex(dir, ['- [[nodate]]']);
 
-    const result = decayPass(dir, { now: NOW });
+    const result = decayPass(dir, loadConfig(), { now: NOW });
 
     expect(result.archived).toEqual([]);
     expect(result.demoted).toEqual([]);

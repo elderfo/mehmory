@@ -3,6 +3,7 @@
  * plus the exit code asserted, so a check that silently stops firing fails here.
  */
 
+import { TEMPLATE_SCHEMA_VERSION } from '../src/core/store.js';
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -69,7 +70,7 @@ describe('mehmory doctor', () => {
     rmSync(join(home(), '.gitignore'));
     const found = findings(fixture);
     expect(found.get('git.gitignore')).toMatchObject({ level: 'warn' });
-    expect(found.get('git.gitignore')?.fix).toContain(`> ${join(home(), '.gitignore')}`);
+    expect(found.get('git.gitignore')?.fix).toContain(`> '${join(home(), '.gitignore')}'`);
     expect(runCli(['doctor'], fixture).status).toBe(5);
   });
 
@@ -78,7 +79,7 @@ describe('mehmory doctor', () => {
     writeFileSync(join(home(), 'global', 'index.md'), '# Index\n\nedited\n');
     const found = findings(fixture);
     expect(found.get('git.clean')).toMatchObject({ level: 'warn' });
-    expect(found.get('git.clean')?.fix).toContain(`git -C ${home()}`);
+    expect(found.get('git.clean')?.fix).toContain(`git -C '${home()}'`);
   });
 
   it('warns per disabled hook, naming the config key', () => {
@@ -101,7 +102,7 @@ describe('mehmory doctor', () => {
     writeFileSync(join(home(), 'SCHEMA.md'), '---\nschema_version: "0"\n---\n\n# old\n');
     const found = findings(fixture);
     expect(found.get('schema_version')).toMatchObject({ level: 'warn' });
-    expect(found.get('schema_version')?.message).toContain('this build ships 1');
+    expect(found.get('schema_version')?.message).toContain(`this build ships ${TEMPLATE_SCHEMA_VERSION}`);
   });
 
   it('warns when no hook has ever reported', () => {
@@ -124,12 +125,11 @@ describe('mehmory doctor', () => {
     expect(findings(fixture).get('hooks.silent')).toMatchObject({ level: 'warn' });
   });
 
-  it('warns on a KPI budget violation, using the amended numbers', () => {
+  it('warns on a KPI budget violation, using the configured injection cap', () => {
     const fixture = healthyStore();
     const ts = new Date().toISOString();
     writeStats([
       ...statsForEveryHook(),
-      // 951 tokens: one over the amended combined budget of 950.
       { ts, project: 'p', hook: 'SessionStart', ms: 10, injected_tokens: 951 },
       { ts, project: 'p', hook: 'UserPromptSubmit', ms: 400 },
     ]);
@@ -157,7 +157,7 @@ describe('mehmory doctor', () => {
     writeFileSync(path, '[2026-07-30T00:00:00.000Z] E_GIT_COMMIT: boom\n');
     const found = findings(fixture);
     expect(found.get('errors')).toMatchObject({ level: 'warn' });
-    expect(found.get('errors')?.fix).toBe(`tail -n 20 ${path}`);
+    expect(found.get('errors')?.fix).toBe(`tail -n 20 '${path}'`);
   });
 
   it('errors when the installed plugin registers fewer than the five hooks', () => {
@@ -172,7 +172,7 @@ describe('mehmory doctor', () => {
     const fixture = healthyStore();
     writeFileSync(join(home(), 'config.json'), '{ not json');
     const run = runCli(['doctor'], fixture);
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(`next: $EDITOR ${join(home(), 'config.json')}`);
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe(`next: $EDITOR '${join(home(), 'config.json')}'`);
   });
 });
 

@@ -8,40 +8,19 @@
  * channel, so a `status` that used it would silently steal the user's warning.
  */
 
-import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { runStoreGit } from './git.js';
+import { dirname } from 'node:path';
 import { mehmoryHome } from './home.js';
-import { listDir, pathExists, readFile, stat } from './fs.js';
+import { pathExists, stat } from './fs.js';
+import { openScope } from './wiki.js';
 import { failOpen, peekWarnings } from './errors.js';
 import { readInboxEntries } from './inbox.js';
-import { ARCHIVE_DIR, ARCHIVE_DIVIDER, parseIndexLine } from '../schema/format.js';
-
-/** The files one scope is made of. `global` has no `projects/<key>` directory. */
-export interface ScopeFiles {
-  readonly dir: string;
-  readonly pagesDir: string;
-  readonly indexFile: string;
-  readonly inboxFile: string;
-  readonly logFile: string;
-}
-
-/** Resolve a scope directory to the five files every summary reads. */
-export function scopeFiles(dir: string): ScopeFiles {
-  return {
-    dir,
-    pagesDir: join(dir, 'pages'),
-    indexFile: join(dir, 'index.md'),
-    inboxFile: join(dir, 'inbox.md'),
-    logFile: join(dir, 'log.md'),
-  };
-}
-
 /** Everything `mehmory status` prints, as data. */
 export interface StatusReport {
   /** Resolved project key (or `global`). */
   readonly key: string;
   readonly dir: string;
-  /** Markdown files under `pages/`. */
+  /** Readable regular markdown pages, using retrieval's no-symlink policy. */
   readonly pages: number;
   /** Lines in `index.md` that match the index-line format. */
   readonly indexLines: number;
@@ -62,9 +41,10 @@ export interface StatusReport {
 
 /** Summarize one scope. Never throws; an unreadable store yields zeroes (A2/A11). */
 export function buildStatus(key: string, dir: string): StatusReport {
-  const files = scopeFiles(dir);
-  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
-  const timestamps = entries.map(e => e.ts).sort();
+  const wiki = openScope(dir);
+  const files = wiki.scope;
+  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
+  const timestamps = entries.map((e) => e.ts).sort();
   const oldest = timestamps[0];
   const integrated = lastIntegrate(files.logFile);
   const commit = lastCommit();
@@ -72,10 +52,10 @@ export function buildStatus(key: string, dir: string): StatusReport {
   return {
     key,
     dir,
-    pages: countPages(files.pagesDir),
-    indexLines: countIndexLines(files.indexFile),
-    demoted: countDemotedIndexLines(files.indexFile),
-    archived: countPages(join(dir, ARCHIVE_DIR)),
+    pages: wiki.pages.length,
+    indexLines: wiki.index.lines.length,
+    demoted: wiki.index.lines.filter((line) => line.demoted).length,
+    archived: wiki.archive.length,
     inboxEntries: entries.length,
     ...(oldest !== undefined ? { oldestInbox: oldest } : {}),
     ...(integrated !== undefined ? { lastIntegrate: integrated } : {}),
@@ -84,57 +64,11 @@ export function buildStatus(key: string, dir: string): StatusReport {
   };
 }
 
-/** Markdown pages in a scope. */
-export function countPages(pagesDir: string): number {
-  return failOpen(
-    () => (pathExists(pagesDir) ? listDir(pagesDir).filter(f => f.endsWith('.md')).length : 0),
-    0,
-    'E_APPEND_FAILED'
-  );
-}
-
-/** Lines of `index.md` that are real index lines (A4: the format constant decides). */
-export function countIndexLines(indexFile: string): number {
-  return failOpen(
-    () =>
-      pathExists(indexFile)
-        ? readFile(indexFile)
-            .split('\n')
-            .filter(line => parseIndexLine(line) !== undefined).length
-        : 0,
-    0,
-    'E_APPEND_FAILED'
-  );
-}
-
-/**
- * Index lines below the `## Archive` divider (A22).
- *
- * Reported so decay is visible rather than silent: a growing demoted count is the
- * user's cue that pages are aging out of the front of the wiki, and the only place
- * that number surfaces without reading `index.md` by hand.
- */
-export function countDemotedIndexLines(indexFile: string): number {
-  return failOpen(
-    () => {
-      if (!pathExists(indexFile)) return 0;
-      const lines = readFile(indexFile).split('\n');
-      const divider = lines.findIndex(line => line.trim() === ARCHIVE_DIVIDER);
-      if (divider < 0) return 0;
-      return lines.slice(divider + 1).filter(line => parseIndexLine(line) !== undefined).length;
-    },
-    0,
-    'E_APPEND_FAILED'
-  );
-}
-
 /** `log.md` lines, newest last. Empty when the file is absent. */
 export function logLines(logFile: string): readonly string[] {
-  return failOpen(
-    () => (pathExists(logFile) ? readFile(logFile).split('\n').filter(l => l.startsWith('## ')) : []),
-    [],
-    'E_APPEND_FAILED'
-  );
+  return openScope(dirname(logFile))
+    .log.split('\n')
+    .filter((l) => l.startsWith('## '));
 }
 
 /** ISO timestamps of every `integrate` entry in a scope's log, oldest first. */
@@ -156,19 +90,23 @@ export function lastIntegrate(logFile: string): string | undefined {
 
 /** Age of a scope's inbox in ms, from `inbox.md` mtime. Undefined when absent. */
 export function inboxAgeMs(inboxFile: string, now: number = Date.now()): number | undefined {
-  if (!pathExists(inboxFile)) return undefined;
-  const mtime = stat(inboxFile)?.mtime.getTime();
-  return mtime === undefined ? undefined : Math.max(0, now - mtime);
+  return failOpen(
+    () => {
+      if (!pathExists(inboxFile)) return undefined;
+      const mtime = stat(inboxFile)?.mtime.getTime();
+      return mtime === undefined ? undefined : Math.max(0, now - mtime);
+    },
+    undefined,
+    'E_STORE_READ'
+  );
 }
 
 /** `<short-sha> <date> <subject>` of the store's last commit, or undefined. */
 export function lastCommit(): string | undefined {
   try {
-    const out = execFileSync(
-      'git',
-      ['-C', mehmoryHome(), 'log', '-1', '--date=short', '--format=%h %ad %s'],
-      { stdio: 'pipe', encoding: 'utf-8' }
-    ).trim();
+    const out = runStoreGit(['log', '-1', '--date=short', '--format=%h %ad %s'], mehmoryHome())
+      .toString()
+      .trim();
     return out === '' ? undefined : out;
   } catch {
     // No repo, or no commits yet. Both are "nothing to report", not a failure.
@@ -179,11 +117,8 @@ export function lastCommit(): string | undefined {
 /** Paths git reports as dirty in the store, or undefined when the store is not a repo. */
 export function dirtyPaths(): readonly string[] | undefined {
   try {
-    const out = execFileSync('git', ['-C', mehmoryHome(), 'status', '--porcelain'], {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-    });
-    return out.split('\n').filter(line => line.trim() !== '');
+    const out = runStoreGit(['status', '--porcelain'], mehmoryHome()).toString();
+    return out.split('\n').filter((line) => line.trim() !== '');
   } catch {
     return undefined;
   }

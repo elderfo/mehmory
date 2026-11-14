@@ -33,6 +33,12 @@ export const PLUGIN_INSTALL_COMMANDS: readonly string[] = [
   '/plugin install mehmory@mehmory',
 ];
 
+/**
+ * The package source Pi installs mehmory from. Pi's package manager owns the install
+ * (extension and skills both), so `init --host pi` only ever names this, in the shell.
+ */
+export const PI_PACKAGE_SOURCE = 'git:github.com/elderfo/mehmory';
+
 /** Result of the plugin filesystem probe. */
 export interface PluginProbe {
   /** True only when a `hooks.json` was found on disk — not merely a manifest entry. */

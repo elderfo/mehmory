@@ -10,15 +10,17 @@
 import { join } from 'node:path';
 import { mehmoryHome, statePath } from './home.js';
 import { pathExists, readFile, stat } from './fs.js';
-import { failOpen, type ErrorCode } from './errors.js';
+import { failOpen, shellQuote, type ErrorCode } from './errors.js';
 import { probeCodexInstall, type CodexProbe } from './codex-install.js';
 import { readInboxEntries } from './inbox.js';
 import { resolveProjectKey } from './identity.js';
 import { TEMPLATE_SCHEMA_VERSION } from './store.js';
 import { HOOK_EVENTS, PLUGIN_INSTALL_COMMANDS, checkNodeVersion, probePlugin } from './environment.js';
-import { dirtyPaths, lastCommit, lastIntegrate, scopeFiles } from './status.js';
+import { dirtyPaths, lastCommit, lastIntegrate } from './status.js';
+import { wikiScope } from './wiki.js';
 import { readStats, summarize } from './stats-report.js';
 import type { MehmoryConfig } from './config.js';
+import { MAINTENANCE_ALLOWANCE_TOKENS } from './tokens.js';
 
 export type FindingLevel = 'ok' | 'warn' | 'error';
 
@@ -42,12 +44,9 @@ export interface Finding {
 }
 
 /**
- * KPI budgets, from the **amended** numbers (run-1 amendment 1, run-2 amendments 10 and
- * 14) rather than the spec's stale KPI table, which run 3 rewrites separately.
+ * Hook latency budgets. The injection token threshold comes from the caller's config.
  */
 export const KPI_BUDGETS = {
-  /** Injection plus maintenance lines, as SessionStart records it. */
-  combinedInjectionTokens: 950,
   /** UserPromptSubmit, in-hook. */
   userPromptSubmitMs: 100,
   /** SessionStart, the injection path. */
@@ -86,14 +85,26 @@ export function runDoctor(
   }
   findings.push({ check: 'store', level: 'ok', message: `store at ${home}` });
 
-  findings.push(...checkGit(home));
-  findings.push(...checkHookConfig(config));
-  findings.push(...checkHookLiveness());
-  findings.push(...checkScope(config, cwd));
-  findings.push(checkErrorLog());
-  findings.push(checkSchemaVersion(home));
-  findings.push(checkConfigParses(home));
-  findings.push(...checkKpiBudgets());
+  for (const [check, run] of [
+    ['git', () => checkGit(home)],
+    ['hooks.enabled', () => checkHookConfig(config)],
+    ['hooks.liveness', () => checkHookLiveness()],
+    ['scope', () => checkScope(config, cwd)],
+    ['errors', () => [checkErrorLog()]],
+    ['schema_version', () => [checkSchemaVersion(home)]],
+    ['config', () => [checkConfigParses(home)]],
+    ['kpi', () => checkKpiBudgets(config)],
+  ] as const) {
+    try {
+      findings.push(...run());
+    } catch (err) {
+      findings.push({
+        check,
+        level: 'error',
+        message: `check failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
 
   return findings;
 }
@@ -177,6 +188,10 @@ function checkCodex(): readonly Finding[] {
     checkCodexHarness(probe),
     checkCodexFeatureFlag(probe),
     checkCodexWiring(probe),
+    // Omitted rather than reported ok when nothing is wired: `checkCodexWiring` already
+    // owns that finding, and an `[ok] codex.hooks_trust` line directly under an unwired
+    // error reads as reassurance about an install that does not exist.
+    ...(probe.wiredEvents.length > 0 ? [checkCodexHookTrust(probe)] : []),
     checkCodexSkills(probe),
   ];
 }
@@ -195,6 +210,14 @@ function checkCodexHarness(probe: CodexProbe): Finding {
 }
 
 function checkCodexFeatureFlag(probe: CodexProbe): Finding {
+  if (probe.hooksFeature === null) {
+    return {
+      check: 'codex.hooks_flag',
+      level: 'warn',
+      message: `Codex \`[features] hooks\` could not be determined in ${probe.configFile}`,
+      fix: `$EDITOR ${shellQuote(probe.configFile)}`,
+    };
+  }
   if (probe.hooksFeature === true) {
     return { check: 'codex.hooks_flag', level: 'ok', message: 'Codex `[features] hooks` is on' };
   }
@@ -214,7 +237,7 @@ function checkCodexWiring(probe: CodexProbe): Finding {
       level: 'error',
       code: 'E_CODEX_HOOKS_UNWIRED',
       message: `${probe.hooksFile} does not parse, so no hook of any tool is registered`,
-      fix: `$EDITOR ${probe.hooksFile}`,
+      fix: `$EDITOR ${shellQuote(probe.hooksFile)}`,
     };
   }
   if (probe.missingEvents.length > 0) {
@@ -230,6 +253,29 @@ function checkCodexWiring(probe: CodexProbe): Finding {
     check: 'codex.hooks',
     level: 'ok',
     message: `mehmory wired into ${probe.wiredEvents.join(', ')}`,
+  };
+}
+
+/**
+ * The trust gate. Codex will not run a hook it has not been told to trust, and says
+ * nothing when it skips one, so every other check here can pass while capture has never
+ * fired once (issue #39).
+ *
+ * Silent when nothing is wired — `checkCodex` omits the check entirely in that case,
+ * because `checkCodexWiring` already owns the finding and two errors for one cause is
+ * noise. Presence-only, so it cannot see a `trusted_hash` that has gone stale; the fix is
+ * the same review either way.
+ */
+function checkCodexHookTrust(probe: CodexProbe): Finding {
+  if (probe.untrustedEvents.length === 0) {
+    return { check: 'codex.hooks_trust', level: 'ok', message: 'Codex hooks reviewed and trusted' };
+  }
+  return {
+    check: 'codex.hooks_trust',
+    level: 'error',
+    code: 'E_CODEX_HOOKS_UNTRUSTED',
+    message: `Codex has no trust decision for ${probe.untrustedEvents.join(', ')} in ${probe.configFile}, so it skips those hooks without a warning and mehmory captures nothing`,
+    fix: 'run `codex` and approve the mehmory hooks when it asks you to review them',
   };
 }
 
@@ -260,7 +306,7 @@ function checkGit(home: string): readonly Finding[] {
       // Without it `.state/` is always untracked, so "tree clean" can never be true
       // and the crash signal it carries is worthless (plan gap 12).
       message: 'the store has no .gitignore, so .state/ is always untracked',
-      fix: `printf '.state/\\n' > ${gitignore}`,
+      fix: `printf '.state/\\n' > ${shellQuote(gitignore)}`,
     });
   } else {
     findings.push({ check: 'git.gitignore', level: 'ok', message: '.gitignore present' });
@@ -268,14 +314,14 @@ function checkGit(home: string): readonly Finding[] {
 
   const dirty = dirtyPaths();
   const commit = lastCommit();
-  const save = `git -C ${home} add -A && git -C ${home} commit -m "manual save"`;
+  const save = `git -C ${shellQuote(home)} add -A && git -C ${shellQuote(home)} commit -m 'manual save'`;
 
   if (dirty === undefined) {
     findings.push({
       check: 'git.repo',
       level: 'error',
       message: `${home} is not a git repository, so nothing written there is recoverable`,
-      fix: `git -C ${home} init`,
+      fix: `git -C ${shellQuote(home)} init`,
     });
     return findings;
   }
@@ -325,7 +371,7 @@ function checkHookConfig(config: MehmoryConfig): readonly Finding[] {
     check: `hooks.enabled.${name}`,
     level: 'warn' as const,
     message: `${HOOK_EVENTS[name as keyof typeof HOOK_EVENTS]} is disabled by config key \`hooks.${name}.enabled\``,
-    fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+    fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
   }));
 }
 
@@ -361,7 +407,7 @@ function checkHookLiveness(): readonly Finding[] {
       check: 'hooks.silent',
       level: 'warn',
       message: `the newest stats line is ${String(Math.floor(age / 86400000))} days old`,
-      fix: `tail -n 20 ${statePath('errors.log')}`,
+      fix: `tail -n 20 ${shellQuote(statePath('errors.log'))}`,
     });
   }
 
@@ -378,9 +424,19 @@ function checkHookLiveness(): readonly Finding[] {
 /** Inbox size and age, plus the last integrate, for the current directory's scope. */
 function checkScope(config: MehmoryConfig, cwd: string): readonly Finding[] {
   const key = resolveProjectKey(cwd);
-  const files = scopeFiles(join(mehmoryHome(), 'projects', key));
-  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_APPEND_FAILED');
+  const files = wikiScope(join(mehmoryHome(), 'projects', key));
   const findings: Finding[] = [];
+  for (const pagesDir of [files.pagesDir, join(mehmoryHome(), 'global', 'pages')]) {
+    if (pathExists(pagesDir) && !stat(pagesDir)?.isDirectory()) {
+      findings.push({
+        check: 'scope',
+        level: 'error',
+        message: `${pagesDir} is not a directory`,
+        fix: `mv -n ${shellQuote(pagesDir)} ${shellQuote(`${pagesDir}.bak`)} && mkdir ${shellQuote(pagesDir)}`,
+      });
+    }
+  }
+  const entries = failOpen(() => readInboxEntries(files.inboxFile), [], 'E_STORE_READ');
 
   const oldest = entries.map(e => e.ts).sort()[0];
   const ageMs = oldest === undefined ? 0 : Date.now() - Date.parse(oldest);
@@ -422,7 +478,7 @@ function checkErrorLog(): Finding {
     check: 'errors',
     level: 'warn',
     message: `${String(lines.length)} logged errors, most recent: ${tail}`,
-    fix: `tail -n 20 ${path}`,
+    fix: `tail -n 20 ${shellQuote(path)}`,
   };
 }
 
@@ -453,7 +509,7 @@ function checkSchemaVersion(home: string): Finding {
     check: 'schema_version',
     level: 'warn',
     message: `SCHEMA.md is at schema_version ${found ?? '(unset)'}, this build ships ${TEMPLATE_SCHEMA_VERSION}`,
-    fix: `$EDITOR ${path}`,
+    fix: `$EDITOR ${shellQuote(path)}`,
   };
 }
 
@@ -473,12 +529,12 @@ function checkConfigParses(home: string): Finding {
       check: 'config',
       level: 'error',
       message: `config.json is unparseable (${err instanceof Error ? err.message : String(err)}), so every setting is ignored`,
-      fix: `$EDITOR ${path}`,
+      fix: `$EDITOR ${shellQuote(path)}`,
     };
   }
 }
 
-function checkKpiBudgets(): readonly Finding[] {
+function checkKpiBudgets(config: MehmoryConfig): readonly Finding[] {
   const report = summarize(readStats());
   if (report.records === 0) return [];
 
@@ -486,12 +542,13 @@ function checkKpiBudgets(): readonly Finding[] {
   const over = (actual: number | undefined, budget: number): boolean =>
     actual !== undefined && actual > budget;
 
-  if (over(report.injectedTokensP95, KPI_BUDGETS.combinedInjectionTokens)) {
+  const injectionBudget = config.injection.budget_tokens + MAINTENANCE_ALLOWANCE_TOKENS;
+  if (over(report.injectedTokensP95, injectionBudget)) {
     findings.push({
       check: 'kpi.injection',
       level: 'warn',
-      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(KPI_BUDGETS.combinedInjectionTokens)} combined budget`,
-      fix: `$EDITOR ${join(mehmoryHome(), 'config.json')}`,
+      message: `injected tokens p95 is ${String(report.injectedTokensP95)}, over the ${String(injectionBudget)} combined budget`,
+      fix: `$EDITOR ${shellQuote(join(mehmoryHome(), 'config.json'))}`,
     });
   }
 
@@ -505,7 +562,7 @@ function checkKpiBudgets(): readonly Finding[] {
         check: `kpi.${event}`,
         level: 'warn',
         message: `${event} p95 is ${String(hook.msP95)} ms, over its ${String(budget)} ms budget`,
-        fix: `tail -n 20 ${statePath('errors.log')}`,
+        fix: `tail -n 20 ${shellQuote(statePath('errors.log'))}`,
       });
     }
   }

@@ -1,3 +1,4 @@
+import { stateFileFor } from './session-fixture.js';
 /**
  * Plan criterion 13: the three documented-but-dead config keys reach the code that
  * uses them, threaded as parameters rather than read ambiently.
@@ -7,13 +8,14 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mehmoryHome } from '../src/core/home.js';
 import { loadConfig } from '../src/core/config.js';
 import { redact } from '../src/core/redact.js';
 import { buildInjection } from '../src/core/injection.js';
 import { buildScopeInjection } from '../src/core/capture.js';
+
 import { INJECTION_BUDGET_TOKENS } from '../src/core/tokens.js';
 import { initStore } from '../src/core/store.js';
 import { createTempDir, hermeticEnv } from './helpers.js';
@@ -27,6 +29,7 @@ import {
   seedStore,
   statsLines,
   writeCodexRollout,
+  TODAY,
 } from './hook-fixture.js';
 
 /** Overwrite the store's config.json (initStore writes an empty one). */
@@ -167,8 +170,11 @@ describe('stop.capture_threshold reaches the Stop hook', () => {
     const first = runHook('stop', { session_id: 's1' }, { cwd });
     expect(first.stdout).toBe('{}');
 
+    // Claude Code's block shape is `hookSpecificOutput.additionalContext` — it blocks
+    // like `decision: block` without rendering as a hook error. What matters here is
+    // that the threshold fired, not which envelope carried it.
     const second = runHook('stop', { session_id: 's1' }, { cwd });
-    expect(outputJson(second)['decision']).toBe('block');
+    expect(outputJson(second)['hookSpecificOutput']).toMatchObject({ hookEventName: 'Stop' });
   });
 });
 
@@ -196,7 +202,13 @@ describe('hosts.<host>.enabled reaches runHook (issue #25)', () => {
     expect(run.status).toBe(0);
     expect(run.stdout.trim()).toBe('');
     expect(readIfPresent(join(mehmoryHome(), 'projects', key, 'inbox.md'))).toBe('');
-    expect(statsLines().at(-1)).toMatchObject({ hook: 'UserPromptSubmit', host: 'codex' });
+    expect(existsSync(stateFileFor('s1'))).toBe(false);
+    expect(statsLines().at(-1)).toMatchObject({
+      project: key,
+      hook: 'UserPromptSubmit',
+      host: 'codex',
+      suppressed: 'host_disabled',
+    });
   });
 
   it('leaves the other harness capturing normally', () => {
@@ -220,7 +232,7 @@ describe('hosts.<host>.enabled reaches injection too, not only capture (D10)', (
   // its own proof that a disabled harness gets neither.
   const CODEX_SESSION = '019fbf44-4f17-7a53-8914-1002bc65fbae';
   const DEPLOY_PAGE = `---
-updated: 2026-07-01
+updated: ${TODAY}
 type: procedure
 ---
 
