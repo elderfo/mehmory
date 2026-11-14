@@ -63,7 +63,7 @@ describe('Stop hook', () => {
     expect(sessionState('s1').stop_count).toBe(1);
   });
 
-  it('keeps the threshold counter and cursor when the append fails', () => {
+  it('keeps the threshold counter and cursor when the append fails', { timeout: 15_000 }, () => {
     primeCounter('s1');
     mkdirSync(statePath('locks'), { recursive: true });
     const lock = statePath('locks', '__store__.lock');

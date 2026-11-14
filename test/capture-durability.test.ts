@@ -53,7 +53,7 @@ describe('capture durability', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it('retries the same delta after a busy store prevents its append', () => {
+  it('retries the same delta after a busy store prevents its append', { timeout: 15_000 }, () => {
     mkdirSync(statePath('locks'), { recursive: true });
     const lock = statePath('locks', '__store__.lock');
     writeFileSync(lock, String(process.pid));

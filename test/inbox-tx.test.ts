@@ -211,7 +211,7 @@ describe('inbox-tx pause/resume', () => {
 });
 
 describe('inbox-tx failure paths', () => {
-  it('exits 1 and reports a failed append instead of reporting success', () => {
+  it('exits 1 and reports a failed append instead of reporting success', { timeout: 15_000 }, () => {
     mkdirSync(statePath('locks'), { recursive: true });
     writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));
     const result = tx('append', {

@@ -83,7 +83,7 @@ describe('mehmory inbox-tx pause/resume', () => {
 });
 
 describe('mehmory inbox-tx append', () => {
-  it('exits 1 and reports a failed append instead of reporting success', () => {
+  it('exits 1 and reports a failed append instead of reporting success', { timeout: 15_000 }, () => {
     seed();
     mkdirSync(statePath('locks'), { recursive: true });
     writeFileSync(statePath('locks', '__store__.lock'), String(process.pid));

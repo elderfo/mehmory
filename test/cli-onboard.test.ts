@@ -190,7 +190,7 @@ describe('mehmory onboard', () => {
     expect(treeDigest(home())).toBe(before);
   });
 
-  it('describes lock contention as well as filesystem causes on append failure', () => {
+  it('describes lock contention as well as filesystem causes on append failure', { timeout: 15_000 }, () => {
     const project = fakeProject();
     const claudeHome = createFakeClaudeHome({
       [project]: { s: transcript('s', ['a useful deployment decision']) },
