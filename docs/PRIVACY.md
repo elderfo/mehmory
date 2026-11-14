@@ -99,10 +99,10 @@ Built-in matching avoids repeated JWT/scheme/assignment rescans and has per-patt
 custom regexes. An invalid user regex is instead logged and skipped, with built-in filtering
 still applied.
 
-**Redaction reaches both harnesses.** There is one store and one `redact()` call on the write
-path, regardless of whether the session that produced the text was Claude Code or Codex CLI —
-harness identity is not a redaction input, so nothing about a Codex-originated capture is
-filtered differently or filtered less.
+**Redaction reaches every harness.** There is one store and one `redact()` call on the write
+path, regardless of whether the session that produced the text was Claude Code, Codex CLI or
+Pi — harness identity is not a redaction input, so nothing about a Codex- or Pi-originated
+capture is filtered differently or filtered less.
 
 **This is best-effort pattern matching, not a PII-safe guarantee.** It catches secrets that
 look like the shapes above. It does not reliably catch:
@@ -149,11 +149,11 @@ regression is exactly what it would reintroduce.
 
 `mehmory purge` (see `docs/CLI.md`) deletes from the working tree and commits the removal.
 
-**Purge reaches content captured by either harness.** The store has no per-harness partition —
-a page, an inbox entry, or a project is the same kind of thing whether a Claude Code session or
-a Codex CLI session produced it, so every purge scope (`--page`, `--session`, `--project`,
-`--global`, `--all`) reaches Codex-captured material exactly as it reaches Claude Code-captured
-material, with no separate flag needed.
+**Purge reaches content captured by any harness.** The store has no per-harness partition —
+a page, an inbox entry, or a project is the same kind of thing whether a Claude Code, Codex CLI
+or Pi session produced it, so every purge scope (`--page`, `--session`, `--project`,
+`--global`, `--all`) reaches Codex- and Pi-captured material exactly as it reaches Claude
+Code-captured material, with no separate flag needed.
 
 **Deleting anything takes two invocations.** The first run previews the targets, prints the
 confirmation token scaled to what you're about to lose, and exits 4 having changed nothing;
@@ -241,12 +241,13 @@ git filter-repo --path <path-to-purge> --invert-paths
 from inside `~/.mehmory` (or `$MEHMORY_HOME`). `purge`'s own output prints this recipe every
 time it runs, not just this document — you shouldn't have to already know it exists.
 
-## Uninstalling is not deleting your data — on either harness
+## Uninstalling is not deleting your data — on any harness
 
-These are two separate operations, on both Claude Code and Codex CLI:
+These are two separate operations, on Claude Code, Codex CLI and Pi alike:
 
-- **Uninstalling** — removing the Claude Code plugin from your marketplace installation, or
-  running `mehmory init --host codex --uninstall` — stops the hooks and skills from running.
+- **Uninstalling** — removing the Claude Code plugin from your marketplace installation,
+  running `mehmory init --host codex --uninstall`, or running
+  `pi remove git:github.com/elderfo/mehmory` — stops the hooks and skills from running.
   It does **not** touch `~/.mehmory` (or `$MEHMORY_HOME`) — your wiki, inbox, and log stay
   exactly where they are, untouched and readable. Codex uninstall's temporary lock and skill
   staging directories live under `$CODEX_HOME`, not in the store; it does not even create an

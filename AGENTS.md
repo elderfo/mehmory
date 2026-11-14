@@ -52,12 +52,24 @@ mehmory/
 │   ├── distill/
 │   │   ├── patterns.ts        # Normative distill patterns (D, A7)
 │   │   └── distill.ts         # Record → inbox entry distillation (D)
-│   ├── core/                  # (continued) run-3 additions:
-│   │   └── scopes.ts          # run 3: project discovery + alias resolution, one scope grammar (L)
+│   ├── core/                  # (continued) run-3 additions — the behavior behind each CLI command (A17):
+│   │   ├── scopes.ts          # run 3: project discovery + alias resolution, one scope grammar (L)
+│   │   ├── search.ts          # multi-corpus keyword ranking: pages, archive, log (A18) (S)
+│   │   ├── onboard.ts         # transcript mining for `mehmory onboard` (C2)
+│   │   ├── purge.ts           # preview, token gate and commit-the-removal for `mehmory purge` (A19) (C2)
+│   │   ├── doctor.ts          # the fixed `mehmory doctor` check list (C1)
+│   │   ├── status.ts          # `mehmory status` summary + read-only git probes shared with doctor (C1)
+│   │   ├── stats-report.ts    # read-side aggregation of .state/stats.jsonl for `stats` and doctor (C1)
+│   │   └── environment.ts     # Node-version and plugin-installed probes shared by init and doctor (C1)
 │   └── cli/                   # run 3: the CLI — argument parsing, exit codes, --json envelope;
 │                               # no business logic (A17). Bundled to dist/cli.mjs, excluded from
 │                               # the library's importable entry.
 │       ├── index.ts           # parsing, exit codes, envelope, help/version, command registry (C1)
+│       ├── args.ts            # spec-driven flag parsing; unknown flag = usage error
+│       ├── command.ts         # the command contract every commands/*.ts implements
+│       ├── envelope.ts        # the `--json` envelope and CLI_JSON_SCHEMA (separate from format.ts)
+│       ├── scope.ts           # one scope grammar → exit codes for every scope-taking command
+│       ├── package-info.ts    # `--version` and the Node requirement, bundled from package.json
 │       └── commands/
 │           ├── init.ts        # (C1)
 │           ├── doctor.ts      # (C1)
@@ -77,6 +89,11 @@ mehmory/
 │                               # remember, pause, resume (C)
 ├── plugin.json                # Agent Plugins v1 portable manifest
 ├── .claude-plugin/            # Claude Code compatibility manifest + marketplace metadata
+├── assets/SCHEMA.md           # the store's page conventions, copied into the store by init (F)
+├── VERSION                    # canonical release version — written by release-please only
+├── CHANGELOG.md               # written by release-please from Conventional Commit PR titles
+├── release-please-config.json # release type `simple`, VERSION + three json extra-files, vX.Y.Z tags
+├── .release-please-manifest.json # last released version; release-please updates it
 ├── site/                      # VitePress marketing + docs site, deployed to GitHub Pages.
 │   │                           # Hype/landing content only — deep reference stays in docs/*.md
 │   │                           # and is linked out to, never mirrored here.
@@ -89,11 +106,14 @@ mehmory/
 │   ├── ISSUE_TEMPLATE/        # bug_report.yml, feature_request.yml, config.yml (blank issues
 │   │                           # off; links to TROUBLESHOOTING.md and private vuln reporting)
 │   ├── pull_request_template.md # local-checks + docs + conventional-commits checklist
-│   └── workflows/             # run 3: ci.yml (install/build/lint/test/typecheck on push+PR,
-│                               # plus a hooks/ bundle-drift gate — A25);
-│                               # release.yml (release-please PR → tag + GitHub Release → npm publish);
+│   ├── copilot-instructions.md # Copilot conventions + maintenance matrix; defers to this file
+│   └── workflows/             # ci.yml (install/build/lint/test/typecheck on push+PR,
+│                               # plus actionlint and a hooks/ bundle-drift gate — A25);
+│                               # release.yml (release-please PR; merging it → tag + GitHub
+│                               # Release → npm publish, all automatic — see Releases);
 │                               # pr-title.yml (PR title must be a Conventional Commit);
-│                               # pages.yml (site/** on main → vitepress build → Pages deploy)
+│                               # pages.yml (site/** on main → vitepress build → Pages deploy);
+│                               # copilot-setup-steps.yml (toolchain for Copilot agent sessions)
 ├── test/
 │   ├── setup.ts               # Vitest setup, MEHMORY_HOME guard (A)
 │   ├── home.test.ts           # home module tests
@@ -115,6 +135,7 @@ mehmory/
 │   ├── cli-inbox-tx.test.ts   # run-4: `mehmory inbox-tx` CLI command
 │   ├── inbox-tx.test.ts       # run-4: src/core/inbox-tx.ts append/snapshot/clear
 │   ├── agent.test.ts          # run-5: src/core/agent.ts name resolution + validation
+│   ├── release-workflow.test.ts # release-please config/manifest seed, extra-files, release.yml shape
 │   └── fixtures/transcripts/codex-*.jsonl, codex-*.distilled.json # run-4: Codex rollout fixtures;
 │                               # pi-*.jsonl, pi-*.distilled.json: synthetic Pi session fixtures
 ├── eslint-rules/
@@ -280,11 +301,15 @@ release-please owns releases (`release-please-config.json`, `.release-please-man
 in `package.json`, `plugin.json` and `.claude-plugin/plugin.json`; nobody edits them by hand,
 and nobody pushes tags.
 
-- Each push to `main` with releasable commits opens or updates one standing release PR. To
-  release, merge that PR: release-please creates tag `vX.Y.Z` and the GitHub Release, and the
+- Each push to `main` with releasable commits opens or updates one standing release PR. The
+  maintainer merging that PR is the only manual step; the release itself is automatic. The
+  merge push re-runs `Release`, release-please creates tag `vX.Y.Z` and the GitHub Release, and the
   `publish-npm` job publishes `mehmory` to npm from the released commit. Merge it only after
   the latest `Release` run on `main` has finished, so the PR counts every commit; the bypass
-  skips the up-to-date check that would otherwise catch a stale one.
+  skips the up-to-date check that would otherwise catch a stale one. If `publish-npm` fails,
+  use "Re-run failed jobs" on that run; a fresh run sees no new release and publishes nothing.
+- Only npm is versioned. The Claude Code marketplace and `pi install git:github.com/elderfo/mehmory`
+  install from `main`'s tree (A25), so a merged change reaches them before any release does.
 - Bump rules: `feat` gives a minor release, `fix` a patch; `chore`, `ci`, `docs`, `refactor`
   and `test` give none. Below 1.0.0 a breaking change (`!` or `BREAKING CHANGE:`) gives a minor
   release (`bump-minor-pre-major`).
