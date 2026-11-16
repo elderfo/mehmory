@@ -1,3 +1,8 @@
+> **Frozen on 2026-11-16 by the owner's decision.** This file is kept as a record. Do not edit
+> it. Decisions A1–A30 below stay in force. Record each new architectural decision as its own
+> file under `docs/adr/`, continuing the numbering: `docs/adr/A31-<slug>.md`, then `A32`, and so
+> on. See `docs/agents/domain.md`.
+
 # Mehmory World Model
 
 ## Architectural Decisions
