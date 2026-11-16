@@ -4,15 +4,21 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-This repo is **single-context**, but it does not use the default `CONTEXT.md` + `docs/adr/` layout.
-Its equivalents already exist under different names — read those, not the defaults:
+This repo is **single-context**, but it does not use the default `CONTEXT.md` + `docs/adr/` layout
+as-is. Most of its equivalents exist under different names, and ADR numbering is its own — read
+these, not the defaults:
 
 - **`AGENTS.md`** at the repo root — annotated directory structure, per-module ownership, project
   commands, conventions, and the testing strategy. This is the orientation document; read it before
   exploring the tree, and do not re-derive the structure with directory reads.
-- **`docs/WORLD_MODEL.md`** — the ADRs. Decisions are numbered `A1`–`A22` and grouped by the run that
-  introduced them, plus per-run amendments. **This file is `docs/adr/` for this repo.** There is no
-  `docs/adr/` directory, and a new one should not be created — it would split the decision record.
+- **`docs/WORLD_MODEL.md`** — the ADRs up to 2026-11-16. Decisions are numbered `A1`–`A30` and
+  grouped by the run that introduced them, plus per-run amendments. They stay in force, but the file
+  was **frozen on 2026-11-16** by the owner's decision: it is a read-only record, and nobody edits it.
+- **`docs/adr/`** — every ADR after the freeze, one file per decision, continuing the A-numbering so
+  a new decision is never confused with a frozen one: `docs/adr/A31-<slug>.md`, then `A32`, and so
+  on. Take the next number after the highest in `docs/WORLD_MODEL.md` and `docs/adr/` together. A
+  record that changes an earlier decision says so itself; the frozen file is not amended. Create
+  the directory with its first record.
 - **`CONTEXT.md`** does not exist. mehmory's vocabulary is defined across `AGENTS.md`,
   `docs/WORLD_MODEL.md`, and the reference docs below. If a glossary is ever wanted, it belongs at the
   root as `CONTEXT.md` alongside these, not replacing them.

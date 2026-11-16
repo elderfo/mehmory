@@ -156,7 +156,8 @@ mehmory/
 └── docs/
     ├── WORLD_MODEL.md         # Architectural decisions A1–A11; run-2: A12–A16; run-3: A17–A21;
     │                          # run-4: A22–A26; run-5: A27; A28 Codex trust; A29 Pi host;
-    │                          # A30 MEHMORY_ACTIVE_HOST (C, X)
+    │                          # A30 MEHMORY_ACTIVE_HOST (C, X). Frozen 2026-11-16: read-only
+    │                          # record; new decisions go in docs/adr/ (A31 onward)
     ├── CLI.md                 # run 3: every command, flag, default, exit code (X)
     ├── TROUBLESHOOTING.md     # run 3: indexed by E_<CODE> + stable consequence sentence (X)
     ├── PRIVACY.md             # run 3: secret-filter limits, purge reach, uninstall-vs-purge (X)
@@ -165,7 +166,7 @@ mehmory/
     └── agents/                # where the engineering skills look for repo conventions:
         ├── issue-tracker.md   # GitHub Issues via `gh`
         ├── triage-labels.md   # the five canonical triage roles
-        └── domain.md          # doc-consumer rules; points ADRs at WORLD_MODEL.md
+        └── domain.md          # doc-consumer rules; where ADRs live and where new ones go
 ```
 
 ## Working directories
@@ -346,7 +347,11 @@ and nobody pushes tags.
 
 ### ADRs and Specs
 
-- All architectural decisions are in `docs/WORLD_MODEL.md` § Architectural Decisions
+- Architectural decisions A1–A30 are in `docs/WORLD_MODEL.md` § Architectural Decisions. That
+  file was frozen on 2026-11-16: it stays in force as a record, and nobody edits it.
+- Record each new architectural decision as its own file under `docs/adr/`, continuing the
+  A-numbering: `docs/adr/A31-<slug>.md`, then `A32`, and so on. A record that changes an
+  earlier decision says so itself; the frozen file is not amended.
 - Design spec is at `docs/superpowers/specs/2026-07-28-mehmory-design.md` (read-only for this run)
 - Run plan is at `.deliver/runs/2026-07-29-mehmory-runtime.md` (read-only, local — `.deliver/`
   is untracked, so this path exists only in a working copy that has it)
@@ -404,4 +409,5 @@ The five canonical triage roles, each label named after its role. See `docs/agen
 
 ### Domain docs
 
-Single-context. ADRs live in `docs/WORLD_MODEL.md`, not `docs/adr/`. See `docs/agents/domain.md`.
+Single-context. ADRs A1–A30 live in `docs/WORLD_MODEL.md`, frozen as a read-only record; new
+ADRs go in `docs/adr/` as `A31-<slug>.md` onward. See `docs/agents/domain.md`.
