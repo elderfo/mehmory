@@ -1,6 +1,6 @@
 {
   "name": "mehmory",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Memory abstraction layer for Claude Code, Codex CLI and Pi",
   "keywords": [
